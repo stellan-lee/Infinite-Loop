@@ -4121,9 +4121,6 @@ input[type='number'].no-spin {
   color: var(--fg-soft);
   letter-spacing: 0.1em;
 }
-.field-hint--mono {
-  font-family: var(--mono);
-}
 .field-hint--mono-block {
   font-family: var(--mono);
   white-space: pre-wrap;

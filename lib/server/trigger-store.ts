@@ -197,19 +197,10 @@ export async function touchLastFired(id: string, ts: number = Date.now()): Promi
   try {
     await atomicWriteJson(fileFor(id), updated);
   } catch (err) {
-    // touchLastFired is a best-effort hot path; if the trigger file or
-    // its parent dir disappeared between the read above and the write
-    // here (concurrent deleteTrigger, a test's afterEach `fs.rm`, etc.)
-    // we log and move on. Three error codes can surface for the same
-    // file-gone race:
-    //   - ENOENT — target or parent dir is gone (canonical, all OSes)
-    //   - ENOTDIR — parent dir was replaced by a non-dir
-    //   - EINVAL — Darwin's `rename` surfaces this when the directory
-    //     containing the tmp/target is being torn down concurrently
-    //     (observed in `bun test` afterEach which `fs.rm`s the dir
-    //     mid-drain). On Linux EINVAL would more typically indicate a
-    //     real programming bug, but the trade-off here favors a quiet
-    //     hot path over Darwin-specific stderr noise.
+    // Best-effort hot path: swallow file-gone races. EINVAL is here
+    // because Darwin surfaces it (not just ENOENT/ENOTDIR) when the
+    // parent dir is torn down concurrently — accepts the small Linux
+    // risk of masking a real bug in exchange for a quiet hot path.
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EINVAL') {
       console.warn(`[trigger-store] touchLastFired(${id}) skipped: ${code}`);

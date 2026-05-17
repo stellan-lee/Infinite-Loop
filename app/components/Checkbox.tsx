@@ -12,15 +12,12 @@ interface Props {
 }
 
 /** Styled checkbox that replaces native `<input type="checkbox">` for
- *  primary UI controls. The visual is a CSS-styled box driven off the
- *  `[data-checked]` attribute on a button; an aria role of "checkbox"
- *  keeps it accessible to screen readers and keyboard navigation (Space
- *  toggles, as on a native checkbox). When `label` is provided the box
- *  and label compose as a single click target via `<label htmlFor>` so
- *  the label text is the button's accessible name. The `<button>`'s
- *  onClick stops propagation, which is enough to prevent the historical
- *  "<button>-inside-<label> double-fire" quirk without dropping the
- *  semantic label association. */
+ *  primary UI controls — a `<button role="checkbox">` whose visual is
+ *  driven by the `[data-checked]` attribute. When `label` is provided
+ *  the label text is wired to the button via `aria-labelledby` (rather
+ *  than `<label htmlFor>`, which the HTML spec doesn't define for
+ *  `<button>`), and clicking the label text toggles via the wrapper's
+ *  onClick. */
 export default function Checkbox({
   checked,
   onChange,
@@ -30,6 +27,7 @@ export default function Checkbox({
   className,
 }: Props) {
   const id = useId();
+  const labelId = `${id}-label`;
   const classes = ['checkbox', className].filter(Boolean).join(' ');
   const toggle = () => { if (!disabled) onChange(!checked); };
   const box = (
@@ -39,18 +37,19 @@ export default function Checkbox({
       id={id}
       aria-checked={checked}
       aria-label={label ? undefined : ariaLabel}
+      aria-labelledby={label ? labelId : undefined}
       disabled={disabled}
       className="checkbox-box"
       data-checked={checked}
       onClick={(e) => {
-        // Stop propagation so the click doesn't also reach the wrapping
-        // <label>, which would re-fire the toggle and cancel it out.
+        // Stop propagation so the wrapper span's onClick (when label is
+        // provided) doesn't also fire and cancel the toggle.
         e.stopPropagation();
         toggle();
       }}
       onKeyDown={(e) => {
-        // Native <button> already fires `click` on Space and Enter, so
-        // we only intercept Space to suppress the default page-scroll.
+        // Native <button> already fires `click` on Space and Enter; we
+        // only intercept Space to suppress the default page-scroll.
         if (e.key === ' ') e.preventDefault();
       }}
     >
@@ -61,9 +60,9 @@ export default function Checkbox({
   );
   if (!label) return <span className={classes}>{box}</span>;
   return (
-    <label className={classes} htmlFor={id}>
+    <span className={classes} onClick={toggle}>
       {box}
-      <span className="checkbox-label">{label}</span>
-    </label>
+      <span id={labelId} className="checkbox-label">{label}</span>
+    </span>
   );
 }

@@ -92,13 +92,15 @@ describe('POST /api/triggers/[id]/test', () => {
       }),
       { params: Promise.resolve({ id: 'idTESTTESTTESTTESTTEST' }) },
     );
-    // The webhook route fires its own content-length guard at 1 MiB —
-    // if our header spread had been backwards, the spoofed length
-    // would have tripped that guard and surfaced a 413 here.
+    // The webhook route runs its own content-length guard at 1 MiB; if
+    // our spread had been backwards, the spoofed 99999999 would have
+    // tripped that guard and the envelope would carry json.status:
+    // 413. Asserting against it is the regression signal.
     expect(res.status).toBe(200);
     const json = await res.json() as { status: number };
     expect(json.status).not.toBe(413);
-    // And the actual byte count we forwarded must match the true body.
+    // Sanity: the real body is well under the 1 MiB cap, so any 413
+    // we ever see in this test is from spoofing, not real overflow.
     expect(expectedLen).toBeLessThan(1024);
   });
 });

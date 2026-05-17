@@ -56,6 +56,7 @@ describe('judgeStrategy', () => {
     } else {
       process.env.INFLOOP_PROVIDERS_DIR = prevProvidersDir;
     }
+    delete process.env.INFLOOP_CLAUDE_BIN;
     await fsp.rm(providersDir, { recursive: true, force: true });
     _resetProviderCache();
   });

@@ -324,6 +324,10 @@ async function readJsonDir(dir: string): Promise<{ entry: string; file: string; 
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
   }
+  // Sort for deterministic ordering: readdir is filesystem-order on Linux
+  // (ext4 hash order), alphabetical on macOS. First-wins on duplicate ids
+  // would otherwise depend on the host filesystem.
+  entries.sort();
   const results: { entry: string; file: string; parsed: unknown }[] = [];
   for (const entry of entries) {
     if (!entry.endsWith('.json')) continue;

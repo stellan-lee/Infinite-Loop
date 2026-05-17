@@ -4132,8 +4132,14 @@ input[type='number'].no-spin {
 .field-hint--dim-pad { margin-bottom: 12px; color: var(--fg-dim); }
 .field-hint--bottom { margin-top: 16px; }
 
-/* Two-column grid for OutputNameRow (script outputs editor row). */
-.output-row {
+/* Standalone monospace inline code chip — used when there is no
+ * surrounding `.field-hint` to inherit from (e.g. inside a sentence in
+ * GlobalsPanel's intro paragraph). */
+.inline-mono { font-family: var(--mono); }
+
+/* Two-column grid for OutputNameRow (script outputs editor row). Lives
+ * alongside `.script-output-list` so the namespace stays cohesive. */
+.script-output-row {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
@@ -4180,8 +4186,9 @@ input[type='number'].no-spin {
 
 /* Section header used by both ConfigPanel and GlobalsPanel — small
  * caps, mono, big letter-spacing. Single source so the two headers can
- * never drift apart. */
-.config-panel-section-head {
+ * never drift apart. Named after the existing `.config-stub` shell so
+ * the namespace stays cohesive. */
+.config-stub-section-head {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.22em;

@@ -1735,7 +1735,7 @@ function OutputNameRow({
 }) {
   const [v, setV] = useDebouncedString(value, onCommit);
   return (
-    <div className="output-row">
+    <div className="script-output-row">
       <input
         aria-label={`output name ${index}`}
         type="text"
@@ -1987,13 +1987,13 @@ function GlobalsPanel({ workflow }: { workflow: Workflow | null }) {
 
   return (
     <aside aria-label="config panel" className="config-stub">
-      <header className="serif config-panel-section-head">
+      <header className="serif config-stub-section-head">
         workflow · globals
       </header>
       <form className="task-form" onSubmit={(e) => e.preventDefault()}>
         <p className="field-hint field-hint--dim-pad">
           Workflow-level variables available to every node as{' '}
-          <code className="field-hint--mono">
+          <code className="inline-mono">
             {'{{globals.NAME}}'}
           </code>
           . Values are literal strings — they aren&apos;t templated.
@@ -2081,7 +2081,7 @@ export default function ConfigPanel() {
 
   return (
     <aside aria-label="config panel" className="config-stub">
-      <header className="serif config-panel-section-head">
+      <header className="serif config-stub-section-head">
         {node.id} · {node.type}
       </header>
 

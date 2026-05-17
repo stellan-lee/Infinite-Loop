@@ -16,10 +16,11 @@ interface Props {
  *  `[data-checked]` attribute on a button; an aria role of "checkbox"
  *  keeps it accessible to screen readers and keyboard navigation (Space
  *  toggles, as on a native checkbox). When `label` is provided the box
- *  and label compose as a single click target — using a <span> wrapper
- *  with a forwarded onClick (NOT <label htmlFor>) to avoid the
- *  historical browser quirk where a <button> inside <label> can
- *  double-fire on label-text click. */
+ *  and label compose as a single click target via `<label htmlFor>` so
+ *  the label text is the button's accessible name. The `<button>`'s
+ *  onClick stops propagation, which is enough to prevent the historical
+ *  "<button>-inside-<label> double-fire" quirk without dropping the
+ *  semantic label association. */
 export default function Checkbox({
   checked,
   onChange,
@@ -42,8 +43,8 @@ export default function Checkbox({
       className="checkbox-box"
       data-checked={checked}
       onClick={(e) => {
-        // Stop propagation so the wrapper span's onClick (when label is
-        // provided) doesn't also toggle — that would un-toggle the box.
+        // Stop propagation so the click doesn't also reach the wrapping
+        // <label>, which would re-fire the toggle and cancel it out.
         e.stopPropagation();
         toggle();
       }}
@@ -60,9 +61,9 @@ export default function Checkbox({
   );
   if (!label) return <span className={classes}>{box}</span>;
   return (
-    <span className={classes} onClick={toggle}>
+    <label className={classes} htmlFor={id}>
       {box}
       <span className="checkbox-label">{label}</span>
-    </span>
+    </label>
   );
 }

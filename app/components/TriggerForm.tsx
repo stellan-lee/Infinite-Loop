@@ -104,7 +104,11 @@ export function TriggerForm({
         />
       </div>
 
-      <label className="trg-form-row">
+      {/* SelectMenu renders a <button> — HTML doesn't define <label
+       * for> on buttons, so wrap with <div> and rely on the
+       * SelectMenu's ariaLabel for the accessible name. The visible
+       * label span is decorative and not click-activated. */}
+      <div className="trg-form-row">
         <span className="trg-form-label">Plugin</span>
         <SelectMenu
           ariaLabel="Plugin"
@@ -112,10 +116,10 @@ export function TriggerForm({
           options={plugins.map((p) => ({ value: p.id, label: p.displayName }))}
           onChange={handleSetPlugin}
         />
-      </label>
+      </div>
 
       {plugin?.eventHeader && (
-        <label className="trg-form-row">
+        <div className="trg-form-row">
           <span className="trg-form-label">Event</span>
           <SelectMenu
             ariaLabel="Event"
@@ -129,10 +133,10 @@ export function TriggerForm({
             ]}
             onChange={setEventType}
           />
-        </label>
+        </div>
       )}
 
-      <label className="trg-form-row">
+      <div className="trg-form-row">
         <span className="trg-form-label">Target</span>
         <SelectMenu
           ariaLabel="Target"
@@ -143,7 +147,7 @@ export function TriggerForm({
           ]}
           onChange={setWorkflowId}
         />
-      </label>
+      </div>
 
       {initial && (
         <div className="trg-form-row">
@@ -178,7 +182,7 @@ export function TriggerForm({
               onChange={(e) => handleUpdatePredicate(idx, 'rhs', e.target.value)}
               aria-label={`Predicate ${idx + 1} rhs`}
             />
-            <button type="button" className="btn btn-ghost btn-icon" onClick={() => handleRemovePredicate(idx)} aria-label="remove predicate">×</button>
+            <button type="button" className="btn btn-ghost" onClick={() => handleRemovePredicate(idx)} aria-label="remove predicate">×</button>
           </div>
         ))}
       </section>
@@ -205,7 +209,7 @@ export function TriggerForm({
 
       <div className="trg-form-actions">
         <button type="button" className="btn" disabled={saving} onClick={handleSave}>Save trigger</button>
-        <button type="button" className="btn btn-toggle" onClick={onCancel}>Cancel</button>
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );

@@ -108,7 +108,7 @@ export default function RunInputsModal({ declared, onSubmit, onCancel }: Props) 
           </div>
         ))}
         <div className="modal-actions">
-          <button type="button" className="btn btn-toggle" onClick={onCancel}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
             Cancel
           </button>
           <button type="submit" className="btn">

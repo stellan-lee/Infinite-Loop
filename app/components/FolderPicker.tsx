@@ -202,7 +202,7 @@ export default function FolderPicker({
       <div className="folder-picker-actions">
         <button
           type="button"
-          className="btn btn-toggle"
+          className="btn btn-ghost"
           onClick={onClose}
         >
           Cancel

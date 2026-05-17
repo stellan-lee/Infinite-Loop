@@ -21,7 +21,16 @@ export function useAutoSave(delayMs = 800): void {
 
   useEffect(() => {
     if (!isDirty || !currentWorkflowId) return;
+    // Capture the workflow id at schedule time. If the user switches
+    // workflows before the timer fires, React clears the timer via this
+    // effect's cleanup — but a switch that lands inside the timer's
+    // callback ordering still needs a guard, otherwise `save()` would
+    // PUT whatever workflow happens to be current and silently lose the
+    // dirty edits to the original.
+    const scheduledForId = currentWorkflowId;
     const t = setTimeout(() => {
+      const stillCurrent = useWorkflowStore.getState().currentWorkflow?.id;
+      if (stillCurrent !== scheduledForId) return;
       save().catch((err) => {
         console.warn('[autosave] failed:', err);
       });

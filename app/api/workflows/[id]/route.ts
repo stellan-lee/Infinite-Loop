@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 import {
   deleteWorkflow,
   getWorkflow,
@@ -8,7 +9,9 @@ import { hasBasicWorkflowShape, isNotFoundError } from '../validate';
 
 type Ctx = { params: Promise<{ id: string }> };
 
-export async function GET(_req: Request, ctx: Ctx) {
+export async function GET(req: Request, ctx: Ctx) {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
   const { id } = await ctx.params;
   try {
     const workflow = await getWorkflow(id);
@@ -28,6 +31,8 @@ export async function GET(_req: Request, ctx: Ctx) {
 }
 
 export async function PUT(req: Request, ctx: Ctx) {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
   const { id } = await ctx.params;
 
   let body: unknown;
@@ -68,7 +73,9 @@ export async function PUT(req: Request, ctx: Ctx) {
   }
 }
 
-export async function DELETE(_req: Request, ctx: Ctx) {
+export async function DELETE(req: Request, ctx: Ctx) {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
   const { id } = await ctx.params;
   try {
     await deleteWorkflow(id);

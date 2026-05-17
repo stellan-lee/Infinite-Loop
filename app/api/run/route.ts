@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/server/auth';
 import { workflowEngine } from '@/lib/server/workflow-engine';
 import { getWorkflow } from '@/lib/server/workflow-store';
+import { engineStartAdapter } from '@/lib/server/trigger-queue-singleton';
 import {
   resolveRunInputs,
   WorkflowInputError,
@@ -61,27 +62,34 @@ export async function POST(req: Request) {
     throw err;
   }
 
-  const currentState = workflowEngine.getState();
-  if (currentState.status === 'running') {
-    return NextResponse.json(
-      {
-        error: 'a run is already active',
-        runId: currentState.runId,
-        workflowId: currentState.workflowId,
-      },
-      { status: 409 },
-    );
+  let runId: string;
+  try {
+    // Use the same adapter the trigger queue uses — it pre-checks the
+    // busy state and assigns runId synchronously, closing the
+    // check→start TOCTOU window that the old getState()-then-start
+    // pattern left open.
+    runId = await engineStartAdapter(workflowEngine, workflow, { resolvedInputs });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'failed to start';
+    if (/already active/i.test(message)) {
+      const currentState = workflowEngine.getState();
+      return NextResponse.json(
+        {
+          error: 'a run is already active',
+          runId: currentState.runId,
+          workflowId: currentState.workflowId,
+        },
+        { status: 409 },
+      );
+    }
+    console.error('[api/run] engine.start failed:', err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  workflowEngine.start(workflow, { resolvedInputs }).catch((err) => {
-    console.error('[api/run] engine.start failed:', err);
-  });
-
-  const stateAfter = workflowEngine.getState();
   return NextResponse.json(
     {
-      runId: stateAfter.runId,
-      state: stateAfter,
+      runId,
+      state: workflowEngine.getState(),
     },
     { status: 202 },
   );

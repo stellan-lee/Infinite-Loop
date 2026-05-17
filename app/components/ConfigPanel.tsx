@@ -9,6 +9,7 @@ import {
   type ChangeEvent,
 } from 'react';
 import { useWorkflowStore } from '@/lib/client/workflow-store-client';
+import Checkbox from './Checkbox';
 import FolderPicker from './FolderPicker';
 import SelectMenu from './SelectMenu';
 import TemplateField from './TemplateField';
@@ -543,7 +544,7 @@ function WorkflowPicker({
           </li>
           {choices.length === 0 && (
             <li>
-              <div className="agent-picker-row" style={{ cursor: 'default' }}>
+              <div className="agent-picker-row agent-picker-row--inert">
                 <span className="agent-picker-meta">no other workflows</span>
               </div>
             </li>
@@ -629,7 +630,7 @@ function CwdField({
   const invalid = value.length > 0 && !value.startsWith('/');
 
   return (
-    <div className="field" style={{ position: 'relative' }}>
+    <div className="field field--relative">
       <span className="field-label">Working directory</span>
       <div
         ref={ref}
@@ -653,7 +654,7 @@ function CwdField({
         {value ? display : '(no folder selected — click to choose)'}
       </div>
       {invalid && (
-        <span className="field-hint" style={{ color: 'var(--accent-err)' }}>
+        <span className="field-hint field-hint--error">
           Must start with /
         </span>
       )}
@@ -796,9 +797,8 @@ function AgentForm({
       <div className="field">
         <span className="field-label">Provider</span>
         <span
-          className="field-hint"
+          className="field-hint provider-id-readonly"
           aria-label="Provider"
-          style={{ fontFamily: 'var(--mono)', color: 'var(--fg-soft)' }}
         >
           {providerId}
         </span>
@@ -982,22 +982,20 @@ function ConditionForm({
               onChange={(e) => setPattern(e.target.value)}
             />
           </div>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={config.sentinel?.isRegex ?? false}
-              onChange={(e) =>
-                onPatch({
-                  ...config,
-                  sentinel: {
-                    pattern: config.sentinel?.pattern ?? '',
-                    isRegex: e.target.checked,
-                  },
-                })
-              }
-            />
-            <span>Treat as regex</span>
-          </label>
+          <Checkbox
+            className="checkbox-row"
+            label="Treat as regex"
+            checked={config.sentinel?.isRegex ?? false}
+            onChange={(next) =>
+              onPatch({
+                ...config,
+                sentinel: {
+                  pattern: config.sentinel?.pattern ?? '',
+                  isRegex: next,
+                },
+              })
+            }
+          />
         </>
       )}
 
@@ -1331,14 +1329,7 @@ function KvRow({
     onCommit({ value: next }),
   );
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '120px 1fr auto',
-        gap: 8,
-        alignItems: 'flex-start',
-      }}
-    >
+    <div className="kv-row">
       <input
         aria-label={`${nameLabel} ${index}`}
         type="text"
@@ -1346,7 +1337,7 @@ function KvRow({
         onChange={(e) => setName(e.target.value)}
         placeholder={nameLabel}
       />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div className="kv-row-value">
         {template ? (
           <TemplateField
             ariaLabel={`${valueLabel} ${index}`}
@@ -1405,7 +1396,7 @@ function KvRowsEditor({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="kv-rows">
       {rows.map((row, i) => (
         <KvRow
           key={row.rowId}
@@ -1423,9 +1414,8 @@ function KvRowsEditor({
       ))}
       <button
         type="button"
-        className="btn btn-ghost"
+        className="btn btn-ghost kv-add"
         onClick={addRow}
-        style={{ alignSelf: 'flex-start' }}
       >
         + {addLabel}
       </button>
@@ -1555,9 +1545,15 @@ function SubworkflowForm({
 }
 
 /* ── one judge-candidate textarea row ──────────────────────────
- * Pulled out so each candidate's debounced string state stays anchored to
- * its own row identity — otherwise reordering or removing a row would
- * scramble the in-flight buffers. */
+ * Pulled out so each candidate has its own `useDebouncedString` buffer.
+ * Caller still keys these rows by array index (see `candidates.map((c, i)
+ * => <CandidateRow key={i} … />`); the hook re-syncs to the new `value`
+ * when an upstream insert/delete shifts indices, which keeps focus on
+ * the same row position but DOES leak the typed-but-uncommitted text of
+ * a removed middle row into its successor. A stable per-row id would be
+ * the cleaner fix but requires a parallel rowId state since
+ * `candidates: string[]` is the persisted shape — tracked as a
+ * follow-up. */
 function CandidateRow({
   index,
   value,
@@ -1573,24 +1569,9 @@ function CandidateRow({
 }) {
   const [v, setV] = useDebouncedString(value, onCommit);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <span
-          style={{
-            fontFamily: 'var(--mono)',
-            fontSize: 11,
-            color: 'var(--fg-soft)',
-            letterSpacing: '0.1em',
-          }}
-        >
-          [{index}]
-        </span>
+    <div className="candidate-row">
+      <div className="candidate-row-head">
+        <span className="candidate-row-index">[{index}]</span>
         <button
           type="button"
           className="btn btn-ghost"
@@ -1703,7 +1684,7 @@ function JudgeForm({
 
       <div className="field">
         <span className="field-label">Candidates</span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="candidate-list">
           {candidates.map((c, i) => (
             // Index-keyed: useDebouncedString re-syncs when the upstream
             // value reference changes, so focus on unaffected rows is
@@ -1719,32 +1700,28 @@ function JudgeForm({
           ))}
           <button
             type="button"
-            className="btn btn-ghost"
+            className="btn btn-ghost kv-add"
             onClick={addCandidate}
-            style={{ alignSelf: 'flex-start' }}
           >
             + add candidate
           </button>
         </div>
       </div>
 
-      <label className="field-checkbox">
-        <input
-          type="checkbox"
-          checked={overridePrompt}
-          onChange={(e) => {
-            const checked = e.target.checked;
-            setOverridePrompt(checked);
-            if (!checked) {
-              // Clear both the local buffer and the stored override so the
-              // engine falls back to the provider default.
-              setJudgePrompt('');
-              onPatch({ ...config, judgePrompt: undefined });
-            }
-          }}
-        />
-        <span>Override judge prompt</span>
-      </label>
+      <Checkbox
+        className="field-checkbox"
+        label="Override judge prompt"
+        checked={overridePrompt}
+        onChange={(next) => {
+          setOverridePrompt(next);
+          if (!next) {
+            // Clear both the local buffer and the stored override so the
+            // engine falls back to the provider default.
+            setJudgePrompt('');
+            onPatch({ ...config, judgePrompt: undefined });
+          }
+        }}
+      />
 
       {overridePrompt && (
         <div className="field">
@@ -1804,14 +1781,7 @@ function OutputNameRow({
 }) {
   const [v, setV] = useDebouncedString(value, onCommit);
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr auto',
-        gap: 8,
-        alignItems: 'center',
-      }}
-    >
+    <div className="script-output-row">
       <input
         aria-label={`output name ${index}`}
         type="text"
@@ -1947,7 +1917,7 @@ function ScriptForm({
 
       <div className="field">
         <span className="field-label">Outputs</span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="script-output-list">
           {outputs.map((name, i) => (
             <OutputNameRow
               key={i}
@@ -1959,9 +1929,8 @@ function ScriptForm({
           ))}
           <button
             type="button"
-            className="btn btn-ghost"
+            className="btn btn-ghost kv-add"
             onClick={addOutput}
-            style={{ alignSelf: 'flex-start' }}
           >
             + add output
           </button>
@@ -1978,14 +1947,11 @@ function ScriptForm({
           aria-label="Code"
           rows={12}
           spellCheck={false}
-          style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
+          className="code-textarea"
           value={code}
           onChange={(e) => setCode(e.target.value)}
         />
-        <span
-          className="field-hint"
-          style={{ fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap' }}
-        >
+        <span className="field-hint field-hint--mono-block">
           {sigHint}
         </span>
         <span className="field-hint">
@@ -2067,26 +2033,13 @@ function GlobalsPanel({ workflow }: { workflow: Workflow | null }) {
 
   return (
     <aside aria-label="config panel" className="config-stub">
-      <header
-        className="serif"
-        style={{
-          fontFamily: 'var(--mono)',
-          fontSize: 11,
-          letterSpacing: '0.22em',
-          textTransform: 'uppercase',
-          color: 'var(--fg-soft)',
-          marginBottom: 18,
-        }}
-      >
+      <header className="serif config-stub-section-head">
         workflow · globals
       </header>
       <form className="task-form" onSubmit={(e) => e.preventDefault()}>
-        <p
-          className="field-hint"
-          style={{ marginBottom: 12, color: 'var(--fg-dim)' }}
-        >
+        <p className="field-hint field-hint--dim-pad">
           Workflow-level variables available to every node as{' '}
-          <code style={{ fontFamily: 'var(--mono)' }}>
+          <code className="inline-mono">
             {'{{globals.NAME}}'}
           </code>
           . Values are literal strings — they aren&apos;t templated.
@@ -2099,7 +2052,7 @@ function GlobalsPanel({ workflow }: { workflow: Workflow | null }) {
           valuePlaceholder="literal value"
           addLabel="add global"
         />
-        <p className="field-hint" style={{ marginTop: 16 }}>
+        <p className="field-hint field-hint--bottom">
           Select a node on the canvas to edit its config.
         </p>
       </form>
@@ -2174,17 +2127,7 @@ export default function ConfigPanel() {
 
   return (
     <aside aria-label="config panel" className="config-stub">
-      <header
-        className="serif"
-        style={{
-          fontFamily: 'var(--mono)',
-          fontSize: 11,
-          letterSpacing: '0.22em',
-          textTransform: 'uppercase',
-          color: 'var(--fg-soft)',
-          marginBottom: 18,
-        }}
-      >
+      <header className="serif config-stub-section-head">
         {node.id} · {node.type}
       </header>
 

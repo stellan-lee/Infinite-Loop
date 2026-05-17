@@ -103,13 +103,17 @@ beforeEach(() => {
 describe('POST /api/run', () => {
   it('starts the engine and returns 202 with state when idle', async () => {
     getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    getStateMock.mockReturnValue(idleState);
+    // engineStartAdapter calls getState() twice: once for the busy
+    // pre-check (idle), once after start to read the assigned runId.
+    getStateMock
+      .mockReturnValueOnce(idleState)
+      .mockReturnValue({ ...runningState, runId: 'rid-1' });
 
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
 
     expect(res.status).toBe(202);
     const body = (await res.json()) as { state: RunSnapshot };
-    expect(body.state).toEqual(idleState);
+    expect(body.state).toEqual({ ...runningState, runId: 'rid-1' });
     expect(getWorkflowMock).toHaveBeenCalledWith('wf-1');
     expect(startMock).toHaveBeenCalledTimes(1);
     expect(startMock).toHaveBeenCalledWith(sampleWorkflow, { resolvedInputs: {} });
@@ -162,7 +166,12 @@ describe('POST /api/run', () => {
   it('does not propagate engine.start rejections back to the caller', async () => {
     const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
     getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    getStateMock.mockReturnValue(idleState);
+    // engineStartAdapter pre-checks busy, then void-kicks start and reads
+    // runId from the next getState() — start's rejection lands in the
+    // adapter's .catch() and never reaches the caller.
+    getStateMock
+      .mockReturnValueOnce(idleState)
+      .mockReturnValue({ ...runningState, runId: 'rid-boom' });
     startMock.mockRejectedValue(new Error('boom'));
 
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
@@ -176,11 +185,11 @@ describe('POST /api/run', () => {
 
   it('includes runId in the 202 response when engine assigns one', async () => {
     getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    // First call: guard check (idle — allow start); second call: post-start state with runId.
-    getStateMock.mockReturnValueOnce(idleState).mockReturnValueOnce({
-      ...runningState,
-      runId: 'rid-abc',
-    });
+    // engineStartAdapter: 1st call = busy pre-check (idle), 2nd call = read
+    // synchronously assigned runId; route's final getState() = third call.
+    getStateMock
+      .mockReturnValueOnce(idleState)
+      .mockReturnValue({ ...runningState, runId: 'rid-abc' });
 
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
 
@@ -297,7 +306,9 @@ describe('POST /api/run — input validation', () => {
 
   it('accepts a valid inputs payload and starts the run', async () => {
     getWorkflowMock.mockResolvedValue(workflowWithStringInput);
-    getStateMock.mockReturnValue(idleState);
+    getStateMock
+      .mockReturnValueOnce(idleState)
+      .mockReturnValue({ ...runningState, runId: 'rid-ok' });
 
     const res = await POST(
       jsonRequest({ workflowId: 'wf-inputs-1', inputs: { topic: 'cats' } }),

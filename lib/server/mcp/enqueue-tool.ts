@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { getWorkflow } from '@/lib/server/workflow-store';
 import {
   resolveRunInputs,
@@ -20,10 +21,13 @@ export type EnqueueToolResult =
     }
   | { status: 'error'; error: string };
 
+// Synthetic id used for MCP-initiated runs. Must match the global
+// `TRIGGER_ID_RE = /^[A-Za-z0-9_-]{16,32}$/` enforced everywhere else, so
+// downstream indexers / history lookups don't reject it. The "mcp-" prefix
+// keeps these recognizable in logs; the random tail is base64url (24
+// chars) — combined length 28, comfortably inside the 16–32 bound.
 function syntheticTriggerId(): string {
-  const rand = Math.random().toString(36).slice(2, 10);
-  const ts = Date.now().toString(36);
-  return `mcp_${ts}_${rand}`;
+  return `mcp-${randomBytes(18).toString('base64url')}`;
 }
 
 export async function enqueueWorkflowTool(

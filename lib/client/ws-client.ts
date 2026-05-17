@@ -81,5 +81,5 @@ export function useEngineWebSocket(): void {
     return () => {
       es.close();
     };
-  }, [setConnectionStatus, appendRunEvent]);
+  }, [setConnectionStatus, appendRunEvent, hydrateRun]);
 }

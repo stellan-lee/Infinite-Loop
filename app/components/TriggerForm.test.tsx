@@ -40,6 +40,21 @@ describe('TriggerForm', () => {
     expect(screen.getByText(/Save trigger/)).toBeTruthy();
   });
 
+  // SelectMenu is a custom button-driven dropdown (no native <select>);
+  // selecting an option means: click the trigger button to open the
+  // listbox, then click the matching option by its visible text. We
+  // query options by `select-menu-item` class because happy-dom's
+  // accessible-name calculation appends the listbox label to each
+  // option's name, which makes role+name queries match-collisions.
+  function selectOption(triggerName: RegExp | string, optionText: string) {
+    const trigger = screen.getByRole('button', { name: triggerName, expanded: false });
+    fireEvent.click(trigger);
+    const options = document.querySelectorAll<HTMLButtonElement>('.select-menu-item');
+    const target = Array.from(options).find((o) => o.textContent === optionText);
+    if (!target) throw new Error(`option "${optionText}" not found`);
+    fireEvent.click(target);
+  }
+
   test('picking GitHub plugin reveals the Event picker', () => {
     render(
       <TriggerForm
@@ -51,7 +66,7 @@ describe('TriggerForm', () => {
         onCancel={() => {}}
       />,
     );
-    fireEvent.change(screen.getByLabelText(/Plugin/i), { target: { value: 'github' } });
+    selectOption(/^Plugin$/, 'GitHub');
     expect(screen.getByLabelText(/Event/i)).toBeTruthy();
   });
 
@@ -66,7 +81,7 @@ describe('TriggerForm', () => {
         onCancel={() => {}}
       />,
     );
-    fireEvent.change(screen.getByLabelText(/Target/i), { target: { value: 'wf-a' } });
+    selectOption(/^Target$/, 'A');
     await waitFor(() => {
       expect(screen.getByText('msg')).toBeTruthy();
     });
@@ -85,8 +100,8 @@ describe('TriggerForm', () => {
       />,
     );
     fireEvent.change(screen.getByPlaceholderText(/trigger name/i), { target: { value: 'my-trigger' } });
-    fireEvent.change(screen.getByLabelText(/Plugin/i), { target: { value: 'generic' } });
-    fireEvent.change(screen.getByLabelText(/Target/i), { target: { value: 'wf-b' } });
+    selectOption(/^Plugin$/, 'Generic');
+    selectOption(/^Target$/, 'B');
     fireEvent.click(screen.getByText(/Save trigger/));
     await waitFor(() => {
       expect(captured).not.toBeNull();

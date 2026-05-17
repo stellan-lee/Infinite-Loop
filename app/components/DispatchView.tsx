@@ -125,7 +125,7 @@ export function DispatchView({ origin }: DispatchViewProps) {
     <div className="dsp-root">
       <header className="dsp-head">
         <h2 className="dsp-title">Triggers</h2>
-        <button type="button" className="dsp-new-btn" onClick={() => { setCreating(true); setSelectedId(null); setEditing(false); }}>
+        <button type="button" className="btn" onClick={() => { setCreating(true); setSelectedId(null); setEditing(false); }}>
           + New trigger
         </button>
       </header>

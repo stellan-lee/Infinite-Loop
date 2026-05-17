@@ -80,6 +80,11 @@ export default function Page() {
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [runChevronOpen, setRunChevronOpen] = useState(false);
   const dragStateRef = useRef<{ active: boolean }>({ active: false });
+  // Mirror of `rightWidth` for the resize handler to read on mouseup —
+  // the React state setter is async and `getCurrentRightWidth()` used to
+  // read off the DOM, which broke when the user switched views mid-drag
+  // and `.workspace-tri` unmounted before the persist tick fired.
+  const rightWidthRef = useRef<number>(RIGHT_WIDTH_DEFAULT);
   const showRightPanel = isRunning || historyOpen || !!selectedNodeId;
 
   // Hydrate the persisted width on mount (avoids SSR mismatch).
@@ -88,7 +93,11 @@ export default function Page() {
       const saved = window.localStorage.getItem(RIGHT_WIDTH_STORAGE_KEY);
       if (saved) {
         const n = Number(saved);
-        if (Number.isFinite(n)) setRightWidth(clampRightWidth(n));
+        if (Number.isFinite(n)) {
+          const clamped = clampRightWidth(n);
+          setRightWidth(clamped);
+          rightWidthRef.current = clamped;
+        }
       }
     } catch {
       // localStorage may be unavailable; fall back to default
@@ -121,6 +130,7 @@ export default function Page() {
     const onMove = (m: MouseEvent) => {
       if (!dragStateRef.current.active) return;
       const next = clampRightWidth(window.innerWidth - m.clientX);
+      rightWidthRef.current = next;
       setRightWidth(next);
     };
     const onUp = () => {
@@ -130,23 +140,16 @@ export default function Page() {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       try {
-        // setRightWidth is async; read from the closure where setRightWidth's
-        // newest value lives — the simplest reliable approach is to query the
-        // grid element's computed width, but a microtask after the last move
-        // event the React state has settled too. We just persist whatever
-        // state currently is — schedule on the next tick.
-        setTimeout(() => {
-          try {
-            window.localStorage.setItem(
-              RIGHT_WIDTH_STORAGE_KEY,
-              String(getCurrentRightWidth()),
-            );
-          } catch {
-            // ignore
-          }
-        }, 0);
+        // Persist the most recent dragged width from the ref so unmount of
+        // .workspace-tri (e.g. user closes the right panel right after
+        // releasing) doesn't strand us reading a stale DOM value.
+        window.localStorage.setItem(
+          RIGHT_WIDTH_STORAGE_KEY,
+          String(rightWidthRef.current),
+        );
       } catch {
-        // ignore
+        // localStorage may be unavailable; the next mount will fall back
+        // to RIGHT_WIDTH_DEFAULT.
       }
     };
 
@@ -348,12 +351,3 @@ function clampRightWidth(n: number): number {
   return Math.min(max, Math.max(RIGHT_WIDTH_MIN, Math.floor(n)));
 }
 
-/** Read the live rendered right-panel width from the CSS custom property. */
-function getCurrentRightWidth(): number {
-  if (typeof document === 'undefined') return RIGHT_WIDTH_DEFAULT;
-  const el = document.querySelector('.workspace-tri') as HTMLElement | null;
-  if (!el) return RIGHT_WIDTH_DEFAULT;
-  const v = el.style.getPropertyValue('--right-w');
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) ? n : RIGHT_WIDTH_DEFAULT;
-}

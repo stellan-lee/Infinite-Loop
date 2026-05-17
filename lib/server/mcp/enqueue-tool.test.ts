@@ -79,7 +79,10 @@ describe('enqueueWorkflowTool', () => {
       expect(out.queueId).toBe('q-1');
       expect(out.position).toBe(1);
       expect(out.workflowId).toBe('wf-sample');
-      expect(out.triggerId).toMatch(/^mcp_/);
+      expect(out.triggerId).toMatch(/^mcp-/);
+      // The id must satisfy the global TRIGGER_ID_RE so downstream lookups
+      // accept it — guard against re-introducing the prior format.
+      expect(out.triggerId).toMatch(/^[A-Za-z0-9_-]{16,32}$/);
     }
     expect(enqueueMock).toHaveBeenCalledTimes(1);
     const call = enqueueMock.mock.calls[0]![0];

@@ -145,4 +145,24 @@ describe('touchLastFired', () => {
     await touchLastFired('absent_id_000000000000');
     // Should not throw.
   });
+
+  test('three concurrent touches do not collide on the tmp file', async () => {
+    // Regression for the touchLastFired ENOENT race surfaced by the review:
+    // with a shared `${target}.tmp` name, near-simultaneous touches racing
+    // through writeFile + rename produced ENOENT when one cleanup arrived
+    // between another's writeFile and rename. With the per-call random
+    // suffix, all three writers coexist and one wins the final rename.
+    await saveTrigger(baseTrigger());
+    await Promise.all([
+      touchLastFired('idAAAAAAAAAAAAAAAAAAAA', 1_700_000_000_010),
+      touchLastFired('idAAAAAAAAAAAAAAAAAAAA', 1_700_000_000_020),
+      touchLastFired('idAAAAAAAAAAAAAAAAAAAA', 1_700_000_000_030),
+    ]);
+    const after = await getTrigger('idAAAAAAAAAAAAAAAAAAAA');
+    expect([1_700_000_000_010, 1_700_000_000_020, 1_700_000_000_030])
+      .toContain(after.lastFiredAt!);
+    // No `.tmp` leftover should remain in the directory.
+    const dirEntries = await fs.readdir(tmpTrDir);
+    expect(dirEntries.some((f) => f.endsWith('.tmp'))).toBe(false);
+  });
 });

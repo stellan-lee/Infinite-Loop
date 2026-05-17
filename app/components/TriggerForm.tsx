@@ -3,6 +3,8 @@
 import { useMemo, useState } from 'react';
 import type { WebhookPlugin, WebhookTrigger, TriggerPredicate } from '@/lib/shared/trigger';
 import { FieldPicker } from './FieldPicker';
+import SelectMenu from './SelectMenu';
+import Checkbox from './Checkbox';
 
 export interface TriggerFormProps {
   plugins: WebhookPlugin[];
@@ -93,60 +95,59 @@ export function TriggerForm({
         />
       </label>
 
-      <label className="trg-form-row">
+      <div className="trg-form-row">
         <span className="trg-form-label">Enabled</span>
-        <input
-          type="checkbox"
+        <Checkbox
           checked={enabled}
-          onChange={(e) => setEnabled(e.target.checked)}
+          onChange={setEnabled}
+          ariaLabel="Enabled"
         />
-      </label>
+      </div>
 
-      <label className="trg-form-row">
+      {/* SelectMenu renders a <button> — HTML doesn't define <label
+       * for> on buttons, so wrap with <div> and rely on the
+       * SelectMenu's ariaLabel for the accessible name. The visible
+       * label span is decorative and not click-activated. */}
+      <div className="trg-form-row">
         <span className="trg-form-label">Plugin</span>
-        <select
-          className="trg-form-select"
-          aria-label="Plugin"
+        <SelectMenu
+          ariaLabel="Plugin"
           value={pluginId}
-          onChange={(e) => handleSetPlugin(e.target.value)}
-        >
-          {plugins.map((p) => (
-            <option key={p.id} value={p.id}>{p.displayName}</option>
-          ))}
-        </select>
-      </label>
+          options={plugins.map((p) => ({ value: p.id, label: p.displayName }))}
+          onChange={handleSetPlugin}
+        />
+      </div>
 
       {plugin?.eventHeader && (
-        <label className="trg-form-row">
+        <div className="trg-form-row">
           <span className="trg-form-label">Event</span>
-          <select
-            className="trg-form-select"
-            aria-label="Event"
+          <SelectMenu
+            ariaLabel="Event"
             value={eventType}
-            onChange={(e) => setEventType(e.target.value)}
-          >
-            <option value="">— select —</option>
-            {plugin.events.map((ev) => (
-              <option key={ev.type} value={ev.type}>{ev.displayName}</option>
-            ))}
-          </select>
-        </label>
+            options={[
+              { value: '', label: '— select —' },
+              ...plugin.events.map((ev) => ({
+                value: ev.type,
+                label: ev.displayName,
+              })),
+            ]}
+            onChange={setEventType}
+          />
+        </div>
       )}
 
-      <label className="trg-form-row">
+      <div className="trg-form-row">
         <span className="trg-form-label">Target</span>
-        <select
-          className="trg-form-select"
-          aria-label="Target"
+        <SelectMenu
+          ariaLabel="Target"
           value={workflowId}
-          onChange={(e) => setWorkflowId(e.target.value)}
-        >
-          <option value="">— select —</option>
-          {workflows.map((w) => (
-            <option key={w.id} value={w.id}>{w.name}</option>
-          ))}
-        </select>
-      </label>
+          options={[
+            { value: '', label: '— select —' },
+            ...workflows.map((w) => ({ value: w.id, label: w.name })),
+          ]}
+          onChange={setWorkflowId}
+        />
+      </div>
 
       {initial && (
         <div className="trg-form-row">
@@ -158,7 +159,7 @@ export function TriggerForm({
       <section className="trg-form-section">
         <header className="trg-form-section-head">
           <span>Match (all must pass)</span>
-          <button type="button" className="trg-form-add" onClick={handleAddPredicate}>+ Add predicate</button>
+          <button type="button" className="btn btn-ghost" onClick={handleAddPredicate}>+ Add predicate</button>
         </header>
         {match.map((p, idx) => (
           <div className="trg-form-predicate" key={idx}>
@@ -168,14 +169,12 @@ export function TriggerForm({
               onChange={(v) => handleUpdatePredicate(idx, 'lhs', v)}
               ariaLabel={`Predicate ${idx + 1} lhs`}
             />
-            <select
-              className="trg-form-select"
-              aria-label={`Predicate ${idx + 1} op`}
+            <SelectMenu
+              ariaLabel={`Predicate ${idx + 1} op`}
               value={p.op}
-              onChange={(e) => handleUpdatePredicate(idx, 'op', e.target.value)}
-            >
-              {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
-            </select>
+              options={OPS.map((o) => ({ value: o, label: o }))}
+              onChange={(v) => handleUpdatePredicate(idx, 'op', v)}
+            />
             <input
               className="trg-form-input"
               type="text"
@@ -183,7 +182,7 @@ export function TriggerForm({
               onChange={(e) => handleUpdatePredicate(idx, 'rhs', e.target.value)}
               aria-label={`Predicate ${idx + 1} rhs`}
             />
-            <button type="button" className="trg-form-remove" onClick={() => handleRemovePredicate(idx)}>×</button>
+            <button type="button" className="btn btn-ghost" onClick={() => handleRemovePredicate(idx)} aria-label="remove predicate">×</button>
           </div>
         ))}
       </section>
@@ -209,8 +208,8 @@ export function TriggerForm({
       {error && <div className="trg-form-error">{error}</div>}
 
       <div className="trg-form-actions">
-        <button type="button" className="trg-form-save" disabled={saving} onClick={handleSave}>Save trigger</button>
-        <button type="button" className="trg-form-cancel" onClick={onCancel}>Cancel</button>
+        <button type="button" className="btn" disabled={saving} onClick={handleSave}>Save trigger</button>
+        <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );

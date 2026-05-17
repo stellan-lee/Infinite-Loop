@@ -372,7 +372,7 @@ export default function Palette() {
                   )}
                   <button
                     type="button"
-                    className="palette-manage"
+                    className="btn btn-ghost palette-manage"
                     onClick={() => setConnectionsOpen(true)}
                     aria-label="manage hermes connections"
                   >

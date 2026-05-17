@@ -74,7 +74,7 @@ describe('GET /api/workflows', () => {
     ];
     mocked.listWorkflows.mockResolvedValueOnce(summaries);
 
-    const res = await listGET();
+    const res = await listGET(new Request('http://test/api/workflows'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ workflows: summaries });
@@ -83,7 +83,7 @@ describe('GET /api/workflows', () => {
 
   it('returns 500 on store error', async () => {
     mocked.listWorkflows.mockRejectedValueOnce(new Error('disk on fire'));
-    const res = await listGET();
+    const res = await listGET(new Request('http://test/api/workflows'));
     expect(res.status).toBe(500);
     const body = await res.json();
     expect(body.error).toContain('disk on fire');

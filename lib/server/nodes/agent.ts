@@ -43,9 +43,51 @@ export const agentExecutor: NodeExecutor = {
       };
     }
 
+    const baseCwd = isNonEmptyString(cfg.cwd) ? cfg.cwd : ctx.defaultCwd;
+    let spawnCwd = baseCwd;
+    let worktreePath: string | undefined;
+
+    // Worktree is CLI-only. HTTP providers don't have a process cwd, so the
+    // option is silently a no-op for them — matches how `cwd` itself works.
+    // We require `ctx.runWorktrees`: a unit-test context that hand-builds the
+    // ctx without an engine and asks for a worktree gets a clear error rather
+    // than a silent skip.
+    if (cfg.useWorktree === true && provider.transport === 'cli') {
+      if (!ctx.runWorktrees) {
+        return {
+          outputs: { errorMessage: 'useWorktree set but no run worktree manager available' },
+          branch: 'error',
+        };
+      }
+      if (!isNonEmptyString(ctx.nodeId)) {
+        return {
+          outputs: { errorMessage: 'useWorktree set but node id is unknown' },
+          branch: 'error',
+        };
+      }
+      try {
+        worktreePath = await ctx.runWorktrees.create({
+          repoPath: baseCwd,
+          ref: cfg.worktreeRef,
+          nodeId: ctx.nodeId,
+        });
+        spawnCwd = worktreePath;
+        // Surface the path in the live console so the user knows which dir
+        // the agent is editing. Useful when triaging "where did my changes
+        // go?" after an isolated run.
+        ctx.emitStdoutChunk?.(`[worktree] ${worktreePath}\n`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          outputs: { errorMessage: `worktree setup failed: ${message}` },
+          branch: 'error',
+        };
+      }
+    }
+
     const result = await runProvider(provider, {
       prompt: cfg.prompt,
-      cwd: isNonEmptyString(cfg.cwd) ? cfg.cwd : ctx.defaultCwd,
+      cwd: spawnCwd,
       timeoutMs: cfg.timeoutMs,
       signal: ctx.signal,
       onStdoutChunk: ctx.emitStdoutChunk,
@@ -53,13 +95,14 @@ export const agentExecutor: NodeExecutor = {
       agent: cfg.agent,
     });
 
-    const outputs = {
+    const outputs: Record<string, unknown> = {
       stdout: result.stdout,
       stderr: result.stderr,
       exitCode: result.exitCode,
       durationMs: result.durationMs,
       timedOut: result.timedOut,
     };
+    if (worktreePath) outputs.worktreePath = worktreePath;
 
     const success = result.exitCode === 0 && !result.timedOut;
     return { outputs, branch: success ? 'next' : 'error' };

@@ -66,6 +66,17 @@ export interface AgentConfig {
    * becomes `--agent <name>` on the spawned command. When unset, the flag is
    * omitted entirely. Other providers ignore this field. */
   agent?: string;
+  /** When true, the engine creates a fresh git worktree off `cwd` and spawns
+   * the CLI there instead of in `cwd` itself, so parallel agents can edit the
+   * same repo without stepping on each other. The worktree is created when
+   * the node first runs in a given run and removed at run end. CLI-transport
+   * providers only — HTTP providers ignore this. */
+  useWorktree?: boolean;
+  /** Optional templated git ref (branch / commit / tag) the worktree is based
+   * on. Falls back to HEAD of `cwd`. Only meaningful when `useWorktree` is
+   * true. NOTE: uncommitted edits in `cwd` are NOT carried into the worktree
+   * — commit or stash first if you want the agent to see them. */
+  worktreeRef?: string;
 }
 
 export interface ConditionConfig {
@@ -452,7 +463,27 @@ export interface RunSummary {
 
 /* ─── node executor contract ──────────────────────────────────────────────── */
 
+/**
+ * Per-run helper handed to node executors that opt into git worktrees. The
+ * engine constructs one instance per run and calls `cleanupAll()` once the
+ * run settles. Executors call `create()` per node — repeated calls with the
+ * same `nodeId` within a single run reuse the same path (so a Loop body
+ * doesn't accumulate a worktree per iteration).
+ */
+export interface RunWorktrees {
+  create(opts: {
+    repoPath: string;
+    ref?: string;
+    nodeId: string;
+  }): Promise<string>;
+  cleanupAll(): Promise<void>;
+}
+
 export interface NodeExecutorContext {
+  /** This node's id within its workflow. Used by executors that need to key
+   * per-run resources (e.g. worktrees) by node identity. Optional for
+   * back-compat with unit-test contexts that hand-build the ctx. */
+  nodeId?: string;
   /** Already-template-resolved config for this node. */
   config: unknown;
   /** Read-only flat scope of all prior nodes' outputs. */
@@ -465,6 +496,10 @@ export interface NodeExecutorContext {
   loopIteration?: number;
   /** Stream a stdout line back to the bus (Claude/Shell nodes). */
   emitStdoutChunk?: (line: string) => void;
+  /** Per-run worktree manager. Present only when the engine drives the run;
+   * unit-test contexts may omit it. Agent nodes use it when `useWorktree`
+   * is set. */
+  runWorktrees?: RunWorktrees;
 }
 
 export interface NodeExecutorResult {

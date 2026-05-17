@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import type { WebhookTrigger, WebhookPlugin } from '../shared/trigger';
 import { getWorkflow } from './workflow-store';
@@ -143,12 +144,29 @@ export async function saveTrigger(
   };
 
   const target = fileFor(saved.id);
-  const tmp = `${target}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(saved, null, 2), 'utf8');
-  await fs.rename(tmp, target);
+  await atomicWriteJson(target, saved);
 
   triggerIndex.invalidate();
   return saved;
+}
+
+/** Write `value` as JSON to `target` atomically.
+ *
+ * Uses a per-call random suffix on the temp file so concurrent writers
+ * (and concurrent unlinkers like `deleteTrigger`) can't collide on the
+ * same `.tmp` path — a previous bug where two near-simultaneous saves
+ * raced via `${target}.tmp` and one rename hit ENOENT when the other
+ * cleanup arrived between writeFile and rename. */
+async function atomicWriteJson(target: string, value: unknown): Promise<void> {
+  const tmp = `${target}.${randomBytes(6).toString('hex')}.tmp`;
+  await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+  try {
+    await fs.rename(tmp, target);
+  } catch (err) {
+    // Best-effort clean up the orphaned temp if rename failed for any reason.
+    try { await fs.unlink(tmp); } catch { /* ignore */ }
+    throw err;
+  }
 }
 
 export async function deleteTrigger(id: string): Promise<void> {
@@ -176,10 +194,20 @@ export async function touchLastFired(id: string, ts: number = Date.now()): Promi
     return; // trigger deleted while in queue — best effort
   }
   const updated: WebhookTrigger = { ...current, lastFiredAt: ts };
-  const target = fileFor(id);
-  const tmp = `${target}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(updated, null, 2), 'utf8');
-  await fs.rename(tmp, target);
+  try {
+    await atomicWriteJson(fileFor(id), updated);
+  } catch (err) {
+    // Best-effort hot path: swallow file-gone races. EINVAL is here
+    // because Darwin surfaces it (not just ENOENT/ENOTDIR) when the
+    // parent dir is torn down concurrently — accepts the small Linux
+    // risk of masking a real bug in exchange for a quiet hot path.
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EINVAL') {
+      console.warn(`[trigger-store] touchLastFired(${id}) skipped: ${code}`);
+      return;
+    }
+    throw err;
+  }
   triggerIndex.invalidate();
 }
 

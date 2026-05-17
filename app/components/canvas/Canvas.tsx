@@ -654,7 +654,6 @@ function CanvasInner() {
     <div
       aria-label="canvas"
       className="canvas-shell"
-      style={{ width: '100%', height: '100%', position: 'relative' }}
       onDrop={onDrop}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}

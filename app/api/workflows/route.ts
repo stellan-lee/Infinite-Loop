@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 import {
   listWorkflows,
   saveWorkflow,
 } from '@/lib/server/workflow-store';
 import { hasBasicWorkflowShape } from './validate';
 
-export async function GET() {
+export async function GET(req: Request) {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
   try {
     const workflows = await listWorkflows();
     return NextResponse.json({ workflows });
@@ -18,6 +21,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
   let body: unknown;
   try {
     body = await req.json();

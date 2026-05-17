@@ -71,4 +71,36 @@ describe('POST /api/triggers/[id]/test', () => {
     );
     expect(res.status).toBe(404);
   });
+
+  test('caller-supplied body.headers cannot override server-set content-length', async () => {
+    // Regression: header spread order matters — the server-set
+    // content-length must win over anything the caller injects via
+    // body.headers, otherwise the synthetic Request could lie about
+    // its size and bypass the webhook route's 1 MiB cap re-check.
+    await seedTrigger();
+    const payload = { hello: 'world' };
+    const expectedLen = Buffer.byteLength(JSON.stringify(payload), 'utf8');
+    const res = await POST(
+      new Request('http://test/api/triggers/idTESTTESTTESTTESTTEST/test', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          payload,
+          // Attempt to spoof a huge length the server should ignore.
+          headers: { 'content-length': '99999999' },
+        }),
+      }),
+      { params: Promise.resolve({ id: 'idTESTTESTTESTTESTTEST' }) },
+    );
+    // The webhook route runs its own content-length guard at 1 MiB; if
+    // our spread had been backwards, the spoofed 99999999 would have
+    // tripped that guard and the envelope would carry json.status:
+    // 413. Asserting against it is the regression signal.
+    expect(res.status).toBe(200);
+    const json = await res.json() as { status: number };
+    expect(json.status).not.toBe(413);
+    // Sanity: the real body is well under the 1 MiB cap, so any 413
+    // we ever see in this test is from spoofing, not real overflow.
+    expect(expectedLen).toBeLessThan(1024);
+  });
 });

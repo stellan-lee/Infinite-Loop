@@ -41,6 +41,7 @@ import { nodeExecutors } from './nodes/index';
 import { saveRun } from './run-store';
 import { resolve as resolveTemplate } from './templating';
 import { getWorkflow } from './workflow-store';
+import { RunWorktreesImpl } from './worktree-manager';
 import {
   collectBranchOutputs,
   identifyBranchRoots,
@@ -50,7 +51,7 @@ import {
 } from './workflow-engine-helpers';
 
 const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
-  agent: ['prompt', 'cwd'],
+  agent: ['prompt', 'cwd', 'worktreeRef'],
   condition: ['against'],
   branch: ['lhs', 'rhs'],
   // Script: `code` stays literal so template braces inside string literals
@@ -103,6 +104,7 @@ export class WorkflowEngine {
 
   private executors: Record<string, NodeExecutor>;
   private loadWorkflow: WorkflowLoader;
+  private currentRunWorktrees?: RunWorktreesImpl;
 
   constructor(
     executors: Record<string, NodeExecutor> = nodeExecutors,
@@ -134,6 +136,10 @@ export class WorkflowEngine {
     // case, so we accept the gap rather than write a "running" placeholder
     // (which would accumulate as zombies without a reaper).
     this.currentRunId = crypto.randomUUID();
+    // Per-run worktree manager. Lazy: a workflow that never opts into
+    // useWorktree never touches git. Cleaned up unconditionally in the
+    // settle path below.
+    this.currentRunWorktrees = new RunWorktreesImpl(this.currentRunId);
     // Workflow globals are seeded into scope upfront so any node can
     // reference `{{globals.NAME}}`. They're stored as a plain record so
     // the templating resolver walks into them like any other namespaced
@@ -197,6 +203,24 @@ export class WorkflowEngine {
         eventBus.emit({ type: 'error', message: errorMessage });
         finalStatus = 'failed';
       }
+    }
+
+    // Tear down any worktrees the run opened. `walkFrom` has returned, so
+    // every agent CLI has already exited (the runner awaits child close
+    // before resolving) and the directories are safe to remove. Errors are
+    // surfaced as events but do not change the run's terminal status — a
+    // half-cleaned `.infloop-worktrees/` is annoying, not a run failure.
+    if (this.currentRunWorktrees) {
+      try {
+        await this.currentRunWorktrees.cleanupAll();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        eventBus.emit({
+          type: 'error',
+          message: `worktree cleanup failed: ${message}`,
+        });
+      }
+      this.currentRunWorktrees = undefined;
     }
 
     const finishedAt = Date.now();
@@ -289,6 +313,11 @@ export class WorkflowEngine {
     this.workflow = undefined;
     this.abort = undefined;
     this.edgesBySource.clear();
+    // Defense in depth: the settle path in start() already nulls this, but if
+    // a future caller ever invokes reset() between an abort and the natural
+    // settle, we don't want a stale manager to carry entries into the next
+    // run.
+    this.currentRunWorktrees = undefined;
   }
 
   /* ─── internals ─────────────────────────────────────────────────────────── */
@@ -906,6 +935,7 @@ export class WorkflowEngine {
 
     const startedAt = Date.now();
     const ctx: NodeExecutorContext = {
+      nodeId: node.id,
       config: resolvedConfig,
       scope,
       defaultCwd: cwd,
@@ -919,6 +949,7 @@ export class WorkflowEngine {
           loopIteration: exec.loopIteration,
         });
       },
+      runWorktrees: this.currentRunWorktrees,
     };
 
     let result;
@@ -1013,7 +1044,7 @@ export class WorkflowEngine {
 // HMR will pick up the new file but the cached instance under
 // `globalThis.__infiniteLoopWorkflowEngine` was constructed with the old class
 // definition and behaves the old way for the rest of the dev server's life.
-const ENGINE_VERSION = 9; // v9: parallel + subworkflow walkers
+const ENGINE_VERSION = 10; // v10: per-run worktree manager
 
 declare global {
   // eslint-disable-next-line no-var

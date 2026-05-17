@@ -2246,35 +2246,14 @@ input[type='number'].no-spin {
   color: var(--accent-on-live-soft);
 }
 
+/* Layout-only modifier for a Checkbox row in config forms. The box and
+ * mark visuals come from .checkbox / .checkbox-box / .checkbox-mark.
+ * (Previously contained .checkbox-row input rules for a native
+ * checkbox; those were dropped when the consumer switched to <Checkbox>.) */
 .checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--fg-soft);
-  cursor: pointer;
-  user-select: none;
-}
-.checkbox-row input {
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-input);
-  cursor: pointer;
-  position: relative;
-  transition: border-color 120ms;
-}
-.checkbox-row input:checked {
-  border-color: var(--accent-live);
-  background: var(--accent-live);
-}
-.checkbox-row input:checked::after {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  background: var(--bg-deep);
 }
 
 .field-row {
@@ -3728,18 +3707,6 @@ input[type='number'].no-spin {
   margin: 0;
 }
 
-.dsp-new-btn {
-  font-family: var(--mono);
-  font-size: 12px;
-  padding: 4px 10px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-input);
-  color: var(--fg);
-  cursor: pointer;
-}
-
-.dsp-new-btn:hover { background: var(--bg-elevated); }
-
 .dsp-split {
   display: grid;
   grid-template-columns: 40% 1fr;
@@ -3865,7 +3832,6 @@ input[type='number'].no-spin {
 }
 
 .trg-form-input,
-.trg-form-select,
 .trg-form-textarea {
   font-family: var(--mono);
   font-size: 12px;
@@ -3892,17 +3858,6 @@ input[type='number'].no-spin {
   color: var(--fg-soft);
   display: flex;
   justify-content: space-between;
-}
-
-.trg-form-add,
-.trg-form-remove {
-  font-family: var(--mono);
-  font-size: 11px;
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--fg);
-  cursor: pointer;
 }
 
 .trg-form-predicate {
@@ -3942,19 +3897,6 @@ input[type='number'].no-spin {
 }
 
 .trg-form-actions { display: flex; gap: 8px; padding-top: 4px; }
-
-.trg-form-save,
-.trg-form-cancel {
-  font-family: var(--mono);
-  font-size: 12px;
-  padding: 4px 12px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-input);
-  color: var(--fg);
-  cursor: pointer;
-}
-
-.trg-form-save:hover { background: var(--bg-elevated); }
 
 .trg-form-url {
   font-family: var(--mono);
@@ -4093,3 +4035,161 @@ input[type='number'].no-spin {
 }
 
 .trg-summary-link:hover { color: var(--fg); }
+
+/* ─── Checkbox (replaces native <input type="checkbox">) ──────────
+ * Same shape as SelectMenu — semantic component lives in
+ * app/components/Checkbox.tsx; visual rules live here. */
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.checkbox-box {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--bg-sunk);
+  border-radius: 2px;
+  cursor: pointer;
+  padding: 0;
+  color: var(--fg);
+  font: inherit;
+  line-height: 1;
+  transition: background 0.1s, border-color 0.1s;
+}
+.checkbox-box:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.checkbox-box[data-checked='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.checkbox-box:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.checkbox-mark {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+.checkbox-label {
+  color: var(--fg);
+  font-size: 13px;
+}
+
+/* ─── Canvas shell — fills its grid cell. xyflow needs explicit
+ * width/height; expressing as a class keeps the JSX free of inline
+ * style. */
+.canvas-shell {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* ─── ConfigPanel: rows lifted out of inline styles ────────────── */
+.kv-add {
+  align-self: flex-start;
+}
+.candidate-list,
+.script-output-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.script-output-list { gap: 8px; }
+.candidate-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.candidate-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.candidate-row-index {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-soft);
+  letter-spacing: 0.1em;
+}
+.field-hint--mono-block {
+  font-family: var(--mono);
+  white-space: pre-wrap;
+}
+.field-hint--error { color: var(--accent-err); }
+.field-hint--dim-pad { margin-bottom: 12px; color: var(--fg-dim); }
+.field-hint--bottom { margin-top: 16px; }
+
+/* Standalone monospace inline code chip — used when there is no
+ * surrounding `.field-hint` to inherit from (e.g. inside a sentence in
+ * GlobalsPanel's intro paragraph). */
+.inline-mono { font-family: var(--mono); }
+
+/* Two-column grid for OutputNameRow (script outputs editor row). Lives
+ * alongside `.script-output-list` so the namespace stays cohesive. */
+.script-output-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Three-column grid for KvRow (key + value + remove button). */
+.kv-row {
+  display: grid;
+  grid-template-columns: 120px 1fr auto;
+  gap: 8px;
+  align-items: flex-start;
+}
+.kv-row-value {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kv-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Field wrapper that needs relative positioning for an absolutely-
+ * positioned child (FolderPicker overlay). */
+.field--relative { position: relative; }
+
+/* Disabled-looking row used in the agent picker for the "no other
+ * workflows" placeholder. */
+.agent-picker-row--inert { cursor: default; }
+
+/* Read-only provider-id chip in the Agent config panel. */
+.provider-id-readonly {
+  font-family: var(--mono);
+  color: var(--fg-soft);
+}
+
+/* Code-block textarea — script node body. */
+.code-textarea {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* Section header used by both ConfigPanel and GlobalsPanel — small
+ * caps, mono, big letter-spacing. Single source so the two headers can
+ * never drift apart. Named after the existing `.config-stub` shell so
+ * the namespace stays cohesive. */
+.config-stub-section-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--fg-soft);
+  margin-bottom: 18px;
+}

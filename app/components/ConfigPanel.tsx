@@ -1214,6 +1214,22 @@ function ConditionForm({
                 sentinel: {
                   pattern: config.sentinel?.pattern ?? '',
                   isRegex: next,
+                  caseInsensitive: config.sentinel?.caseInsensitive,
+                },
+              })
+            }
+          />
+          <Checkbox
+            className="checkbox-row"
+            label="Case-insensitive"
+            checked={config.sentinel?.caseInsensitive ?? false}
+            onChange={(next) =>
+              onPatch({
+                ...config,
+                sentinel: {
+                  pattern: config.sentinel?.pattern ?? '',
+                  isRegex: config.sentinel?.isRegex ?? false,
+                  caseInsensitive: next,
                 },
               })
             }

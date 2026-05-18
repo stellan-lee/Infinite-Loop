@@ -27,4 +27,41 @@ describe('evaluatePredicate', () => {
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.error).toMatch(/invalid regex/);
   });
+
+  test('caseInsensitive makes == ignore case', () => {
+    expect(
+      evaluatePredicate({ lhs: 'PUSH', op: '==', rhs: 'push', caseInsensitive: true }),
+    ).toEqual({ ok: true, result: true });
+    expect(
+      evaluatePredicate({ lhs: 'PUSH', op: '==', rhs: 'push' }),
+    ).toEqual({ ok: true, result: false });
+  });
+
+  test('caseInsensitive makes != honor case-folded comparison', () => {
+    expect(
+      evaluatePredicate({ lhs: 'A', op: '!=', rhs: 'a', caseInsensitive: true }),
+    ).toEqual({ ok: true, result: false });
+  });
+
+  test('caseInsensitive makes contains lower-fold both sides', () => {
+    expect(
+      evaluatePredicate({
+        lhs: 'refs/heads/MAIN',
+        op: 'contains',
+        rhs: 'main',
+        caseInsensitive: true,
+      }),
+    ).toEqual({ ok: true, result: true });
+  });
+
+  test('caseInsensitive applies the regex i flag for matches', () => {
+    expect(
+      evaluatePredicate({
+        lhs: 'V1.2.3',
+        op: 'matches',
+        rhs: '^v\\d+\\.\\d+\\.\\d+$',
+        caseInsensitive: true,
+      }),
+    ).toEqual({ ok: true, result: true });
+  });
 });

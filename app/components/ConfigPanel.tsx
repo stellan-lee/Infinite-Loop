@@ -1409,6 +1409,13 @@ function BranchForm({
         />
         <RefChips refs={refs} />
       </div>
+
+      <Checkbox
+        className="checkbox-row"
+        label="Case-insensitive"
+        checked={config.caseInsensitive ?? false}
+        onChange={(next) => onPatch({ ...config, caseInsensitive: next })}
+      />
     </>
   );
 }

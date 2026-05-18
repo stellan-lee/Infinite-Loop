@@ -11,38 +11,30 @@ import './queue-history';
 import type { Workflow } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 
-// CONTRACT: workflowEngine.start() must assign snapshot.runId synchronously
-// (before its first await). Verified in workflow-engine.ts as of 2026-05-13.
-// Lines 129 and 143-150 of workflow-engine.ts set this.currentRunId and
-// this.snapshot.runId synchronously; the first await is at line 182
-// (walkFrom). The void-kick-and-read pattern below is therefore safe on the
-// happy path.
-//
-// The busy path is NOT safe with void-kick alone: start() rejects
-// synchronously BEFORE assigning a new runId (line 116-117), the void's
-// .catch() swallows the rejection, and the subsequent getState().runId
-// returns the in-flight run's runId. drain() would then think the start
-// succeeded and silently drop the queued item. Pre-check the busy state
-// here and throw a busy-shaped error so drain() re-prepends and waits.
-export async function engineStartAdapter(
+/**
+ * Synchronous start: returns the runId immediately. Multi-run safe — there
+ * is no busy state to pre-check; the registry admits every run. Folder-
+ * touching runs are throttled inside `controller.start` → first lock
+ * acquire → slot pool wait. Folder-free runs run unlimited.
+ *
+ * Kept exported so existing imports continue to work and so /api/run can
+ * call it directly. The old engineStartAdapter has been retired as part of
+ * stage 5 (concurrent-runs refactor).
+ */
+export function engineStartAdapter(
   engine: WorkflowEngine,
   wf: Workflow,
   opts: { resolvedInputs: ResolvedInputs },
 ): Promise<string> {
-  if (engine.getState().status === 'running') {
-    throw new Error('a run is already active');
-  }
-  // engine.start() flips status to 'running' and assigns currentRunId in its
-  // first synchronous block before any await. Kick it off without awaiting,
-  // then read the runId from the snapshot.
-  void engine.start(wf, opts).catch((err) => {
-    console.error('[trigger-queue] engine.start rejected later:', err);
+  const { runId, completion } = engine.startRun(wf, opts);
+  // Swallow the completion rejection here so callers reading the synchronous
+  // runId don't get an unhandled rejection. The run's terminal status flows
+  // through events; engine.getRun(runId).snapshot.errorMessage carries any
+  // failure detail.
+  completion.catch((err) => {
+    console.error('[trigger-queue] run completion rejected:', err);
   });
-  const runId = engine.getState().runId;
-  if (!runId) {
-    throw new Error('engine.start did not assign a runId');
-  }
-  return runId;
+  return Promise.resolve(runId);
 }
 
 function createSingleton(): TriggerQueue {

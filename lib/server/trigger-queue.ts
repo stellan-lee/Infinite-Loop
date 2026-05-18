@@ -21,10 +21,13 @@ export interface TriggerQueueDeps {
   maxQueue?: number;
 }
 
-function isBusyError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return /run is already active|busy/i.test(err.message);
-}
+// The pre-stage-5 trigger queue used to catch a "run is already active"
+// error from engineStart and re-prepend the head, waiting for the next
+// `run_finished` event before retrying. With lazy slot admission, the
+// engine no longer rejects starts on busy — every start admits, and
+// folder-touching back-pressure happens inside the lock manager. Custom
+// engineStart implementations may still reject for other reasons; those
+// surface as `trigger_dropped { reason: 'engine-start-failed' }`.
 
 export class TriggerQueue {
   private q: QueuedRun[] = [];
@@ -125,10 +128,6 @@ export class TriggerQueue {
             catch (err) { console.error('[trigger-queue] touchLastFired failed:', err); }
           }
         } catch (err) {
-          if (isBusyError(err)) {
-            this.q.unshift(head); // wait for next settle
-            return;
-          }
           eventBus.emit({
             type: 'trigger_dropped',
             queueId: head.queueId,

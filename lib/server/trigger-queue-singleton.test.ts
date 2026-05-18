@@ -55,17 +55,22 @@ describe('engineStartAdapter', () => {
   };
 
   function hangingExecutor(): { exec: NodeExecutor; release: () => void } {
-    let resolve: ((v: { branch: EdgeHandle; outputs: Record<string, unknown> }) => void) | null =
-      null;
+    const pending: Array<(v: { branch: EdgeHandle; outputs: Record<string, unknown> }) => void> = [];
     const exec: NodeExecutor = {
       execute: () =>
         new Promise((r) => {
-          resolve = r;
+          pending.push(r);
         }),
     };
     return {
       exec,
-      release: () => resolve?.({ branch: 'next', outputs: {} }),
+      // Release ALL parked invocations so tests with multiple concurrent
+      // runs don't leak hanging promises after teardown.
+      release: () => {
+        while (pending.length > 0) {
+          pending.shift()!({ branch: 'next', outputs: {} });
+        }
+      },
     };
   }
 
@@ -87,28 +92,22 @@ describe('engineStartAdapter', () => {
     await new Promise((r) => setTimeout(r, 5));
   });
 
-  test('rejects with busy error when a run is already active (does NOT return the stale runId)', async () => {
+  test('admits a second run while the first is still in flight (lazy slot model)', async () => {
     const { exec, release } = hangingExecutor();
     const engine = new WorkflowEngine({ start: exec });
 
-    // Kick off the first run; it will park inside the hanging start executor.
+    // Kick off the first run; it parks inside the hanging start executor.
     void engine.start(wf).catch(() => {});
-    // engine.start sets status='running' synchronously before its first await,
-    // but the executor await happens via walkFrom → executeNode. Yield once so
-    // the snapshot reflects the running state without leaving the hang.
     await Promise.resolve();
     expect(engine.getState().status).toBe('running');
-    const inFlightRunId = engine.getState().runId;
+    const firstRunId = engine.getState().runId;
 
-    // Now the adapter must REJECT, not return inFlightRunId. The pre-fix bug
-    // was: void-kick swallowed the busy throw, and getState().runId returned
-    // the in-flight run's id — drain() then dropped the queued item.
-    await expect(
-      engineStartAdapter(engine, wf, { resolvedInputs: {} }),
-    ).rejects.toThrow(/already active|busy/i);
-
-    // The in-flight runId must not have changed (no spurious side effect).
-    expect(engine.getState().runId).toBe(inFlightRunId);
+    // Stage 5: the adapter no longer pre-checks busy. A second start returns
+    // a NEW runId synchronously and both runs are alive concurrently.
+    const secondRunId = await engineStartAdapter(engine, wf, { resolvedInputs: {} });
+    expect(secondRunId).toBeTruthy();
+    expect(secondRunId).not.toBe(firstRunId);
+    expect(engine.list().length).toBe(2);
 
     release();
     await new Promise((r) => setTimeout(r, 5));

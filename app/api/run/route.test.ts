@@ -14,6 +14,14 @@ mock.module('@/lib/server/workflow-engine', () => ({
     start: mock(),
     stop: mock(),
     getState: mock(),
+    getRun: mock(),
+    list: mock(() => []),
+    startRun: mock(() => ({ runId: 'mock-run', completion: Promise.resolve() })),
+    slotPool: {
+      getCapacity: () => 4,
+      size: () => 0,
+      waiterCount: () => 0,
+    },
   },
 }));
 
@@ -72,6 +80,7 @@ const sampleWorkflow: Workflow = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyMock = Mock<(...args: any[]) => any>;
 const startMock = workflowEngine.start as unknown as AnyMock;
+const startRunMock = (workflowEngine as unknown as { startRun: AnyMock }).startRun;
 const stopMock = workflowEngine.stop as unknown as AnyMock;
 const getStateMock = workflowEngine.getState as unknown as AnyMock;
 const getWorkflowMock = getWorkflow as unknown as AnyMock;
@@ -94,6 +103,8 @@ function rawRequest(body: string): Request {
 
 beforeEach(() => {
   startMock.mockReset();
+  startRunMock.mockReset();
+  startRunMock.mockReturnValue({ runId: 'mock-run', completion: Promise.resolve() });
   stopMock.mockReset();
   getStateMock.mockReset();
   getWorkflowMock.mockReset();
@@ -103,20 +114,17 @@ beforeEach(() => {
 describe('POST /api/run', () => {
   it('starts the engine and returns 202 with state when idle', async () => {
     getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    // engineStartAdapter calls getState() twice: once for the busy
-    // pre-check (idle), once after start to read the assigned runId.
-    getStateMock
-      .mockReturnValueOnce(idleState)
-      .mockReturnValue({ ...runningState, runId: 'rid-1' });
+    getStateMock.mockReturnValue({ ...runningState, runId: 'mock-run' });
+    startRunMock.mockReturnValue({ runId: 'mock-run', completion: Promise.resolve() });
 
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
 
     expect(res.status).toBe(202);
-    const body = (await res.json()) as { state: RunSnapshot };
-    expect(body.state).toEqual({ ...runningState, runId: 'rid-1' });
+    const body = (await res.json()) as { runId: string; state: RunSnapshot };
+    expect(body.runId).toBe('mock-run');
     expect(getWorkflowMock).toHaveBeenCalledWith('wf-1');
-    expect(startMock).toHaveBeenCalledTimes(1);
-    expect(startMock).toHaveBeenCalledWith(sampleWorkflow, { resolvedInputs: {} });
+    expect(startRunMock).toHaveBeenCalledTimes(1);
+    expect(startRunMock).toHaveBeenCalledWith(sampleWorkflow, { resolvedInputs: {} });
   });
 
   it('returns 400 when body is invalid JSON', async () => {
@@ -151,28 +159,28 @@ describe('POST /api/run', () => {
     expect(startMock).not.toHaveBeenCalled();
   });
 
-  it('returns 409 when a run is already active', async () => {
+  it('admits a new run even when another is already in flight (lazy slot model)', async () => {
     getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    getStateMock.mockReturnValue(runningState);
+    getStateMock.mockReturnValue({ ...runningState, runId: 'rid-second' });
+    startRunMock.mockReturnValue({ runId: 'rid-second', completion: Promise.resolve() });
 
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
 
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('a run is already active');
-    expect(startMock).not.toHaveBeenCalled();
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { runId: string };
+    expect(body.runId).toBe('rid-second');
+    expect(startRunMock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not propagate engine.start rejections back to the caller', async () => {
+  it('does not propagate run completion rejections back to the caller', async () => {
     const consoleSpy = spyOn(console, 'error').mockImplementation(() => {});
     getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    // engineStartAdapter pre-checks busy, then void-kicks start and reads
-    // runId from the next getState() — start's rejection lands in the
-    // adapter's .catch() and never reaches the caller.
-    getStateMock
-      .mockReturnValueOnce(idleState)
-      .mockReturnValue({ ...runningState, runId: 'rid-boom' });
-    startMock.mockRejectedValue(new Error('boom'));
+    getStateMock.mockReturnValue({ ...runningState, runId: 'rid-boom' });
+    // startRun returns synchronously; the completion promise rejects later.
+    startRunMock.mockReturnValue({
+      runId: 'rid-boom',
+      completion: Promise.reject(new Error('boom')),
+    });
 
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
 
@@ -185,40 +193,16 @@ describe('POST /api/run', () => {
 
   it('includes runId in the 202 response when engine assigns one', async () => {
     getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    // engineStartAdapter: 1st call = busy pre-check (idle), 2nd call = read
-    // synchronously assigned runId; route's final getState() = third call.
-    getStateMock
-      .mockReturnValueOnce(idleState)
-      .mockReturnValue({ ...runningState, runId: 'rid-abc' });
+    getStateMock.mockReturnValue({ ...runningState, runId: 'rid-abc' });
+    startRunMock.mockReturnValue({ runId: 'rid-abc', completion: Promise.resolve() });
 
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
 
     expect(res.status).toBe(202);
     const body = (await res.json()) as { runId?: string; state: RunSnapshot };
     expect(body.runId).toBe('rid-abc');
-    expect(body.state.runId).toBe('rid-abc');
   });
 
-  it('returns 409 with the in-flight runId and workflowId when busy', async () => {
-    getWorkflowMock.mockResolvedValue(sampleWorkflow);
-    getStateMock.mockReturnValue({
-      ...runningState,
-      runId: 'rid-busy',
-      workflowId: 'wf-other',
-    });
-
-    const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
-
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as {
-      error: string;
-      runId?: string;
-      workflowId?: string;
-    };
-    expect(body.error).toMatch(/already active|busy/i);
-    expect(body.runId).toBe('rid-busy');
-    expect(body.workflowId).toBe('wf-other');
-  });
 });
 
 describe('GET /api/run', () => {
@@ -315,7 +299,7 @@ describe('POST /api/run — input validation', () => {
     );
 
     expect(res.status).toBe(202);
-    expect(startMock).toHaveBeenCalledTimes(1);
+    expect(startRunMock).toHaveBeenCalledTimes(1);
   });
 });
 

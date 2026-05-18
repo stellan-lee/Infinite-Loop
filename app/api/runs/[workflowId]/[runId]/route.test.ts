@@ -5,7 +5,7 @@ const realEngine = { ...(await import('@/lib/server/workflow-engine')) };
 const realStore = { ...(await import('@/lib/server/run-store')) };
 
 mock.module('@/lib/server/workflow-engine', () => ({
-  workflowEngine: { getState: mock() },
+  workflowEngine: { getState: mock(), getRun: mock() },
 }));
 mock.module('@/lib/server/run-store', () => ({
   getRun: mock(),

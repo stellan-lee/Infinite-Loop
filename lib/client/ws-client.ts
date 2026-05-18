@@ -13,6 +13,10 @@ const VALID_EVENT_TYPES = new Set<WorkflowEvent['type']>([
   'template_warning',
   'error',
   'run_finished',
+  'node_waiting_for_lock',
+  'node_lock_acquired',
+  'node_waiting_for_slot',
+  'node_slot_acquired',
   'trigger_enqueued',
   'trigger_started',
   'trigger_dropped',
@@ -27,7 +31,7 @@ function isWorkflowEvent(v: unknown): v is WorkflowEvent {
 
 function isStateSnapshot(
   v: unknown,
-): v is { type: 'state_snapshot'; state: RunSnapshot } {
+): v is { type: 'state_snapshot'; state: RunSnapshot; runs?: RunSnapshot[]; runId?: string } {
   if (typeof v !== 'object' || v === null) return false;
   const t = (v as { type?: unknown }).type;
   return t === 'state_snapshot';

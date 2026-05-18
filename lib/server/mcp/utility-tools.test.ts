@@ -12,7 +12,12 @@ mock.module('@/lib/server/run-store', () => ({
   listRuns: mock(),
 }));
 mock.module('@/lib/server/workflow-engine', () => ({
-  workflowEngine: { getState: mock(), stop: mock() },
+  workflowEngine: {
+    getState: mock(),
+    stop: mock(),
+    getRun: mock(),
+    list: mock(() => []),
+  },
 }));
 mock.module('@/lib/server/trigger-queue-singleton', () => ({
   triggerQueue: { list: mock(), removeByQueueId: mock() },
@@ -206,39 +211,35 @@ describe('listRuns', () => {
 });
 
 describe('cancelRun', () => {
-  it('cancels when engine is running with matching runId', async () => {
-    getStateMock.mockReturnValue({
-      status: 'running',
+  // Stage 5: cancelRun is now multi-run aware. It looks up the controller
+  // by runId via engine.getRun(runId) and stops via engine.stop(runId).
+  const getRunCtrlMock = (workflowEngine as unknown as { getRun: AnyMock }).getRun;
+
+  it('cancels when a matching run is alive', async () => {
+    getRunCtrlMock.mockReturnValue({
       runId: 'r',
-      workflowId: 'wf',
-      iterationByLoopId: {},
-      scope: {},
-      startedAt: 1,
+      snapshot: { status: 'running', runId: 'r', workflowId: 'wf', iterationByLoopId: {}, scope: {}, startedAt: 1 },
     });
     const out = await cancelRun({ workflowId: 'wf', runId: 'r' });
     expect(out.cancelled).toBe(true);
-    expect(stopMock).toHaveBeenCalled();
+    expect(stopMock).toHaveBeenCalledWith('r');
   });
 
-  it('returns cancelled:false when no run is active', async () => {
-    getStateMock.mockReturnValue({ status: 'idle', iterationByLoopId: {}, scope: {} });
+  it('returns cancelled:false when run is not active', async () => {
+    getRunCtrlMock.mockReturnValue(undefined);
     const out = await cancelRun({ workflowId: 'wf', runId: 'r' });
     expect(out.cancelled).toBe(false);
-    expect(out.reason).toMatch(/no run/i);
+    expect(out.reason).toMatch(/not active/i);
   });
 
-  it('returns cancelled:false when runId does not match', async () => {
-    getStateMock.mockReturnValue({
-      status: 'running',
-      runId: 'other-run',
-      workflowId: 'wf',
-      iterationByLoopId: {},
-      scope: {},
-      startedAt: 1,
+  it('returns cancelled:false when the matching controller is already settled', async () => {
+    getRunCtrlMock.mockReturnValue({
+      runId: 'r',
+      snapshot: { status: 'succeeded', runId: 'r', workflowId: 'wf', iterationByLoopId: {}, scope: {} },
     });
     const out = await cancelRun({ workflowId: 'wf', runId: 'r' });
     expect(out.cancelled).toBe(false);
-    expect(out.reason).toMatch(/no longer tracked/i);
+    expect(out.reason).toMatch(/not active/i);
   });
 });
 

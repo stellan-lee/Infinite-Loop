@@ -383,18 +383,44 @@ export interface RunSnapshot {
    * event log and the canvas's live-node highlight.
    */
   events?: WorkflowEvent[];
+  /**
+   * When a node is parked waiting for a directory lock or concurrency slot.
+   * Set when the wait begins (alongside the matching node_waiting_for_*
+   * event), cleared when the wait resolves (acquired) or aborts (cancelled
+   * or LockCycleError). The run's status stays 'running' throughout — this
+   * field is the observability hook for "running, but not progressing".
+   */
+  waitingFor?: {
+    kind: 'lock' | 'slot';
+    nodeId: string;
+    /** The canonical path the waiter wants. Present when `kind === 'lock'`. */
+    path?: string;
+    /** Identity of the run currently holding the conflicting path. Present
+     *  when `kind === 'lock'`. */
+    heldByRunId?: string;
+    /** The canonical path the holder is locking. Distinct from `path` when
+     *  the conflict is ancestor/descendant. */
+    heldByPath?: string;
+  };
 }
 
 /* ─── events on the WS bus ────────────────────────────────────────────────── */
 
+// Run-scoped events. `runId` is stamped by `RunController.emit` at emit time
+// — executors and walk methods never set it themselves. The optional shape
+// keeps the legacy single-run consumers compiling; under multi-run, every
+// event reaching SSE consumers carries a runId.
+
 export interface RunStartedEvent {
   type: 'run_started';
+  runId?: string;
   workflowId: string;
   workflowName: string;
 }
 
 export interface NodeStartedEvent {
   type: 'node_started';
+  runId?: string;
   nodeId: string;
   nodeType: NodeType;
   /** The fully template-resolved config the executor is about to receive. */
@@ -405,6 +431,7 @@ export interface NodeStartedEvent {
 
 export interface NodeFinishedEvent {
   type: 'node_finished';
+  runId?: string;
   nodeId: string;
   nodeType: NodeType;
   branch: EdgeHandle;
@@ -415,6 +442,7 @@ export interface NodeFinishedEvent {
 
 export interface StdoutChunkEvent {
   type: 'stdout_chunk';
+  runId?: string;
   nodeId: string;
   line: string;
   /** Optional loop iteration the chunk belongs to. */
@@ -423,6 +451,7 @@ export interface StdoutChunkEvent {
 
 export interface ConditionCheckedEvent {
   type: 'condition_checked';
+  runId?: string;
   nodeId: string;
   met: boolean;
   detail: string;
@@ -430,13 +459,18 @@ export interface ConditionCheckedEvent {
 
 export interface TemplateWarningEvent {
   type: 'template_warning';
+  runId?: string;
   nodeId: string;
   field: string;
   missingKey: string;
 }
 
+// ErrorEvent is dual-scoped:
+//   - emitted inside a run via controller.emit → carries runId
+//   - emitted from queue/admin paths via eventBus.emit direct → no runId
 export interface ErrorEvent {
   type: 'error';
+  runId?: string;
   nodeId?: string;
   message: string;
   stderr?: string;
@@ -444,8 +478,43 @@ export interface ErrorEvent {
 
 export interface RunFinishedEvent {
   type: 'run_finished';
+  runId?: string;
   status: Exclude<RunStatus, 'idle' | 'running'>;
   scope: Scope;
+}
+
+// Stage 4 (DirLockManager wiring) emits these. Defined now so the type lands
+// with the rest of the event-tagging work in stage 2.
+
+export interface NodeWaitingForLockEvent {
+  type: 'node_waiting_for_lock';
+  runId?: string;
+  nodeId: string;
+  path: string;
+  heldByRunId: string;
+  /** The canonical path the holder is currently locking. Distinct from
+   *  `path` in the ancestor/descendant-conflict cases — e.g. waiter wants
+   *  `/proj/sub` and holder owns `/proj`. */
+  heldByPath: string;
+}
+
+export interface NodeLockAcquiredEvent {
+  type: 'node_lock_acquired';
+  runId?: string;
+  nodeId: string;
+  path: string;
+}
+
+export interface NodeWaitingForSlotEvent {
+  type: 'node_waiting_for_slot';
+  runId?: string;
+  nodeId: string;
+}
+
+export interface NodeSlotAcquiredEvent {
+  type: 'node_slot_acquired';
+  runId?: string;
+  nodeId: string;
 }
 
 export interface TriggerEnqueuedEvent {
@@ -490,6 +559,10 @@ export type WorkflowEvent =
   | TemplateWarningEvent
   | ErrorEvent
   | RunFinishedEvent
+  | NodeWaitingForLockEvent
+  | NodeLockAcquiredEvent
+  | NodeWaitingForSlotEvent
+  | NodeSlotAcquiredEvent
   | TriggerEnqueuedEvent
   | TriggerStartedEvent
   | TriggerDroppedEvent
@@ -578,6 +651,22 @@ export interface NodeExecutorContext {
    * unit-test contexts may omit it. Agent nodes use it when `useWorktree`
    * is set. */
   runWorktrees?: RunWorktrees;
+  /**
+   * Acquire a per-run directory lock for `path`. Resolves to an idempotent
+   * release fn. Handles slot admission and FIFO waits internally; emits
+   * `node_waiting_for_lock` / `node_lock_acquired` events as needed.
+   * CLI-transport agents wrap their spawn in this; HTTP agents skip it.
+   * Optional for back-compat with unit-test contexts that omit the engine.
+   */
+  acquireDirLock?: (opts: { path: string; signal?: AbortSignal }) => Promise<() => void>;
+  /**
+   * Register a canonical absolute path as exempt from directory locking for
+   * the lifetime of the current run. Returns a deregister fn for early
+   * release. Used by Agent nodes when worktree-mode is on: the worktree
+   * path is run-scoped and inherently isolated, so it never enters the
+   * lock manager's bookkeeping.
+   */
+  registerExempt?: (canonicalPath: string) => () => void;
 }
 
 export interface NodeExecutorResult {

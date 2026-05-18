@@ -24,7 +24,11 @@ export async function GET(
     // Fall through to engine snapshot.
   }
 
-  const snap = workflowEngine.getState();
+  // Multi-run aware lookup: check the registry by runId first; fall back
+  // to the engine's last-snapshot for back-compat with the single-run
+  // callers that don't carry a registry-aware runId yet.
+  const ctrl = workflowEngine.getRun(runId);
+  const snap = ctrl ? ctrl.getState() : workflowEngine.getState();
   if (snap.runId === runId && snap.workflowId === workflowId) {
     const synthetic = {
       runId,

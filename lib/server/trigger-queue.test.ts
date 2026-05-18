@@ -64,7 +64,10 @@ describe('TriggerQueue', () => {
     expect(q.size()).toBe(0);
   });
 
-  test('drain re-prepends on busy and waits', async () => {
+  test('drain emits trigger_dropped on engineStart failure', async () => {
+    // Stage 5 removed the busy-error special-case from drain(). Any
+    // engineStart rejection now drops the queued item with
+    // reason 'engine-start-failed'.
     engineBusy = true;
     q.enqueue({
       workflow: fakeWorkflow('w'), resolvedInputs: {},
@@ -72,12 +75,7 @@ describe('TriggerQueue', () => {
     });
     await q.drain();
     expect(started).toHaveLength(0);
-    expect(q.size()).toBe(1);
-
-    engineBusy = false;
-    await q.drain();
-    expect(started).toHaveLength(1);
-    expect(q.size()).toBe(0);
+    expect(q.size()).toBe(0); // dropped, not re-prepended
   });
 
   test('enqueue throws when at cap', () => {

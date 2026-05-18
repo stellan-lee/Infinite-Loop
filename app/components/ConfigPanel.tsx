@@ -33,6 +33,7 @@ import {
 import type { ProviderInfo } from '@/lib/server/providers/types';
 import type {
   AgentConfig,
+  AgentOutputDecl,
   BranchConfig,
   BranchOp,
   ConditionConfig,
@@ -52,6 +53,7 @@ import type {
   WorkflowNode,
   WorkflowSummary,
 } from '@/lib/shared/workflow';
+import { AGENT_RESERVED_OUTPUT_NAMES } from '@/lib/shared/workflow';
 
 /** Available `{{nodeId.stdout}}` template refs for a given node id. */
 function availableRefs(workflow: Workflow | null, selfId: string): string[] {
@@ -672,6 +674,205 @@ function CwdField({
   );
 }
 
+/* ── Agent outputs editor ─────────────────────────────────────
+ * Declared outputs are `AgentOutputDecl[]` (order-preserving array of
+ * `{ name, description? }`) — distinct from SubworkflowForm's KvRow editor
+ * which works on `Record<string, string>`. The agent calls
+ * `set_output({key, value})` against the injected SetOutput MCP server; on
+ * exit the engine flat-merges the recorded values into this node's outputs,
+ * so downstream nodes read them as `{{<node-id>.<name>}}`.
+ *
+ * Per-row debounced buffers (same pattern as KvRow) keep keystrokes out of
+ * the workflow store. Reserved-name / duplicate-name warnings are surfaced
+ * inline as a UX assist; the server still validates on save
+ * (lib/server/workflow-store.ts validateNodeConfig). */
+interface AgentOutputRowData {
+  rowId: string;
+  name: string;
+  description: string;
+}
+
+function agentOutputsToRows(
+  decls: AgentOutputDecl[] | undefined,
+): AgentOutputRowData[] {
+  if (!decls) return [];
+  return decls.map((d, i) => ({
+    rowId: `aor-${i}-${d.name}`,
+    name: d.name,
+    description: d.description ?? '',
+  }));
+}
+
+/** Drop empty-name rows; trim; omit `description` when blank so the saved
+ * shape matches what a hand-written workflow.json would look like (avoids
+ * `description: ""` cluttering the file and the validator's expectations). */
+function rowsToAgentOutputs(rows: AgentOutputRowData[]): AgentOutputDecl[] {
+  const out: AgentOutputDecl[] = [];
+  for (const row of rows) {
+    const name = row.name.trim();
+    if (!name) continue;
+    const desc = row.description.trim();
+    out.push(desc ? { name, description: desc } : { name });
+  }
+  return out;
+}
+
+function nextAgentOutputRowId(): string {
+  return `aor-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+const AGENT_RESERVED_OUTPUT_SET = new Set<string>(AGENT_RESERVED_OUTPUT_NAMES);
+
+/** UX-side validation — server still re-checks on save. Returns `null` for
+ * blank names so a freshly-added empty row doesn't shout at the user. */
+function agentOutputRowWarning(
+  name: string,
+  allRows: readonly AgentOutputRowData[],
+  selfRowId: string,
+): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (AGENT_RESERVED_OUTPUT_SET.has(trimmed)) {
+    return `"${trimmed}" is reserved by the agent runtime`;
+  }
+  const dup = allRows.some(
+    (r) => r.rowId !== selfRowId && r.name.trim() === trimmed,
+  );
+  if (dup) return `duplicate name "${trimmed}"`;
+  return null;
+}
+
+function AgentOutputRow({
+  row,
+  index,
+  warning,
+  onCommit,
+  onRemove,
+}: {
+  row: AgentOutputRowData;
+  index: number;
+  warning: string | null;
+  onCommit: (patch: Partial<AgentOutputRowData>) => void;
+  onRemove: () => void;
+}) {
+  const [name, setName] = useDebouncedString(row.name, (next) =>
+    onCommit({ name: next }),
+  );
+  const [description, setDescription] = useDebouncedString(
+    row.description,
+    (next) => onCommit({ description: next }),
+  );
+  return (
+    <div className="kv-row">
+      <input
+        aria-label={`agent output name ${index}`}
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="PR_LINK"
+      />
+      <div className="kv-row-value">
+        <input
+          aria-label={`agent output description ${index}`}
+          type="text"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="what the agent should put here (optional)"
+        />
+        {warning ? (
+          <span className="field-hint field-hint--error">{warning}</span>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={onRemove}
+        aria-label={`remove agent output ${index}`}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+function AgentOutputsEditor({
+  config,
+  onPatch,
+}: {
+  config: AgentConfig;
+  onPatch: (next: AgentConfig) => void;
+}) {
+  const [rows, setRows] = useState<AgentOutputRowData[]>(() =>
+    agentOutputsToRows(config.outputs),
+  );
+  // `rowsRef` mirrors `rows` synchronously so mutating ops (commit / addRow /
+  // updateRow / removeRow) always read the latest list — without it, two
+  // debounced field commits firing in the same tick (e.g. user types into
+  // name and description, then 200ms passes) both close over the same stale
+  // pre-commit `rows`, and the second one clobbers the first. The ref-based
+  // read makes the editor commute under batched updates.
+  const rowsRef = useRef(rows);
+  // Re-sync from upstream only when the parent-provided array reference
+  // changes (node-switch / undo / external mutation). Our own commits
+  // re-assign the ref ourselves and skip via the equality check.
+  const lastDecls = useRef(config.outputs);
+  useEffect(() => {
+    if (config.outputs !== lastDecls.current) {
+      lastDecls.current = config.outputs;
+      const next = agentOutputsToRows(config.outputs);
+      rowsRef.current = next;
+      setRows(next);
+    }
+  }, [config.outputs]);
+
+  const commit = (next: AgentOutputRowData[]) => {
+    rowsRef.current = next;
+    setRows(next);
+    const decls = rowsToAgentOutputs(next);
+    // Canonicalize: undefined when empty so a cleared editor matches a
+    // freshly-created agent node (no `outputs` key at all).
+    const patched = decls.length > 0 ? decls : undefined;
+    lastDecls.current = patched;
+    onPatch({ ...config, outputs: patched });
+  };
+
+  const updateRow = (rowId: string, patch: Partial<AgentOutputRowData>) =>
+    commit(
+      rowsRef.current.map((r) =>
+        r.rowId === rowId ? { ...r, ...patch } : r,
+      ),
+    );
+  const removeRow = (rowId: string) =>
+    commit(rowsRef.current.filter((r) => r.rowId !== rowId));
+  const addRow = () =>
+    commit([
+      ...rowsRef.current,
+      { rowId: nextAgentOutputRowId(), name: '', description: '' },
+    ]);
+
+  return (
+    <div className="kv-rows">
+      {rows.map((row, i) => (
+        <AgentOutputRow
+          key={row.rowId}
+          row={row}
+          index={i}
+          warning={agentOutputRowWarning(row.name, rows, row.rowId)}
+          onCommit={(patch) => updateRow(row.rowId, patch)}
+          onRemove={() => removeRow(row.rowId)}
+        />
+      ))}
+      <button
+        type="button"
+        className="btn btn-ghost kv-add"
+        onClick={addRow}
+      >
+        + add output
+      </button>
+    </div>
+  );
+}
+
 function AgentForm({
   config,
   refs,
@@ -909,6 +1110,27 @@ function AgentForm({
           </div>
         </div>
       </div>
+
+      {/* Outputs are CLI-only: the engine injects a SetOutput MCP server via
+       * `--mcp-config`, which HTTP providers don't accept. Hidden for HTTP
+       * to match the Cwd / Agent / Worktree gating above; existing
+       * `config.outputs` is preserved on the wire so toggling provider
+       * back doesn't drop the user's declared list. */}
+      {!isHttpProvider && (
+        <div className="field">
+          <span className="field-label">Outputs</span>
+          <AgentOutputsEditor config={config} onPatch={onPatch} />
+          <span className="field-hint">
+            Declared keys the agent emits via the injected{' '}
+            <code>set_output</code> MCP tool. Reference downstream as{' '}
+            <code>
+              {'{{'}
+              {selfId || '<node>'}.&lt;name&gt;{'}}'}
+            </code>
+            .
+          </span>
+        </div>
+      )}
     </>
   );
 }
@@ -1783,7 +2005,7 @@ function OutputNameRow({
   return (
     <div className="script-output-row">
       <input
-        aria-label={`output name ${index}`}
+        aria-label={`agent output name ${index}`}
         type="text"
         value={v}
         placeholder="output name"
@@ -1793,7 +2015,7 @@ function OutputNameRow({
         type="button"
         className="btn btn-ghost"
         onClick={onRemove}
-        aria-label={`remove output ${index}`}
+        aria-label={`remove agent output ${index}`}
       >
         ✕
       </button>

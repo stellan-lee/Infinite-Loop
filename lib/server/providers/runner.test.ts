@@ -247,6 +247,61 @@ describe('runProvider', () => {
       });
       expect(empty).toEqual(['p']);
     });
+
+    it('substitutes {mcpConfig} when value is set', () => {
+      const out = resolveCliArgs(['--mcp-config', '{mcpConfig}', '{prompt}'], {
+        prompt: 'p',
+        mcpConfigPath: '/tmp/mcp.json',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['--mcp-config', '/tmp/mcp.json', 'p']);
+    });
+
+    it('strips {mcpConfig} AND its preceding flag when path is empty', () => {
+      const out = resolveCliArgs(
+        ['--print', '--mcp-config', '{mcpConfig}', '{prompt}'],
+        { prompt: 'p', mcpConfigPath: '', promptVia: 'arg' },
+      );
+      expect(out).toEqual(['--print', 'p']);
+    });
+
+    it('strips the {mcpConfig} flag pair when path is undefined', () => {
+      const out = resolveCliArgs(['--mcp-config', '{mcpConfig}', '{prompt}'], {
+        prompt: 'p',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['p']);
+    });
+
+    it('treats a whitespace-only mcpConfigPath as empty (strips the pair)', () => {
+      const out = resolveCliArgs(['--mcp-config', '{mcpConfig}', '{prompt}'], {
+        prompt: 'p',
+        mcpConfigPath: '   ',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['p']);
+    });
+
+    it('handles {agent} and {mcpConfig} together with both set', () => {
+      const out = resolveCliArgs(
+        ['--agent', '{agent}', '--mcp-config', '{mcpConfig}', '{prompt}'],
+        {
+          prompt: 'p',
+          agent: 'r',
+          mcpConfigPath: '/tmp/m.json',
+          promptVia: 'arg',
+        },
+      );
+      expect(out).toEqual(['--agent', 'r', '--mcp-config', '/tmp/m.json', 'p']);
+    });
+
+    it('drops both flag pairs when both placeholders are empty', () => {
+      const out = resolveCliArgs(
+        ['--agent', '{agent}', '--mcp-config', '{mcpConfig}', '{prompt}'],
+        { prompt: 'p', promptVia: 'arg' },
+      );
+      expect(out).toEqual(['p']);
+    });
   });
 
   it('returns null exitCode + helpful stderr when binary spawn fails', async () => {

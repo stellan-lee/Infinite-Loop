@@ -13,6 +13,8 @@
     "--verbose",
     "--agent",
     "{agent}",
+    "--mcp-config",
+    "{mcpConfig}",
     "{prompt}"
   ],
   "outputFormat": "claude-stream-json",

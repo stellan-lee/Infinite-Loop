@@ -77,7 +77,35 @@ export interface AgentConfig {
    * true. NOTE: uncommitted edits in `cwd` are NOT carried into the worktree
    * — commit or stash first if you want the agent to see them. */
   worktreeRef?: string;
+  /** Declared named outputs the agent may emit via the injected SetOutput
+   * MCP server (`set_output({ key, value })`). On agent exit, recorded
+   * values flatten into this node's outputs map alongside `stdout` /
+   * `stderr` / `exitCode` / etc., so downstream nodes read them as
+   * `{{<node-id>.<name>}}`. When empty or undefined, no MCP server is
+   * injected. Names collide-checked against agent-runtime keys at workflow
+   * save (see lib/server/workflow-store.ts validateNodeConfig). */
+  outputs?: AgentOutputDecl[];
 }
+
+export interface AgentOutputDecl {
+  /** Output key the agent will pass as `set_output({ key })`. */
+  name: string;
+  /** Optional per-output description; surfaced to the agent in the
+   * SetOutput tool's overall description so it knows what each key is for. */
+  description?: string;
+}
+
+/** Output keys reserved by the agent runtime — see lib/server/nodes/agent.ts.
+ * Declared outputs must not collide with these (validated at workflow save). */
+export const AGENT_RESERVED_OUTPUT_NAMES: readonly string[] = [
+  'stdout',
+  'stderr',
+  'exitCode',
+  'durationMs',
+  'timedOut',
+  'worktreePath',
+  'errorMessage',
+];
 
 export interface ConditionConfig {
   kind: ConditionKind;
@@ -480,6 +508,11 @@ export interface RunWorktrees {
 }
 
 export interface NodeExecutorContext {
+  /** Current run id. Used by executors that mint per-run resources (e.g.
+   * the SetOutput MCP token registry) and need a run-scoped key for sweep
+   * on settle. Optional for back-compat with unit-test contexts that
+   * hand-build the ctx without an engine. */
+  runId?: string;
   /** This node's id within its workflow. Used by executors that need to key
    * per-run resources (e.g. worktrees) by node identity. Optional for
    * back-compat with unit-test contexts that hand-build the ctx. */

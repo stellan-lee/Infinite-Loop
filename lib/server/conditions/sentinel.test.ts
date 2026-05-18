@@ -60,6 +60,49 @@ describe('sentinelStrategy', () => {
     expect(result.detail.toLowerCase()).toContain('invalid regex');
   });
 
+  it('matches a literal pattern case-insensitively when caseInsensitive=true', async () => {
+    const iter = makeIter('working... done next');
+    const result = await sentinelStrategy.evaluate(
+      iter,
+      { pattern: 'DONE', isRegex: false, caseInsensitive: true },
+      '/tmp',
+    );
+    expect(result.met).toBe(true);
+    expect(result.detail).toBe('matched at index 11');
+  });
+
+  it('does not match literal pattern across cases when caseInsensitive is false/absent', async () => {
+    const iter = makeIter('working... done next');
+    const result = await sentinelStrategy.evaluate(
+      iter,
+      { pattern: 'DONE', isRegex: false },
+      '/tmp',
+    );
+    expect(result.met).toBe(false);
+  });
+
+  it('matches a regex pattern case-insensitively when caseInsensitive=true', async () => {
+    const iter = makeIter('status: OK\nmore output');
+    const result = await sentinelStrategy.evaluate(
+      iter,
+      { pattern: '^STATUS: ok', isRegex: true, caseInsensitive: true },
+      '/tmp',
+    );
+    expect(result.met).toBe(true);
+    expect(result.detail).toBe('matched at index 0');
+  });
+
+  it('rejects non-boolean caseInsensitive in config shape', async () => {
+    const iter = makeIter('something');
+    const result = await sentinelStrategy.evaluate(
+      iter,
+      { pattern: 'X', isRegex: false, caseInsensitive: 'yes' },
+      '/tmp',
+    );
+    expect(result.met).toBe(false);
+    expect(result.detail).toBe('invalid sentinel config');
+  });
+
   it('returns met=false with descriptive detail for invalid config shape', async () => {
     const iter = makeIter('something');
 

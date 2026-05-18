@@ -35,6 +35,7 @@ export type ConditionKind = 'sentinel' | 'command' | 'judge';
 export interface SentinelConfig {
   pattern: string;
   isRegex: boolean;
+  caseInsensitive?: boolean;
 }
 
 export interface CommandConfig {

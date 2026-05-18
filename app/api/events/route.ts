@@ -1,6 +1,6 @@
 import { eventBus } from '@/lib/server/event-bus';
 import { workflowEngine } from '@/lib/server/workflow-engine';
-import type { WorkflowEvent } from '@/lib/shared/workflow';
+import type { RunSnapshot, WorkflowEvent } from '@/lib/shared/workflow';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,8 +11,24 @@ function sseFrame(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
+/**
+ * SSE stream of run events.
+ *
+ *   GET /api/events             — multi-run firehose (all runs + queue events)
+ *   GET /api/events?runId=<id>  — single-run filter (only events for that run)
+ *
+ * Initial `state_snapshot` shape:
+ *   - filtered:   { type: 'state_snapshot', state: RunSnapshot, runId }
+ *   - unfiltered: { type: 'state_snapshot', state: RunSnapshot, runs: RunSnapshot[] }
+ *
+ * The unfiltered `runs` array lists every currently-alive controller. The
+ * `state` field stays as the most-recent run for back-compat with the
+ * existing client. Future stages can flip the client to read `runs` directly.
+ */
 export async function GET(req: Request): Promise<Response> {
   const encoder = new TextEncoder();
+  const url = new URL(req.url);
+  const filterRunId = url.searchParams.get('runId') ?? undefined;
 
   let unsubscribe: (() => void) | null = null;
   let keepalive: ReturnType<typeof setInterval> | null = null;
@@ -28,10 +44,32 @@ export async function GET(req: Request): Promise<Response> {
         }
       };
 
-      // Initial snapshot so the client has the engine state before any events.
-      send(sseFrame({ type: 'state_snapshot', state: workflowEngine.getState() }));
+      // Initial snapshot.
+      if (filterRunId) {
+        const run = workflowEngine.getRun(filterRunId);
+        const state: RunSnapshot = run
+          ? run.getState()
+          : { status: 'idle', iterationByLoopId: {}, scope: {}, events: [] };
+        send(sseFrame({ type: 'state_snapshot', state, runId: filterRunId }));
+      } else {
+        const runs: RunSnapshot[] = workflowEngine.list().map((c) => c.getState());
+        send(
+          sseFrame({
+            type: 'state_snapshot',
+            state: workflowEngine.getState(),
+            runs,
+          }),
+        );
+      }
 
       unsubscribe = eventBus.subscribe((event: WorkflowEvent) => {
+        if (filterRunId) {
+          // Run-scoped events carry runId; queue events do not. Filter on
+          // exact match. Queue events are dropped when a filter is set —
+          // they aren't run-specific.
+          const evRunId = (event as { runId?: string }).runId;
+          if (evRunId !== filterRunId) return;
+        }
         send(sseFrame(event));
       });
 

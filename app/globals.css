@@ -3511,6 +3511,25 @@ input[type='number'].no-spin {
   color: var(--fg-dim);
 }
 
+/* ─── ActiveRunsBadge (active-runs-badge) ────────────────────────
+ * Sibling of .queue-badge — same chip palette, but surfaces the
+ * concurrent-runs state (running N / cap M • K waiting). Hidden
+ * when there's only one run and no slot pressure. */
+.active-runs-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding-inline: 8px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
 /* ─── QueueBadge (queue-badge) ───────────────────────────────────
  * Ambient top-bar chip that shows the number of queued webhook
  * triggers. Rendered only when the queue is non-empty. Mirrors the

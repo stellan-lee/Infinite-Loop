@@ -14,6 +14,15 @@ export interface RunStatusResult {
   errorMessage?: string;
   error?: string;
   reason?: string;
+  /** Set when the run is parked waiting on a directory lock or concurrency
+   *  slot. Cleared once the wait resolves. */
+  waitingFor?: {
+    kind: 'lock' | 'slot';
+    nodeId: string;
+    path?: string;
+    heldByRunId?: string;
+    heldByPath?: string;
+  };
 }
 
 async function lookupByRunId(
@@ -33,7 +42,10 @@ async function lookupByRunId(
     // Fall through to engine snapshot.
   }
 
-  const snap = workflowEngine.getState();
+  // Look up live controller by runId (multi-run aware). Falls back to the
+  // engine's last-snapshot for back-compat.
+  const ctrl = workflowEngine.getRun(runId);
+  const snap = ctrl ? ctrl.getState() : workflowEngine.getState();
   if (snap.runId === runId && snap.workflowId === workflowId) {
     return {
       status: snap.status,
@@ -44,6 +56,7 @@ async function lookupByRunId(
           : undefined,
       outputs: filterOutputs(snap.scope),
       errorMessage: snap.errorMessage,
+      waitingFor: snap.waitingFor,
     };
   }
 
@@ -112,19 +125,14 @@ export async function cancelRun(args: {
   workflowId: string;
   runId: string;
 }): Promise<{ cancelled: boolean; reason?: string }> {
-  const snap = workflowEngine.getState();
-
-  if (snap.status !== 'running') {
-    return { cancelled: false, reason: `No run is active.` };
-  }
-  if (snap.runId !== args.runId) {
+  const ctrl = workflowEngine.getRun(args.runId);
+  if (!ctrl || ctrl.snapshot.status !== 'running') {
     return {
       cancelled: false,
-      reason: `Run ${args.runId} is no longer tracked by the engine.`,
+      reason: `Run ${args.runId} is not active.`,
     };
   }
-
-  workflowEngine.stop();
+  workflowEngine.stop(args.runId);
   return { cancelled: true };
 }
 

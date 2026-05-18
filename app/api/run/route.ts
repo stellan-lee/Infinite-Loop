@@ -64,24 +64,12 @@ export async function POST(req: Request) {
 
   let runId: string;
   try {
-    // Use the same adapter the trigger queue uses — it pre-checks the
-    // busy state and assigns runId synchronously, closing the
-    // check→start TOCTOU window that the old getState()-then-start
-    // pattern left open.
+    // Multi-run safe: returns the runId synchronously regardless of how
+    // many runs are already in flight. Folder-touching runs are throttled
+    // inside the controller's first lock acquire → slot pool wait.
     runId = await engineStartAdapter(workflowEngine, workflow, { resolvedInputs });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'failed to start';
-    if (/already active/i.test(message)) {
-      const currentState = workflowEngine.getState();
-      return NextResponse.json(
-        {
-          error: 'a run is already active',
-          runId: currentState.runId,
-          workflowId: currentState.workflowId,
-        },
-        { status: 409 },
-      );
-    }
     console.error('[api/run] engine.start failed:', err);
     return NextResponse.json({ error: message }, { status: 500 });
   }
@@ -98,5 +86,24 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const unauth = requireAuth(req);
   if (unauth) return unauth;
-  return NextResponse.json({ state: workflowEngine.getState() }, { status: 200 });
+  const runs = workflowEngine.list().map((c) => ({
+    runId: c.runId,
+    workflowId: c.workflow.id,
+    workflowName: c.workflow.name,
+    status: c.snapshot.status,
+    startedAt: c.snapshot.startedAt,
+    waitingFor: c.snapshot.waitingFor,
+  }));
+  return NextResponse.json(
+    {
+      state: workflowEngine.getState(),
+      runs,
+      slotPool: {
+        capacity: workflowEngine.slotPool.getCapacity(),
+        size: workflowEngine.slotPool.size(),
+        waiters: workflowEngine.slotPool.waiterCount(),
+      },
+    },
+    { status: 200 },
+  );
 }

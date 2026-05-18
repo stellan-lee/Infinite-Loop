@@ -458,22 +458,23 @@ describe('WorkflowEngine', () => {
     expect(eng.getState().status).toBe('cancelled');
   });
 
-  it('rejects start when a run is already active', async () => {
+  it('allows multiple concurrent runs (stage 1b: size-1 guard removed)', async () => {
     const wf: Workflow = {
       id: 'w7',
-      name: 'busy',
+      name: 'concurrent',
       version: 1,
       createdAt: 0,
       updatedAt: 0,
       nodes: [startNode, endNode],
       edges: [{ id: 'e1', source: 'start-1', sourceHandle: 'next', target: 'end-1' }],
     };
-    let release: (() => void) | null = null;
+    // Each start-node invocation parks until a per-call release is signalled.
+    const releases: Array<() => void> = [];
     const eng = new WorkflowEngine({
       start: {
         execute: () =>
           new Promise<{ branch: EdgeHandle; outputs: Record<string, unknown> }>((resolve) => {
-            release = () => resolve({ branch: 'next', outputs: {} });
+            releases.push(() => resolve({ branch: 'next', outputs: {} }));
           }),
       },
       end: exec(['next']),
@@ -482,10 +483,16 @@ describe('WorkflowEngine', () => {
       loop: exec(['next']),
     });
     const first = eng.start(wf);
+    const second = eng.start(wf);
+    // Both runs must be alive in the registry simultaneously.
     await new Promise((r) => setTimeout(r, 5));
-    await expect(eng.start(wf)).rejects.toThrow(/already active/);
-    release!();
-    await first;
+    expect(eng.list().length).toBe(2);
+    // Release both; both must settle as 'succeeded'.
+    releases[0]?.();
+    releases[1]?.();
+    await Promise.all([first, second]);
+    expect(eng.list().length).toBe(0);
+    expect(eng.getState().status).toBe('succeeded');
   });
 });
 

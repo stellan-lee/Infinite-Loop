@@ -16,6 +16,7 @@ import RunHistory from './components/RunHistory';
 import WorkflowMenu from './components/WorkflowMenu';
 import ThemeToggle from './components/ThemeToggle';
 import { QueueBadge } from './components/QueueBadge';
+import { ActiveRunsBadge } from './components/ActiveRunsBadge';
 import { DispatchView } from './components/DispatchView';
 import Link from 'next/link';
 import { useEngineWebSocket } from '../lib/client/ws-client';
@@ -223,6 +224,7 @@ export default function Page() {
           <ThemeToggle />
           <Link href="/queue" className="btn btn-ghost">Queue</Link>
           <QueueBadge />
+          <ActiveRunsBadge />
           <button
             type="button"
             className="btn btn-toggle"

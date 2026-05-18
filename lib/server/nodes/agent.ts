@@ -125,6 +125,21 @@ export const agentExecutor: NodeExecutor = {
         // the agent is editing. Useful when triaging "where did my changes
         // go?" after an isolated run.
         ctx.emitStdoutChunk?.(`[worktree] ${worktreePath}\n`);
+        // The worktree is run-scoped and inherently isolated. Register it
+        // as lock-exempt so subsequent CLI agents in this run that spawn
+        // here don't engage the lock manager unnecessarily, and so we don't
+        // consume a slot for purely-worktree workflows.
+        if (ctx.registerExempt) {
+          try {
+            const realWt = await fs.realpath(worktreePath);
+            ctx.registerExempt(realWt);
+          } catch {
+            // realpath failure here is non-fatal — the lock manager will
+            // still canonicalize on acquire and may register the path as
+            // a real holder. Worst case the run consumes a slot it didn't
+            // need; the run still completes correctly.
+          }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         return {
@@ -158,14 +173,18 @@ export const agentExecutor: NodeExecutor = {
     let mcpTempDir: string | null = null;
     let mcpConfigPath: string | undefined;
     if (wantMcp) {
+      // wantMcp already narrowed runId/nodeId to non-empty strings; capture
+      // local copies so the rest of the block reads without `!` assertions.
+      const runIdForMcp = ctx.runId as string;
+      const nodeIdForMcp = ctx.nodeId as string;
       try {
         const outputDecls: OutputDecl[] = decls.map((d) => ({
           name: d.name,
           description: d.description,
         }));
         token = mintToken({
-          runId: ctx.runId!,
-          nodeId: ctx.nodeId!,
+          runId: runIdForMcp,
+          nodeId: nodeIdForMcp,
           outputDecls,
         });
         const { configPath, tempDir } = await writeMcpConfig(token);
@@ -184,6 +203,34 @@ export const agentExecutor: NodeExecutor = {
         token = null;
         mcpTempDir = null;
         mcpConfigPath = undefined;
+      }
+    }
+
+    // Acquire the directory lock for CLI-transport agents only. HTTP agents
+    // don't have a meaningful `cwd` at the OS level — they POST to a remote
+    // — and shouldn't enter the lock manager's bookkeeping. The lock manager
+    // canonicalizes the path, checks exempt (covers `/tmp`, system tmpdir,
+    // explicitly-registered worktree paths), gates on a slot if needed, and
+    // serializes against any other run holding the same path.
+    let releaseLock: (() => void) | undefined;
+    if (provider.transport === 'cli' && ctx.acquireDirLock) {
+      try {
+        releaseLock = await ctx.acquireDirLock({
+          path: spawnCwd,
+          signal: ctx.signal,
+        });
+      } catch (err) {
+        // Cleanup token + tempfile on lock-acquire failure (cycle, ENOENT
+        // cwd, abort). Matches the `finally` block at the bottom.
+        if (token) consumeOutputs(token);
+        if (mcpTempDir) {
+          try { await fs.rm(mcpTempDir, { recursive: true, force: true }); } catch {}
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          outputs: { errorMessage: `lock acquire failed: ${message}` },
+          branch: 'error',
+        };
       }
     }
 
@@ -221,6 +268,10 @@ export const agentExecutor: NodeExecutor = {
       const success = result.exitCode === 0 && !result.timedOut;
       return { outputs, branch: success ? 'next' : 'error' };
     } finally {
+      // Release the directory lock FIRST so other runs waiting on the same
+      // cwd can proceed even if the cleanup below takes time (or throws).
+      // The release fn is idempotent.
+      releaseLock?.();
       // Belt-and-braces: if runProvider threw before consumeOutputs ran in
       // the try-block, drain here to revoke the token. Safe to call twice
       // since the registry deletes on first consume.

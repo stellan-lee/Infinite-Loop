@@ -15,6 +15,9 @@ mock.module('@/lib/server/workflow-engine', () => ({
     start: mock(),
     stop: mock(),
     getState: mock(),
+    getRun: mock(),
+    list: mock(() => []),
+    startRun: mock(() => ({ runId: 'mock-run', completion: Promise.resolve() })),
   },
 }));
 

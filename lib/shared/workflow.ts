@@ -107,6 +107,51 @@ export const AGENT_RESERVED_OUTPUT_NAMES: readonly string[] = [
   'errorMessage',
 ];
 
+/** Validate the declared-outputs shape on an Agent node. Pure (no IO) so the
+ * UI can call it for live form validation and the server can call it during
+ * `saveWorkflow`. Throws with a stable, user-facing message — keep the
+ * wording stable; tests and the workflow-store loader assert on it.
+ *
+ * Accepts `undefined` (no outputs declared) as valid. `nodeId` is woven into
+ * the error message for save-time diagnostics. */
+export function validateAgentOutputs(
+  outputs: unknown,
+  nodeId: string,
+): void {
+  if (outputs === undefined) return;
+  if (!Array.isArray(outputs)) {
+    throw new Error(
+      `invalid workflow: agent node "${nodeId}" outputs must be an array`,
+    );
+  }
+  const seen = new Set<string>();
+  const reserved = new Set(AGENT_RESERVED_OUTPUT_NAMES);
+  for (const decl of outputs as unknown[]) {
+    if (
+      !decl ||
+      typeof decl !== 'object' ||
+      typeof (decl as { name?: unknown }).name !== 'string' ||
+      (decl as { name: string }).name.length === 0
+    ) {
+      throw new Error(
+        `invalid workflow: agent node "${nodeId}" outputs entries must be { name: string, description?: string }`,
+      );
+    }
+    const name = (decl as { name: string }).name;
+    if (seen.has(name)) {
+      throw new Error(
+        `invalid workflow: agent node "${nodeId}" declares duplicate output "${name}"`,
+      );
+    }
+    if (reserved.has(name)) {
+      throw new Error(
+        `invalid workflow: agent node "${nodeId}" output "${name}" collides with a reserved runtime field`,
+      );
+    }
+    seen.add(name);
+  }
+}
+
 export interface ConditionConfig {
   kind: ConditionKind;
   /**

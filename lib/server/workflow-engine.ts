@@ -42,6 +42,7 @@ import { saveRun } from './run-store';
 import { resolve as resolveTemplate } from './templating';
 import { getWorkflow } from './workflow-store';
 import { RunWorktreesImpl } from './worktree-manager';
+import { releaseRun } from './mcp/output-registry';
 import {
   collectBranchOutputs,
   identifyBranchRoots,
@@ -221,6 +222,14 @@ export class WorkflowEngine {
         });
       }
       this.currentRunWorktrees = undefined;
+    }
+
+    // Sweep any SetOutput MCP tokens still bound to this run. The agent
+    // executor always calls `consumeOutputs` in its `finally`, so under
+    // normal flow this is a no-op. The sweep is defense-in-depth for the
+    // case where the engine crashes between mint and consume.
+    if (this.currentRunId) {
+      releaseRun(this.currentRunId);
     }
 
     const finishedAt = Date.now();
@@ -935,6 +944,7 @@ export class WorkflowEngine {
 
     const startedAt = Date.now();
     const ctx: NodeExecutorContext = {
+      runId: this.currentRunId,
       nodeId: node.id,
       config: resolvedConfig,
       scope,

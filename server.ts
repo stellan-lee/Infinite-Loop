@@ -5,6 +5,7 @@ import {
   activeChildCount,
   killAllChildren,
 } from './lib/server/child-registry';
+import { setBoundPort } from './lib/server/runtime';
 
 const dev = process.env.NODE_ENV !== 'production';
 const startPort = Number(process.env.PORT ?? 3000);
@@ -26,6 +27,10 @@ const httpServer = createServer((req, res) => {
 });
 
 const port = await listenWithFallback(httpServer, startPort, host, MAX_PORT_FALLBACK);
+// Publish the resolved port so in-process callers (notably the SetOutput
+// MCP server injected into agent CLIs) can build accurate callback URLs
+// without re-reading process.env.PORT, which may be stale after fallback.
+setBoundPort(port);
 console.log(`Infinite Loop ready on http://${host}:${port}`);
 if (port !== startPort) {
   console.log(`  (port ${startPort} was in use; fell through to ${port})`);

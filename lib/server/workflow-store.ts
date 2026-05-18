@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { dataDir, triggersDir } from './paths';
 import type {
+  AgentConfig,
   JudgeNodeConfig,
   ParallelConfig,
   SubworkflowConfig,
@@ -10,6 +11,7 @@ import type {
   WorkflowNode,
   WorkflowSummary,
 } from '../shared/workflow';
+import { AGENT_RESERVED_OUTPUT_NAMES } from '../shared/workflow';
 import type { WebhookTrigger } from '../shared/trigger';
 import {
   collectWorkflowNodeIds,
@@ -99,6 +101,41 @@ function validateNodeConfig(n: WorkflowNode): void {
       throw new Error(
         `invalid workflow: judge node "${n.id}" requires at least 2 candidates`,
       );
+    }
+  }
+  if (n.type === 'agent') {
+    const cfg = n.config as AgentConfig;
+    if (cfg.outputs !== undefined) {
+      if (!Array.isArray(cfg.outputs)) {
+        throw new Error(
+          `invalid workflow: agent node "${n.id}" outputs must be an array`,
+        );
+      }
+      const seen = new Set<string>();
+      const reserved = new Set(AGENT_RESERVED_OUTPUT_NAMES);
+      for (const decl of cfg.outputs) {
+        if (
+          !decl ||
+          typeof decl !== 'object' ||
+          typeof decl.name !== 'string' ||
+          decl.name.length === 0
+        ) {
+          throw new Error(
+            `invalid workflow: agent node "${n.id}" outputs entries must be { name: string, description?: string }`,
+          );
+        }
+        if (seen.has(decl.name)) {
+          throw new Error(
+            `invalid workflow: agent node "${n.id}" declares duplicate output "${decl.name}"`,
+          );
+        }
+        if (reserved.has(decl.name)) {
+          throw new Error(
+            `invalid workflow: agent node "${n.id}" output "${decl.name}" collides with a reserved runtime field`,
+          );
+        }
+        seen.add(decl.name);
+      }
     }
   }
 }

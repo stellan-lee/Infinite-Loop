@@ -290,6 +290,66 @@ describe('workflow-store', () => {
     expect(list.map((s) => s.id)).toEqual(['b', 'a']);
     expect(b.updatedAt).toBeGreaterThanOrEqual(a.updatedAt);
   });
+
+  describe('agent outputs validation', () => {
+    function withAgentOutputs(outputs: unknown): Workflow {
+      return makeWorkflow({
+        nodes: [
+          { id: 'start-1', type: 'start', position: { x: 0, y: 0 }, config: {} },
+          {
+            id: 'agent-1',
+            type: 'agent',
+            position: { x: 100, y: 0 },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            config: { providerId: 'claude', prompt: 'p', cwd: '/tmp', timeoutMs: 1000, outputs } as any,
+          },
+          {
+            id: 'end-1',
+            type: 'end',
+            position: { x: 200, y: 0 },
+            config: { outcome: 'succeeded' },
+          },
+        ],
+        edges: [
+          { id: 'e1', source: 'start-1', sourceHandle: 'next', target: 'agent-1' },
+          { id: 'e2', source: 'agent-1', sourceHandle: 'next', target: 'end-1' },
+        ],
+      });
+    }
+
+    it('accepts a valid outputs declaration', async () => {
+      const wf = withAgentOutputs([
+        { name: 'PR_LINK' },
+        { name: 'PR_ID', description: 'pull-request id' },
+      ]);
+      await expect(saveWorkflow(wf)).resolves.toBeDefined();
+    });
+
+    it('rejects non-array outputs', async () => {
+      const wf = withAgentOutputs('not-an-array');
+      await expect(saveWorkflow(wf)).rejects.toThrow(/outputs must be an array/);
+    });
+
+    it('rejects entries without a name', async () => {
+      const wf = withAgentOutputs([{ description: 'no name' }]);
+      await expect(saveWorkflow(wf)).rejects.toThrow(/outputs entries must be/);
+    });
+
+    it('rejects reserved names', async () => {
+      const wf = withAgentOutputs([{ name: 'stdout' }]);
+      await expect(saveWorkflow(wf)).rejects.toThrow(/collides with a reserved runtime field/);
+    });
+
+    it('rejects duplicate names', async () => {
+      const wf = withAgentOutputs([{ name: 'X' }, { name: 'X' }]);
+      await expect(saveWorkflow(wf)).rejects.toThrow(/duplicate output/);
+    });
+
+    it('accepts an empty outputs array', async () => {
+      const wf = withAgentOutputs([]);
+      await expect(saveWorkflow(wf)).resolves.toBeDefined();
+    });
+  });
 });
 
 describe('saveWorkflow migration: legacy triggers[] → trigger-store', () => {

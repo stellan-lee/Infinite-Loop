@@ -19,26 +19,34 @@ const SIGKILL_GRACE_MS = 2000;
  *   `{agent}` token AND the immediately preceding arg (the flag name) are
  *   dropped. This lets a manifest declare `["--agent", "{agent}"]` and have
  *   the whole pair vanish when the user didn't pick one.
+ * - `{mcpConfig}` follows the same drop-preceding-flag pattern as
+ *   `{agent}`, fed by `opts.mcpConfigPath`. The expected manifest shape is
+ *   the flag-pair form (`["--mcp-config", "{mcpConfig}"]`), NOT the
+ *   embedded form (`--mcp-config={mcpConfig}`) — the drop-on-empty path is
+ *   only well-defined for the pair form.
  *
  * Pure; exported for tests.
  */
 export function resolveCliArgs(
   args: readonly string[],
-  opts: Pick<RunnerOptions, 'prompt' | 'agent'> & { promptVia: 'arg' | 'stdin' },
+  opts: Pick<RunnerOptions, 'prompt' | 'agent' | 'mcpConfigPath'> & {
+    promptVia: 'arg' | 'stdin';
+  },
 ): string[] {
   const out: string[] = [];
   const agent = typeof opts.agent === 'string' ? opts.agent.trim() : '';
+  const mcpConfig =
+    typeof opts.mcpConfigPath === 'string' ? opts.mcpConfigPath.trim() : '';
+  const dropPrecedingFlag = () => {
+    const prev = out[out.length - 1];
+    if (typeof prev === 'string' && prev.startsWith('-')) {
+      out.pop();
+    }
+  };
   for (const raw of args) {
     if (raw === '{agent}') {
       if (agent.length === 0) {
-        // Drop the placeholder and the preceding flag so e.g.
-        // ["--agent", "{agent}"] vanishes entirely. We only pop when the
-        // preceding token looks like a flag — guards against eating the
-        // prompt or an unrelated argument if a manifest omits the flag.
-        const prev = out[out.length - 1];
-        if (typeof prev === 'string' && prev.startsWith('-')) {
-          out.pop();
-        }
+        dropPrecedingFlag();
         continue;
       }
       out.push(agent);
@@ -49,6 +57,22 @@ export function resolveCliArgs(
       // set; when empty, drop just this token so an adjacent prompt stays put.
       if (agent.length === 0) continue;
       out.push(raw.replace(/\{agent\}/g, agent));
+      continue;
+    }
+    if (raw === '{mcpConfig}') {
+      if (mcpConfig.length === 0) {
+        dropPrecedingFlag();
+        continue;
+      }
+      out.push(mcpConfig);
+      continue;
+    }
+    if (raw.includes('{mcpConfig}')) {
+      // Embedded form is intentionally NOT supported with the drop-on-empty
+      // rule (see docstring). Substitute when set so a manifest can still
+      // opt into it; when empty, drop just this token to mirror {agent}.
+      if (mcpConfig.length === 0) continue;
+      out.push(raw.replace(/\{mcpConfig\}/g, mcpConfig));
       continue;
     }
     if (opts.promptVia === 'arg' && raw.includes('{prompt}')) {
@@ -100,6 +124,7 @@ async function runCliProvider(
   const args = resolveCliArgs(manifest.args, {
     prompt: opts.prompt,
     agent: opts.agent,
+    mcpConfigPath: opts.mcpConfigPath,
     promptVia,
   });
   const parserFactory = parserFactories[manifest.outputFormat];

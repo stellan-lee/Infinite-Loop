@@ -37,6 +37,12 @@ export interface RunnerOptions {
    * a `{agent}` placeholder; empty/undefined strips both the placeholder and
    * the immediately preceding arg (the flag name). HTTP providers ignore. */
   agent?: string;
+  /** Optional absolute path to an MCP config file the CLI should load.
+   * CLI providers may substitute it into argv via a `{mcpConfig}`
+   * placeholder; empty/undefined strips both the placeholder and the
+   * immediately preceding arg (the flag name) — same shape as `{agent}`.
+   * HTTP providers ignore. */
+  mcpConfigPath?: string;
 }
 
 export interface RunnerResult {

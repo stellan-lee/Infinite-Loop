@@ -14,8 +14,6 @@
  */
 
 import { promises as fs } from 'node:fs';
-import { lookup as dnsLookup } from 'node:dns/promises';
-import { isIP } from 'node:net';
 import path from 'node:path';
 import { _resetProviderCache, getProvider, HERMES_LOCAL_SUFFIX } from './loader';
 import { connectionsDir } from '../paths';
@@ -127,96 +125,8 @@ export function buildPortBaseUrl(host: string, port: number): string {
 }
 
 /** Cap on `/v1/models` response body. The endpoint returns a small JSON
- *  list of models; anything larger is almost certainly an attempt to use
- *  the discovery fetch as an SSRF bandwidth amplifier. */
+ *  list of models; anything larger is treated as a malformed response. */
 const MODELS_RESPONSE_MAX_BYTES = 256 * 1024;
-
-function ipIsPrivateOrLocal(ip: string): boolean {
-  const v = isIP(ip);
-  if (v === 4) {
-    const parts = ip.split('.').map((s) => Number(s));
-    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return true;
-    const [a, b] = parts;
-    if (a === 0) return true;                          // 0.0.0.0/8
-    if (a === 10) return true;                         // 10.0.0.0/8
-    if (a === 127) return true;                        // loopback
-    if (a === 169 && b === 254) return true;           // link-local, incl. cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16/12
-    if (a === 192 && b === 168) return true;           // 192.168/16
-    if (a >= 224) return true;                         // multicast / reserved
-    return false;
-  }
-  if (v === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === '::' || lower === '::1') return true;
-    if (lower.startsWith('fe80:') || lower.startsWith('fe80::')) return true; // link-local
-    if (lower.startsWith('fc') || lower.startsWith('fd')) return true;        // unique-local
-    if (lower.startsWith('ff')) return true;                                  // multicast
-    if (lower.startsWith('::ffff:')) {
-      // IPv4-mapped: re-check the IPv4 portion.
-      const tail = lower.slice('::ffff:'.length);
-      if (isIP(tail) === 4) return ipIsPrivateOrLocal(tail);
-    }
-    return false;
-  }
-  // Unknown / unparseable — treat as unsafe.
-  return true;
-}
-
-/** Refuse to fetch URLs whose hostname resolves to a loopback, RFC1918,
- *  link-local, or other reserved address. This is the SSRF guard for the
- *  Hermes provider create/update flow, where the caller supplies `host`
- *  and we hit `<host>:<port>/v1/models` server-side.
- *
- *  Known residual gap: this guard does one DNS lookup, then `fetch`
- *  resolves the host again via its own resolver — an attacker who
- *  controls authoritative DNS can serve a public IP to our lookup and a
- *  private IP to the subsequent fetch (classic DNS rebinding). Closing
- *  this would require dialing by resolved IP with the SNI/Host preserved
- *  (or using a pinning resolver). Acceptable for current deployment
- *  model (single-tenant local app); revisit if the server moves to a
- *  shared-tenancy footprint. */
-async function assertHostnameIsPublic(host: string): Promise<void> {
-  let url: URL;
-  try {
-    url = new URL(host);
-  } catch {
-    throw new Error('`host` is not a valid URL');
-  }
-  const hostname = url.hostname;
-  // Strip IPv6 brackets if `URL` left them on.
-  const bare = hostname.startsWith('[') && hostname.endsWith(']')
-    ? hostname.slice(1, -1)
-    : hostname;
-
-  // Literal IP — check directly without DNS.
-  if (isIP(bare)) {
-    if (ipIsPrivateOrLocal(bare)) {
-      throw new Error(`refusing to reach private/loopback address ${bare}`);
-    }
-    return;
-  }
-
-  // Hostname — resolve and reject if ANY answer is private/local. We use
-  // `all: true` so split-horizon DNS can't bypass by returning a public
-  // address on one query and a private one on the next.
-  let addrs: Array<{ address: string; family: number }>;
-  try {
-    addrs = await dnsLookup(bare, { all: true });
-  } catch (err) {
-    throw new Error(`could not resolve host ${bare}: ${(err as Error).message}`);
-  }
-  if (addrs.length === 0) {
-    throw new Error(`could not resolve host ${bare}`);
-  }
-  for (const a of addrs) {
-    if (ipIsPrivateOrLocal(a.address)) {
-      throw new Error(
-        `refusing to reach private/loopback address ${a.address} (resolved from ${bare})`,
-      );
-    }
-  }
-}
 
 /** Hit `<host>:<port>/v1/models` and return `data[0].id`. Throws with a
  * focused message on any failure — caller surfaces it as a 400. */
@@ -385,10 +295,6 @@ export async function validateInput(
   ports: PortProfile[];
 }> {
   const synced = validateInputSync(input);
-  // Guard ONCE per host before any port-discovery fetch — prevents an
-  // authenticated caller from using the discovery flow as an SSRF vector
-  // against the server's internal network.
-  await assertHostnameIsPublic(synced.host);
   const resolved: PortProfile[] = [];
   for (const entry of synced.ports) {
     let profile = entry.profile;

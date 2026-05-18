@@ -15,12 +15,23 @@ import type {
  */
 function isBranchConfig(v: unknown): v is BranchConfig {
   if (!v || typeof v !== 'object') return false;
-  const c = v as { lhs?: unknown; op?: unknown; rhs?: unknown };
-  return (
-    typeof c.lhs === 'string' &&
-    typeof c.rhs === 'string' &&
-    (c.op === '==' || c.op === '!=' || c.op === 'contains' || c.op === 'matches')
-  );
+  const c = v as {
+    lhs?: unknown;
+    op?: unknown;
+    rhs?: unknown;
+    caseInsensitive?: unknown;
+  };
+  if (
+    typeof c.lhs !== 'string' ||
+    typeof c.rhs !== 'string' ||
+    !(c.op === '==' || c.op === '!=' || c.op === 'contains' || c.op === 'matches')
+  ) {
+    return false;
+  }
+  if (c.caseInsensitive !== undefined && typeof c.caseInsensitive !== 'boolean') {
+    return false;
+  }
+  return true;
 }
 
 export const branchExecutor: NodeExecutor = {

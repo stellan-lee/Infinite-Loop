@@ -184,6 +184,9 @@ export interface BranchConfig {
   op: BranchOp;
   /** Templating-resolved right-hand side. For `matches`, this is a regex source. */
   rhs: string;
+  /** When true, comparisons ignore ASCII case: ==/!= use lowercased operands,
+   * contains uses lowercased substring search, matches sets the regex `i` flag. */
+  caseInsensitive?: boolean;
 }
 
 export type ParallelMode = 'wait-all' | 'race' | 'quorum';

@@ -49,6 +49,7 @@ describe('QueuePage', () => {
     render(<QueuePage />);
     await waitFor(() => {
       expect(screen.getByText(/no queued runs/i)).toBeTruthy();
+      expect(screen.getByText(/triggered runs will appear here/i)).toBeTruthy();
     });
   });
 

@@ -187,7 +187,13 @@ export default function QueuePage() {
       {notice && <p className="queue-notice">{notice}</p>}
 
       {loaded && items.length === 0 ? (
-        <p className="queue-empty">No queued runs.</p>
+        <section className="queue-empty" aria-label="empty queue">
+          <h2>No queued runs.</h2>
+          <p>Triggered runs will appear here while waiting to start.</p>
+          <Link href="/" className="btn btn-ghost queue-empty-action">
+            Back to console
+          </Link>
+        </section>
       ) : (
         <table className="queue-table">
           <thead>

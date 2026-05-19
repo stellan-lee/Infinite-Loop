@@ -74,6 +74,32 @@ describe('RunInputsModal', () => {
     expect(onSubmit).toHaveBeenCalledWith({ topic: 'dogs', count: 7 });
   });
 
+
+  it('keeps action buttons outside the scrollable field body for long forms', () => {
+    render(
+      <RunInputsModal
+        declared={decls([
+          { name: 'projectPath', type: 'string', default: '/tmp/project' },
+          { name: 'task', type: 'text', default: 'do work' },
+          { name: 'constraints', type: 'text', default: 'be safe' },
+          { name: 'verificationCommand', type: 'string', default: 'bun test' },
+          { name: 'providerId', type: 'string', default: 'claude' },
+          { name: 'implementationAgent', type: 'string', default: '' },
+          { name: 'techLeadAgent', type: 'string', default: 'senior-review-agent' },
+          { name: 'seniorReviewerAgent', type: 'string', default: 'code-review-agent' },
+        ])}
+        onSubmit={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+
+    const fieldBody = screen.getByLabelText('workflow input fields');
+    expect(fieldBody).toHaveClass('modal-body');
+    expect(fieldBody).toContainElement(screen.getByLabelText('projectPath'));
+    expect(fieldBody).not.toContainElement(screen.getByRole('button', { name: /run/i }));
+    expect(screen.getByRole('group', { name: /workflow input actions/i })).toHaveClass('modal-actions');
+  });
+
   it('calls onCancel when Cancel clicked', () => {
     const onCancel = mock(() => {});
     render(

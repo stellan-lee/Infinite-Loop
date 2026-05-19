@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Controls,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -348,7 +349,7 @@ function CanvasInner() {
     fittedFor.current = id;
     // Defer to the next frame so xyflow has measured the freshly-mounted nodes.
     const raf = requestAnimationFrame(() => {
-      fitView({ padding: 0.18, maxZoom: 1, minZoom: 0.4, duration: 200 });
+      fitView({ padding: 0.14, maxZoom: 1.05, minZoom: 0.6, duration: 200 });
     });
     return () => cancelAnimationFrame(raf);
   }, [currentWorkflow?.id, currentWorkflow?.nodes?.length, fitView]);
@@ -668,9 +669,18 @@ function CanvasInner() {
         onConnect={onConnect}
         colorMode={colorMode}
         fitView
-        fitViewOptions={{ padding: 0.18, maxZoom: 1, minZoom: 0.4 }}
+        fitViewOptions={{ padding: 0.14, maxZoom: 1.05, minZoom: 0.6 }}
+        defaultEdgeOptions={{ type: 'smoothstep', style: { strokeWidth: 2 } }}
         proOptions={{ hideAttribution: true }}
-      />
+      >
+        <Controls showInteractive={false} />
+      </ReactFlow>
+      {!currentWorkflow && (
+        <div className="canvas-empty" role="status">
+          <h2>No workflow loaded</h2>
+          <p>Select a workflow from the menu, then run it or edit the graph.</p>
+        </div>
+      )}
       <CanvasContextMenu
         open={menuOpen}
         onClose={() => setMenuOpen(null)}

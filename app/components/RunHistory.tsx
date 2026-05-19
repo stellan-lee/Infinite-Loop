@@ -231,8 +231,15 @@ export default function RunHistory({ workflowId }: Props) {
         </div>
       )}
       {!listLoading && !listError && summaries.length === 0 && (
-        <div className="wf-menu-empty serif-italic">
-          {workflowId ? 'no recorded runs yet' : 'load a workflow first'}
+        <div className="run-history-empty" role="status">
+          <p className="run-history-empty-title">
+            {workflowId ? 'no recorded runs yet' : 'load a workflow first'}
+          </p>
+          <p className="run-history-empty-hint">
+            {workflowId
+              ? 'Click Run to execute the current workflow; completed runs will appear here.'
+              : 'Select a workflow from the menu to view its recorded runs.'}
+          </p>
         </div>
       )}
 

@@ -48,6 +48,8 @@ interface PaletteItem {
   /** Display label for the parent connection (the user-typed label on
    * the `.hermes.local.json` file). */
   connectionLabel?: string;
+  available?: boolean;
+  healthMessage?: string;
 }
 
 interface HermesGroup {
@@ -109,6 +111,8 @@ function providerToItem(p: ProviderInfo): PaletteItem {
     providerId: p.id,
     connectionId: p.connectionId,
     connectionLabel: p.connectionLabel,
+    available: p.available,
+    healthMessage: p.health?.message,
   };
 }
 
@@ -153,6 +157,10 @@ function handleDragStart(
   e: React.DragEvent<HTMLButtonElement>,
   item: PaletteItem,
 ): void {
+  if (item.available === false) {
+    e.preventDefault();
+    return;
+  }
   const payload: DragPayload = { type: item.type };
   if (item.providerId) payload.providerId = item.providerId;
   e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
@@ -163,6 +171,7 @@ function handleDragStart(
 }
 
 function handlePaletteItemClick(item: PaletteItem): void {
+  if (item.available === false) return;
   if (typeof window === 'undefined') return;
   const isMobileLayout = window.matchMedia('(max-width: 920px)').matches;
   if (!isMobileLayout) return;
@@ -238,7 +247,9 @@ export default function Palette() {
                   <button
                     type="button"
                     className="palette-item"
-                    draggable
+                    data-unavailable={item.available === false || undefined}
+                    disabled={item.available === false}
+                    draggable={item.available !== false}
                     aria-label={
                       item.providerId
                         ? `add ${item.providerId} agent node`
@@ -247,7 +258,7 @@ export default function Palette() {
                     // `title` carries the description so it surfaces on
                     // hover (native OS tooltip) instead of taking a row
                     // of vertical space in the card.
-                    title={item.description}
+                    title={item.available === false ? item.healthMessage ?? 'Provider unavailable' : item.description}
                     onClick={() => handlePaletteItemClick(item)}
                     onDragStart={(e) => handleDragStart(e, item)}
                   >
@@ -339,9 +350,11 @@ export default function Palette() {
                               <button
                                 type="button"
                                 className="palette-item"
-                                draggable
+                                data-unavailable={item.available === false || undefined}
+                                disabled={item.available === false}
+                                draggable={item.available !== false}
                                 aria-label={`add ${item.providerId} agent node`}
-                                title={item.description}
+                                title={item.available === false ? item.healthMessage ?? 'Provider unavailable' : item.description}
                                 onClick={() => handlePaletteItemClick(item)}
                                 onDragStart={(e) => handleDragStart(e, item)}
                               >
@@ -466,6 +479,18 @@ const paletteCss = `
 }
 .palette-item:active {
   cursor: grabbing;
+}
+.palette-item[data-unavailable='true'] {
+  cursor: not-allowed;
+  color: var(--fg-faint);
+  opacity: 0.58;
+}
+.palette-item[data-unavailable='true']::after {
+  content: 'missing';
+  justify-self: end;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--accent-err);
 }
 .palette-item:focus-visible {
   outline: 1px dashed var(--accent-live);

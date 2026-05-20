@@ -483,6 +483,25 @@ describe('workflowToXyflow', () => {
     });
   });
 
+  it('marks unvisited nodes as pending while a workflow run is active', () => {
+    const wf = makeWorkflow();
+
+    const out = workflowToXyflow(
+      wf,
+      {
+        'start-1': 'succeeded',
+        'agent-1': 'live',
+      },
+      null,
+      null,
+      'running',
+    );
+
+    expect(out.nodes.find((n) => n.id === 'start-1')?.data._state).toBe('succeeded');
+    expect(out.nodes.find((n) => n.id === 'agent-1')?.data._state).toBe('live');
+    expect(out.nodes.find((n) => n.id === 'end-1')?.data._state).toBe('pending');
+  });
+
   it('auto-sizes a Loop without a persisted size to fit its children', () => {
     // Regression: a legacy workflow (Loop saved without `size`) used to fall
     // back to LOOP_DEFAULT_W=460 here, which is too narrow for a child sitting
@@ -564,9 +583,9 @@ describe('workflowToXyflow', () => {
     expect(loopLive?.data._state).toBe('live');
     expect(childLive?.data._state).toBe('live');
 
-    // When no child is live, the Loop falls back to idle.
-    const idleOut = workflowToXyflow(wf, { 'agent-1': 'succeeded' }, null);
-    expect(idleOut.nodes.find((n) => n.id === 'loop-1')?.data._state).toBe('idle');
+    // When every child has run successfully, the Loop reads as already run too.
+    const succeededOut = workflowToXyflow(wf, { 'agent-1': 'succeeded' }, null);
+    expect(succeededOut.nodes.find((n) => n.id === 'loop-1')?.data._state).toBe('succeeded');
   });
 
   it('falls back to the default size when a Loop has no children', () => {

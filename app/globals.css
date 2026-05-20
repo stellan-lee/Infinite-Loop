@@ -1029,6 +1029,11 @@ button.event-card-head-toggle:focus-visible {
 .wf-node[data-state='live']::after {
   opacity: 1;
 }
+.wf-node[data-state='pending'] {
+  border-color: var(--fg-muted);
+  background: color-mix(in srgb, var(--bg-elevated) 84%, var(--fg-faint));
+  opacity: 0.82;
+}
 .wf-node[data-state='succeeded'] {
   border-color: var(--accent-ok);
   box-shadow: 0 0 12px var(--accent-ok-glow);
@@ -1117,7 +1122,12 @@ button.event-card-head-toggle:focus-visible {
 .wf-node[data-node-type='script'] { border-left: 2px solid var(--node-script); }
 .wf-node[data-node-type='script'] .wf-node-title { color: var(--node-script); }
 /* Run state still wins over the type color when the run is active, so the
- * user can spot which node is hot at a glance. */
+ * user can spot which nodes are not-started / running / already-run. */
+.wf-node[data-state='pending'] { border-left-color: var(--fg-muted); }
+.wf-node[data-state='live'] { border-left-color: var(--accent-live); }
+.wf-node[data-state='succeeded'] { border-left-color: var(--accent-ok); }
+.wf-node[data-state='failed'] { border-left-color: var(--accent-err); }
+.wf-node[data-state='pending'] .wf-node-title { color: var(--fg-dim); }
 .wf-node[data-state='live'] .wf-node-title { color: var(--accent-live); }
 .wf-node[data-state='succeeded'] .wf-node-title { color: var(--accent-ok); }
 .wf-node[data-state='failed'] .wf-node-title { color: var(--accent-err); }
@@ -1128,6 +1138,10 @@ button.event-card-head-toggle:focus-visible {
   height: 6px;
   border-radius: 0;
   background: var(--fg-faint);
+}
+.wf-node-state-dot[data-state='pending'] {
+  background: var(--fg-muted);
+  opacity: 0.7;
 }
 .wf-node-state-dot[data-state='live'] {
   background: var(--accent-live);
@@ -2884,9 +2898,19 @@ input[type='number'].no-spin {
   /* xyflow positions children absolutely inside; let them paint above. */
   z-index: 0;
 }
+.wf-node-group[data-state='pending'] {
+  border-color: var(--fg-muted);
+  background: color-mix(in srgb, var(--bg-elevated) 88%, var(--fg-faint));
+}
 .wf-node-group[data-state='live'] {
   border-color: var(--accent-live);
   background: rgba(255, 184, 77, 0.07);
+}
+.wf-node-group[data-state='succeeded'] {
+  border-color: var(--accent-ok);
+}
+.wf-node-group[data-state='failed'] {
+  border-color: var(--accent-err);
 }
 .wf-node-group[data-selected='true'] {
   border-style: solid;

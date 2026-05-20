@@ -110,11 +110,26 @@ export default function Page() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/workflows/${DEFAULT_WORKFLOW_ID}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        const wf = data?.workflow;
-        if (!cancelled && wf) loadWorkflow(wf);
+        let wf: unknown = null;
+        const defaultRes = await fetch(`/api/workflows/${DEFAULT_WORKFLOW_ID}`);
+        if (defaultRes.ok) {
+          const data = await defaultRes.json();
+          wf = data?.workflow;
+        } else if (defaultRes.status === 404) {
+          const listRes = await fetch('/api/workflows');
+          if (listRes.ok) {
+            const data = await listRes.json();
+            const first = Array.isArray(data?.workflows) ? data.workflows[0] : null;
+            if (first?.id) {
+              const firstRes = await fetch(`/api/workflows/${encodeURIComponent(first.id)}`);
+              if (firstRes.ok) {
+                const firstData = await firstRes.json();
+                wf = firstData?.workflow;
+              }
+            }
+          }
+        }
+        if (!cancelled && wf) loadWorkflow(wf as Parameters<typeof loadWorkflow>[0]);
       } catch {
         // leave canvas empty so the user can still create a fresh workflow
       }

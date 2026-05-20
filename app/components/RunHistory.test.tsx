@@ -88,6 +88,15 @@ describe('RunHistory', () => {
     expect(called).toBe(false);
   });
 
+  it('explains how to create history when a workflow has no recorded runs', async () => {
+    globalThis.fetch = mock(async () => jsonResponse({ runs: [] })) as unknown as typeof fetch;
+    render(<RunHistory workflowId="wf-1" />);
+    await waitFor(() =>
+      expect(screen.getByText(/no recorded runs yet/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/click run to execute the current workflow/i)).toBeInTheDocument();
+  });
+
   it('lists runs returned by /api/runs for the current workflow', async () => {
     render(<RunHistory workflowId="wf-1" />);
     await waitFor(() =>

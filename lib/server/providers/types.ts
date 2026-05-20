@@ -87,6 +87,14 @@ export interface HttpProviderManifest extends ProviderManifestCommon {
 export type ProviderManifest = CliProviderManifest | HttpProviderManifest;
 
 /** Public summary shipped to the client palette via `/api/providers`. */
+export type ProviderHealthStatus = 'available' | 'missing' | 'unknown';
+
+export interface ProviderHealth {
+  status: ProviderHealthStatus;
+  message?: string;
+  resolvedBin?: string;
+}
+
 export interface ProviderInfo {
   id: string;
   label: string;
@@ -96,4 +104,11 @@ export interface ProviderInfo {
   kind?: ProviderKind;
   connectionId?: string;
   connectionLabel?: string;
+  /** True when the provider can be selected/run with high confidence. For
+   * CLI providers this means the configured executable resolves in PATH or
+   * exists at its absolute/relative path; HTTP providers are marked true but
+   * health remains `unknown` because remote auth/network health is checked at
+   * run time. */
+  available: boolean;
+  health: ProviderHealth;
 }

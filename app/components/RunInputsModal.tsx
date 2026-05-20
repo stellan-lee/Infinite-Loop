@@ -90,24 +90,26 @@ export default function RunInputsModal({ declared, onSubmit, onCancel }: Props) 
     >
       <form ref={formRef} className="modal" onSubmit={handleSubmit}>
         <h2>Run with inputs</h2>
-        {declared.map((d) => (
-          <div key={d.name} className="field">
-            <label htmlFor={`run-input-${d.name}`}>{d.name}</label>
-            {d.description && (
-              <p className="field-hint">{d.description}</p>
-            )}
-            <FieldWidget
-              id={`run-input-${d.name}`}
-              decl={d}
-              value={values[d.name]}
-              onChange={(v) => setValues((s) => ({ ...s, [d.name]: v }))}
-            />
-            {errors[d.name] && (
-              <p className="field-error">{errors[d.name]}</p>
-            )}
-          </div>
-        ))}
-        <div className="modal-actions">
+        <div className="modal-body" aria-label="workflow input fields">
+          {declared.map((d) => (
+            <div key={d.name} className="field">
+              <label htmlFor={`run-input-${d.name}`}>{d.name}</label>
+              {d.description && (
+                <p className="field-hint">{d.description}</p>
+              )}
+              <FieldWidget
+                id={`run-input-${d.name}`}
+                decl={d}
+                value={values[d.name]}
+                onChange={(v) => setValues((s) => ({ ...s, [d.name]: v }))}
+              />
+              {errors[d.name] && (
+                <p className="field-error">{errors[d.name]}</p>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="modal-actions" role="group" aria-label="workflow input actions">
           <button type="button" className="btn btn-ghost" onClick={onCancel}>
             Cancel
           </button>

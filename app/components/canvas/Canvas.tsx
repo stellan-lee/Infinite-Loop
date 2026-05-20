@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  ConnectionLineType,
   Controls,
   ReactFlow,
   ReactFlowProvider,
@@ -276,6 +277,7 @@ export function workflowToXyflow(
     // Round-trip selection so xyflow's Backspace-to-delete keystroke can
     // act on the edge the user clicked.
     selected: e.id === selectedEdgeId,
+    type: 'default',
   }));
   return { nodes, edges };
 }
@@ -670,7 +672,8 @@ function CanvasInner() {
         colorMode={colorMode}
         fitView
         fitViewOptions={{ padding: 0.14, maxZoom: 1.05, minZoom: 0.6 }}
-        defaultEdgeOptions={{ type: 'smoothstep', style: { strokeWidth: 2 } }}
+        connectionLineType={ConnectionLineType.Bezier}
+        defaultEdgeOptions={{ type: 'default', style: { strokeWidth: 2 } }}
         proOptions={{ hideAttribution: true }}
       >
         <Controls showInteractive={false} />

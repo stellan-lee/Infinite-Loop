@@ -31,6 +31,7 @@ import type {
   SidenoteConfig,
   StartConfig,
   SubworkflowConfig,
+  RunStatus,
   Workflow,
   WorkflowEdge,
   WorkflowEvent,
@@ -63,7 +64,7 @@ import CanvasContextMenu, {
 
 /* ─── pure helpers (exported for tests) ─────────────────────────────────── */
 
-export type NodeRunState = 'idle' | 'live' | 'succeeded' | 'failed';
+export type NodeRunState = 'idle' | 'pending' | 'live' | 'succeeded' | 'failed';
 
 export interface DropPayload {
   type: NodeType;
@@ -199,8 +200,10 @@ function buildXyNode(
   n: WorkflowNode,
   liveMap: Record<string, NodeRunState>,
   selectedNodeId: string | null,
+  runStatus: RunStatus = 'idle',
   parentId?: string,
 ): XyNode {
+  const state: NodeRunState = liveMap[n.id] ?? (runStatus === 'running' ? 'pending' : 'idle');
   const base: XyNode = {
     id: n.id,
     type: n.type,
@@ -214,7 +217,7 @@ function buildXyNode(
       // "name happens to equal the id".
       label: n.label,
       config: n.config ?? {},
-      _state: liveMap[n.id] ?? 'idle',
+      _state: state,
     },
   };
   if (parentId) {
@@ -242,28 +245,40 @@ export function workflowToXyflow(
   liveMap: Record<string, NodeRunState>,
   selectedNodeId: string | null,
   selectedEdgeId: string | null = null,
+  runStatus: RunStatus = 'idle',
 ): { nodes: XyNode[]; edges: XyEdge[] } {
   if (!workflow) return { nodes: [], edges: [] };
   const wfNodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
   const wfEdges = Array.isArray(workflow.edges) ? workflow.edges : [];
 
   // Containers (Loop) emit no `node_started` events of their own, so derive
-  // their state from their children: if any child is live, the container is
-  // live; otherwise leave the engine-emitted state alone (idle by default).
+  // their state from their children. While a run is active, unvisited children
+  // are pending, making the container read as not-yet-run instead of idle.
   const effectiveLive: Record<string, NodeRunState> = { ...liveMap };
   for (const n of wfNodes) {
     if (n.type === 'loop' && Array.isArray(n.children) && n.children.length) {
-      const anyLive = n.children.some((c) => liveMap[c.id] === 'live');
-      if (anyLive) effectiveLive[n.id] = 'live';
+      const childStates = n.children.map(
+        (c) => liveMap[c.id] ?? (runStatus === 'running' ? 'pending' : 'idle'),
+      );
+      if (childStates.includes('live')) effectiveLive[n.id] = 'live';
+      else if (childStates.includes('failed')) effectiveLive[n.id] = 'failed';
+      else if (runStatus === 'running' && childStates.includes('pending')) {
+        effectiveLive[n.id] = 'pending';
+      } else if (
+        childStates.length > 0 &&
+        childStates.every((state) => state === 'succeeded')
+      ) {
+        effectiveLive[n.id] = 'succeeded';
+      }
     }
   }
 
   const nodes: XyNode[] = [];
   for (const n of wfNodes) {
-    nodes.push(buildXyNode(n, effectiveLive, selectedNodeId));
+    nodes.push(buildXyNode(n, effectiveLive, selectedNodeId, runStatus));
     if (Array.isArray(n.children)) {
       for (const child of n.children) {
-        nodes.push(buildXyNode(child, effectiveLive, selectedNodeId, n.id));
+        nodes.push(buildXyNode(child, effectiveLive, selectedNodeId, runStatus, n.id));
       }
     }
   }

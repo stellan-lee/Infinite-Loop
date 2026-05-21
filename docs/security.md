@@ -117,6 +117,79 @@ A `.workflow.json` file can:
 
 The same applies to `providers/*.json`, `webhook-plugins/*.json`, and `triggers/*.json` — they all influence what Infinite Loop will execute or accept.
 
+## Containment of executed code
+
+Agent and Script nodes run **untrusted code** — AI-authored, and routinely
+shaped by webhook payloads the server does not control (a GitHub
+`pull_request` trigger feeds an attacker-supplied title, body, and diff
+straight into an agent prompt). The settings below bound what that code can
+reach. They limit *blast radius*; the network posture and `INFLOOP_API_TOKEN`
+limit *who can ask*. Both matter.
+
+### Scrubbed child environment
+
+Spawned children do **not** inherit the server's environment. Each is given
+an explicit allowlist:
+
+- a small **base set** of non-secret, environment-shaping variables (`PATH`,
+  `HOME`, locale, `TZ`, TLS/proxy config, …);
+- the variables a provider manifest declares it needs in **`envPassthrough`**
+  (the `claude` manifest passes `ANTHROPIC_*` and `CLAUDE_*`, for example);
+- anything the operator opts into via **`INFLOOP_CHILD_ENV_PASSTHROUGH`**
+  (comma-separated exact names or `PREFIX_*` wildcards) — the escape hatch
+  for site-specific needs such as a Bedrock `AWS_*`, an `SSH_AUTH_SOCK`, or a
+  Python virtualenv.
+
+The entire **`INFLOOP_` namespace is never passed to a child** — most
+importantly `INFLOOP_API_TOKEN`, the bearer token gating the whole API. A
+prompt-injected agent can no longer `echo $INFLOOP_API_TOKEN` and exfiltrate
+it.
+
+This is a behavior change: a Script that relied on an inherited host variable
+(a venv, a registry token) must now have it named in
+`INFLOOP_CHILD_ENV_PASSTHROUGH`. A provider's child needs its credentials
+named in the manifest `envPassthrough`.
+
+### Opt-in dangerous permissions
+
+The `claude` provider is **no longer shipped with
+`--dangerously-skip-permissions` baked into its manifest**. By default an
+agent runs the CLI with its normal permission posture; in non-interactive
+mode that means it cannot perform tool calls that require approval (it logs a
+`[permissions]` notice when this applies).
+
+To grant full autonomous file / shell / network access, tick **"Skip
+permission prompts (dangerous)"** on the Agent node — it maps to the
+manifest's `dangerousArgs`, injected only for that node. Enable it only for
+prompts you trust, and ideally only inside the sandboxed container below.
+
+> Existing saved workflows are affected: a Claude agent node that previously
+> ran fully autonomous now runs with prompts enabled until you opt back in.
+> This is deliberate — autonomy is now a visible choice, not a silent
+> default.
+
+### The container is the security boundary
+
+`docker-compose.yml` runs the app with a **read-only root filesystem**, all
+Linux **capabilities dropped**, `no-new-privileges`, a `pids_limit`, and
+writable state confined to named volumes and a `/tmp` tmpfs. Treat the
+container as the containment unit for the untrusted code a run executes, and
+do not bind-mount host directories into it by default.
+
+**Known gap — per-run network isolation.** The container itself needs egress
+(provider APIs, webhook responses), so it cannot run `--network none`.
+Isolating an *individual agent run's* network requires nested sandboxing and
+is not yet implemented. Until it is: run Infinite Loop on a network it should
+not be able to abuse, and review the workflows you run.
+
+### Per-run worktree isolation
+
+New Agent nodes default to **"Run in isolated git worktree"**, so an agent
+edits a fresh worktree off `cwd` rather than the working tree directly. This
+is a correctness/isolation default, not a security boundary — the process
+still shares the host's filesystem and network. Uncheck it for a `cwd` that
+is not a git repository.
+
 ## Runaway protection
 
 A workflow that loops without a real bound — an `infinite: true` Loop, or

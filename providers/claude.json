@@ -5,7 +5,7 @@
   "glyph": "⟳",
   "bin": "claude",
   "args": [
-    "--dangerously-skip-permissions",
+    "{dangerousArgs}",
     "--print",
     "--output-format",
     "stream-json",
@@ -17,6 +17,8 @@
     "{mcpConfig}",
     "{prompt}"
   ],
+  "dangerousArgs": ["--dangerously-skip-permissions"],
+  "envPassthrough": ["ANTHROPIC_*", "CLAUDE_*"],
   "outputFormat": "claude-stream-json",
   "promptVia": "arg"
 }

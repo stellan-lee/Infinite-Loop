@@ -91,7 +91,13 @@ describe('defaultConfigFor', () => {
     expect(defaultConfigFor('start')).toEqual({});
     expect(defaultConfigFor('end')).toEqual({});
     const agent = defaultConfigFor('agent') as AgentConfig;
-    expect(agent).toEqual({ providerId: 'claude', prompt: '', cwd: '', timeoutMs: 30 * 60 * 1000 });
+    expect(agent).toEqual({
+      providerId: 'claude',
+      prompt: '',
+      cwd: '',
+      timeoutMs: 30 * 60 * 1000,
+      useWorktree: true,
+    });
     const condition = defaultConfigFor('condition') as ConditionConfig;
     expect(condition.kind).toBe('sentinel');
     expect(condition.sentinel).toEqual({ pattern: '', isRegex: false });

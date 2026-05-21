@@ -76,6 +76,58 @@ function validateCommon(
   };
 }
 
+/**
+ * Validate a CLI manifest's `envPassthrough`: a list of host env var names or
+ * `PREFIX_*` trailing wildcards the provider's child process is allowed to
+ * see (see lib/server/child-env.ts). Rejects anything malformed, a bare `*`
+ * (which would leak the whole host environment), a non-trailing `*`, and any
+ * entry that targets the reserved `INFLOOP_` namespace — failing loud at load
+ * time rather than relying solely on the runtime hard rule.
+ */
+function validateEnvPassthrough(
+  raw: unknown,
+  file: string,
+): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!isStringArray(raw)) {
+    throw new Error(
+      `provider ${file}: \`envPassthrough\` must be a string array if set`,
+    );
+  }
+  // Return the trimmed entries so the stored manifest matches what the
+  // runtime allowlist actually applies (every other validated field in this
+  // loader is normalized on the way out).
+  const cleaned: string[] = [];
+  for (const entry of raw) {
+    const e = entry.trim();
+    if (e.length === 0) {
+      throw new Error(
+        `provider ${file}: \`envPassthrough\` entries must be non-empty`,
+      );
+    }
+    if (e === '*') {
+      throw new Error(
+        `provider ${file}: \`envPassthrough\` may not contain a bare "*" — it would pass the entire host environment`,
+      );
+    }
+    const star = e.indexOf('*');
+    if (star !== -1 && star !== e.length - 1) {
+      throw new Error(
+        `provider ${file}: \`envPassthrough\` entry "${e}" — "*" is only allowed as a trailing wildcard`,
+      );
+    }
+    const isWildcard = e.endsWith('*');
+    const prefix = (isWildcard ? e.slice(0, -1) : e).toUpperCase();
+    if (prefix.startsWith('INFLOOP_') || (isWildcard && 'INFLOOP_'.startsWith(prefix))) {
+      throw new Error(
+        `provider ${file}: \`envPassthrough\` entry "${e}" targets the reserved INFLOOP_ namespace`,
+      );
+    }
+    cleaned.push(e);
+  }
+  return cleaned;
+}
+
 function validateCliManifest(
   m: Record<string, unknown>,
   file: string,
@@ -104,6 +156,11 @@ function validateCliManifest(
       `provider ${file}: \`promptVia\` must be "arg" or "stdin" if set`,
     );
   }
+  if (m.dangerousArgs !== undefined && !isStringArray(m.dangerousArgs)) {
+    throw new Error(
+      `provider ${file}: \`dangerousArgs\` must be a string array if set`,
+    );
+  }
   return {
     ...common,
     transport: 'cli',
@@ -111,6 +168,8 @@ function validateCliManifest(
     args: m.args as string[],
     outputFormat: m.outputFormat as string,
     promptVia: (m.promptVia as 'arg' | 'stdin' | undefined) ?? 'arg',
+    envPassthrough: validateEnvPassthrough(m.envPassthrough, file),
+    dangerousArgs: m.dangerousArgs as string[] | undefined,
   };
 }
 
@@ -190,6 +249,19 @@ function validateHttpManifest(
   }
   if (m.defaultProfile !== undefined && typeof m.defaultProfile !== 'string') {
     throw new Error(`provider ${file}: \`defaultProfile\` must be a string if set`);
+  }
+  // `envPassthrough` / `dangerousArgs` shape how a *spawned child process* is
+  // built; an HTTP provider spawns nothing, so naming them is a manifest
+  // mistake worth surfacing rather than silently ignoring.
+  if (m.envPassthrough !== undefined) {
+    throw new Error(
+      `provider ${file}: \`envPassthrough\` is not supported for HTTP providers`,
+    );
+  }
+  if (m.dangerousArgs !== undefined) {
+    throw new Error(
+      `provider ${file}: \`dangerousArgs\` is not supported for HTTP providers`,
+    );
   }
   return {
     ...common,

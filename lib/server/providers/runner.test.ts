@@ -349,6 +349,82 @@ describe('runProvider', () => {
       );
       expect(out).toEqual(['p']);
     });
+
+    it('expands {dangerousArgs} to every supplied arg in place', () => {
+      const out = resolveCliArgs(['{dangerousArgs}', '--print', '{prompt}'], {
+        prompt: 'p',
+        dangerousArgs: ['--dangerously-skip-permissions'],
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['--dangerously-skip-permissions', '--print', 'p']);
+    });
+
+    it('drops {dangerousArgs} to nothing when the list is empty', () => {
+      const out = resolveCliArgs(['{dangerousArgs}', '--print', '{prompt}'], {
+        prompt: 'p',
+        dangerousArgs: [],
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['--print', 'p']);
+    });
+
+    it('drops {dangerousArgs} to nothing when the list is undefined', () => {
+      const out = resolveCliArgs(['{dangerousArgs}', '--print', '{prompt}'], {
+        prompt: 'p',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['--print', 'p']);
+    });
+
+    it('expands {dangerousArgs} after a leading subcommand', () => {
+      const out = resolveCliArgs(['exec', '{dangerousArgs}', '{prompt}'], {
+        prompt: 'p',
+        dangerousArgs: ['--full-auto'],
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['exec', '--full-auto', 'p']);
+    });
+  });
+
+  describe('dangerousArgs gating', () => {
+    const ARGV_ECHO = resolve(here, '../../../tests/fixtures/fake-argv-echo.sh');
+    const dangerManifest: ProviderManifest = {
+      id: 'danger',
+      label: 'Danger',
+      description: 'd',
+      transport: 'cli',
+      bin: ARGV_ECHO,
+      args: ['{dangerousArgs}', '{prompt}'],
+      dangerousArgs: ['--dangerously-skip-permissions'],
+      outputFormat: 'plain',
+      promptVia: 'arg',
+    };
+
+    it('injects manifest.dangerousArgs only when the node opts in', async () => {
+      const ctrl = new AbortController();
+      const result = await runProvider(dangerManifest, {
+        prompt: 'p',
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+        signal: ctrl.signal,
+        dangerouslySkipPermissions: true,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('ARG:--dangerously-skip-permissions');
+    });
+
+    it('omits manifest.dangerousArgs when the node has not opted in', async () => {
+      const ctrl = new AbortController();
+      const result = await runProvider(dangerManifest, {
+        prompt: 'p',
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+        signal: ctrl.signal,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toContain('--dangerously-skip-permissions');
+      expect(result.stdout).toContain('ARG:p');
+    });
   });
 
   it('returns null exitCode + helpful stderr when binary spawn fails', async () => {

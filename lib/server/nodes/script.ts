@@ -10,6 +10,7 @@ import type {
   ScriptLanguage,
 } from '../../shared/workflow';
 import { registerChild, unregisterChild } from '../child-registry';
+import { buildChildEnv } from '../child-env';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const SIGKILL_GRACE_MS = 2000;
@@ -148,8 +149,14 @@ function runInterpreter(
   return new Promise<SpawnResult>((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
+      // env: a scrubbed allowlist, NOT the inherited process.env — inline
+      // scripts run untrusted, user-authored code and must not see the
+      // orchestrator's secrets. A script with a legitimate need for a host
+      // var (a venv, an API key) gets it via INFLOOP_CHILD_ENV_PASSTHROUGH.
+      // See lib/server/child-env.ts.
       child = spawn(bin, args, {
         cwd,
+        env: buildChildEnv(),
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: true,
       });

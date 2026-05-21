@@ -52,6 +52,13 @@ export function writeStubProvider(providersDir: string): void {
     args: ['{prompt}'],
     outputFormat: 'plain',
     promptVia: 'arg',
+    // The runner spawns children with a scrubbed env (lib/server/child-env.ts).
+    // fake-agent.sh is configured via FAKE_AGENT_* knobs (e.g. the
+    // crash-recovery spec's FAKE_AGENT_SLEEP_MS) — declare them so they
+    // survive the scrub, exactly as a real provider declares its API creds.
+    // This is load-bearing: the E2E server is its own process, so the
+    // bun-test preload's global passthrough (tests/setup.ts) does not apply.
+    envPassthrough: ['FAKE_AGENT_*'],
   };
   writeFileSync(
     path.join(providersDir, `${STUB_PROVIDER_ID}.json`),

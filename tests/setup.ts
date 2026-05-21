@@ -28,6 +28,13 @@ afterEach(() => {
   cleanup();
 });
 
+// Spawned-child env scrubbing (lib/server/child-env.ts) strips every host
+// variable not on its allowlist. The env-driven fake CLIs under
+// tests/fixtures/ are configured via FAKE_* variables — allow those through
+// for the whole test process so runner / agent / judge integration tests
+// still reach their stub binaries with their configuration intact.
+process.env.INFLOOP_CHILD_ENV_PASSTHROUGH = 'FAKE_*';
+
 // Isolate every test from the developer's real data directory. Server code
 // derives runs/, pids/, active-runs/, triggers/, connections/ from `dataDir()`,
 // which honors INFLOOP_DATA_DIR — point it at a throwaway temp dir so a test

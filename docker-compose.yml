@@ -31,6 +31,35 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
 
+    # --- Containment hardening ---------------------------------------------
+    # The container is the security boundary for the untrusted code this app
+    # runs: provider CLIs and inline TS/Python, looping autonomously and
+    # routinely shaped by webhook payloads. These settings bound the blast
+    # radius of a compromised run. See docs/security.md.
+    #
+    # NOT covered here: per-agent-run network isolation. The orchestrator
+    # itself needs egress (provider APIs, webhook responses), so the whole
+    # container cannot run `--network none`. Isolating an individual agent
+    # run's network requires nested sandboxing and is a tracked gap — keep
+    # the container off any network it should not reach, and review the
+    # workflows you run (docs/security.md).
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Cap the process table so a fork bomb in a run can't exhaust host PIDs.
+    # Generous: the orchestrator plus several parallel agent subprocess trees.
+    pids_limit: 4096
+
+    # Writable scratch on the otherwise read-only root filesystem. The app
+    # writes only here and to the named volumes below: script wrappers and
+    # per-run mcp.json land in the system temp dir; Next.js may write an
+    # image-optimization cache.
+    tmpfs:
+      - /tmp:mode=1777,size=512m
+      - /app/.next/cache:mode=1777,size=256m
+
     environment:
       # Bind every interface *inside the container* so the published port can
       # reach the app. Real network exposure is governed by `ports` above,
@@ -41,13 +70,22 @@ services:
       # Required: the network-posture gate refuses a non-loopback bind with no
       # token. `docker compose up` fails fast if INFLOOP_API_TOKEN is unset.
       INFLOOP_API_TOKEN: ${INFLOOP_API_TOKEN:?set INFLOOP_API_TOKEN in .env — see docs/deployment.md}
+      # Optional: extra host env vars to expose to spawned agent/script
+      # children (comma-separated names or PREFIX_* wildcards). The child env
+      # is otherwise scrubbed to a non-secret allowlist. See docs/security.md.
+      INFLOOP_CHILD_ENV_PASSTHROUGH: ${INFLOOP_CHILD_ENV_PASSTHROUGH:-}
 
     volumes:
       # All persistent state (run history, saved workflows, triggers,
-      # connections, crash-recovery markers) lives here and survives restarts
-      # and rebuilds. The shipped library presets are baked into the image,
-      # not stored here.
+      # connections, the audit log, crash-recovery markers) lives here and
+      # survives restarts and rebuilds. The shipped library presets are baked
+      # into the image, not stored here.
       - infinite-loop-data:/data
+      # $HOME for the unprivileged `bun` user — writable on the read-only
+      # root so agent CLIs spawned inside the container (Claude Code, git)
+      # can persist their config/credentials across restarts.
+      - infinite-loop-home:/home/bun
 
 volumes:
   infinite-loop-data:
+  infinite-loop-home:

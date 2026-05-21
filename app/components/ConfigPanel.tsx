@@ -1078,6 +1078,32 @@ function AgentForm({
         </div>
       )}
 
+      {!isHttpProvider && (
+        <div className="field">
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={config.dangerouslySkipPermissions === true}
+              onChange={(e) =>
+                onPatch({
+                  ...config,
+                  dangerouslySkipPermissions: e.target.checked
+                    ? true
+                    : undefined,
+                })
+              }
+            />
+            <span>Skip permission prompts (dangerous)</span>
+          </label>
+          <span className="field-hint">
+            Runs the agent with every tool-permission prompt disabled — full
+            autonomous file, shell, and network access. Leave off unless you
+            trust the prompt and run inside the sandboxed container. Applies to
+            providers that support it (Claude).
+          </span>
+        </div>
+      )}
+
       <div className="field">
         <span className="field-label">Iteration timeout</span>
         <div className="field-row">

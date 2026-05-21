@@ -125,6 +125,24 @@ export const agentExecutor: NodeExecutor = {
       };
     }
 
+    // Surface the permission posture. An agent running without the dangerous
+    // flag cannot perform tool calls that need approval in non-interactive
+    // mode — emit once so a user isn't mystified by an agent that "did
+    // nothing". Only meaningful for CLI providers that declare a dangerous
+    // arg set (the Claude CLI); silent for everything else.
+    if (
+      provider.transport === 'cli' &&
+      provider.dangerousArgs !== undefined &&
+      provider.dangerousArgs.length > 0 &&
+      cfg.dangerouslySkipPermissions !== true
+    ) {
+      ctx.emitStdoutChunk?.(
+        '[permissions] running without --dangerously-skip-permissions — the ' +
+          'agent cannot use tools that require approval. Enable "Skip ' +
+          'permission prompts" on this node to allow full autonomous tool use.\n',
+      );
+    }
+
     const baseCwd = isNonEmptyString(cfg.cwd) ? cfg.cwd : ctx.defaultCwd;
     let spawnCwd = baseCwd;
     let worktreePath: string | undefined;
@@ -277,6 +295,7 @@ export const agentExecutor: NodeExecutor = {
         profile: cfg.profile,
         agent: cfg.agent,
         mcpConfigPath,
+        dangerouslySkipPermissions: cfg.dangerouslySkipPermissions === true,
       });
 
       // Drain SetOutput state AFTER runProvider has resolved — never in a

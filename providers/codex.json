@@ -5,6 +5,7 @@
   "glyph": "◈",
   "bin": "codex",
   "args": ["exec", "{prompt}"],
+  "envPassthrough": ["OPENAI_*", "CODEX_*"],
   "outputFormat": "plain",
   "promptVia": "arg"
 }

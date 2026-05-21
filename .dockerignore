@@ -22,6 +22,9 @@ coverage
 tests
 **/*.test.ts
 **/*.test.tsx
+# playwright.config.ts imports from tests/ (excluded above); leaving it in the
+# build context makes `next build`'s type-check fail on the missing module.
+playwright.config.ts
 
 # Docs and specs are not part of the runtime image.
 docs

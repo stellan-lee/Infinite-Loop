@@ -397,4 +397,94 @@ describe('providers/loader', () => {
     expect(resolveBin(otherManifest)).toBe('/path/to/codex');
     delete process.env.INFLOOP_PROVIDER_BIN_CODEX;
   });
+
+  it('loads a cli manifest with envPassthrough and dangerousArgs', async () => {
+    writeManifest('ds.json', {
+      id: 'ds',
+      label: 'DS',
+      description: 'd',
+      bin: 'x',
+      args: ['{dangerousArgs}', '{prompt}'],
+      outputFormat: 'plain',
+      envPassthrough: ['ANTHROPIC_*', 'OPENAI_API_KEY'],
+      dangerousArgs: ['--yolo'],
+    });
+    const { loadProviders } = await import('./loader');
+    const list = await loadProviders();
+    expect(list).toHaveLength(1);
+    const m = list[0];
+    if (m.transport !== 'cli') throw new Error('expected cli transport');
+    expect(m.envPassthrough).toEqual(['ANTHROPIC_*', 'OPENAI_API_KEY']);
+    expect(m.dangerousArgs).toEqual(['--yolo']);
+  });
+
+  it('rejects a cli manifest whose envPassthrough is a bare "*"', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      bin: 'x',
+      args: ['{prompt}'],
+      outputFormat: 'plain',
+      envPassthrough: ['*'],
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
+
+  it('rejects a cli manifest whose envPassthrough targets the INFLOOP_ namespace', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      bin: 'x',
+      args: ['{prompt}'],
+      outputFormat: 'plain',
+      envPassthrough: ['INFLOOP_*'],
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
+
+  it('rejects a cli manifest whose envPassthrough has a non-trailing wildcard', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      bin: 'x',
+      args: ['{prompt}'],
+      outputFormat: 'plain',
+      envPassthrough: ['FOO_*_BAR'],
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
+
+  it('rejects a cli manifest whose dangerousArgs is not a string array', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      bin: 'x',
+      args: ['{prompt}'],
+      outputFormat: 'plain',
+      dangerousArgs: 'not-an-array',
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
+
+  it('rejects an http manifest that declares envPassthrough', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      transport: 'http',
+      baseUrl: 'https://x',
+      endpoint: '/c',
+      envPassthrough: ['ANTHROPIC_*'],
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
 });

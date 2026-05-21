@@ -48,6 +48,19 @@ export interface CliProviderManifest extends ProviderManifestCommon {
    * inside `args`. `"stdin"` writes the prompt to the child's stdin and
    * leaves `args` untouched (no `{prompt}` substitution). */
   promptVia: 'arg' | 'stdin';
+  /** Host environment variables this CLI needs, on top of the base allowlist
+   * every spawned child receives. Entries are exact names or `PREFIX_*`
+   * trailing wildcards. The child is spawned with a scrubbed environment
+   * (see lib/server/child-env.ts) — a variable that is neither on the base
+   * list nor named here is not visible to the CLI. Entries may not target
+   * the reserved `INFLOOP_` namespace; the loader rejects ones that do. */
+  envPassthrough?: string[];
+  /** Extra argv the runner injects in place of the `{dangerousArgs}`
+   * placeholder ONLY when an Agent node explicitly opts into the dangerous,
+   * un-sandboxed posture (`AgentConfig.dangerouslySkipPermissions`). When
+   * the node has not opted in, `{dangerousArgs}` expands to nothing. For the
+   * Claude CLI this is `["--dangerously-skip-permissions"]`. */
+  dangerousArgs?: string[];
 }
 
 export interface HttpProviderAuth {

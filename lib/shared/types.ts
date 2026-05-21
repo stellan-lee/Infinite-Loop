@@ -43,6 +43,11 @@ export interface RunnerOptions {
    * immediately preceding arg (the flag name) — same shape as `{agent}`.
    * HTTP providers ignore. */
   mcpConfigPath?: string;
+  /** When true, the runner injects the provider manifest's `dangerousArgs`
+   * (e.g. `--dangerously-skip-permissions` for the Claude CLI) in place of
+   * the `{dangerousArgs}` placeholder. Default/false runs the CLI with its
+   * normal permission posture. CLI providers only; HTTP providers ignore. */
+  dangerouslySkipPermissions?: boolean;
 }
 
 export interface RunnerResult {

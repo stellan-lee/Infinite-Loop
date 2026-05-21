@@ -5,6 +5,7 @@ import { resolveBin } from './loader';
 import { runHttpProvider } from './http-runner';
 import type { CliProviderManifest, ProviderManifest } from './types';
 import { registerChild, unregisterChild } from '../child-registry';
+import { buildChildEnv } from '../child-env';
 
 const SIGKILL_GRACE_MS = 2000;
 
@@ -24,6 +25,13 @@ const SIGKILL_GRACE_MS = 2000;
  *   the flag-pair form (`["--mcp-config", "{mcpConfig}"]`), NOT the
  *   embedded form (`--mcp-config={mcpConfig}`) — the drop-on-empty path is
  *   only well-defined for the pair form.
+ * - `{dangerousArgs}` is a standalone token that expands to ALL of
+ *   `opts.dangerousArgs` (zero or more args) at its position. The runner
+ *   supplies the manifest's `dangerousArgs` only when the node opted into
+ *   the dangerous posture; otherwise `opts.dangerousArgs` is empty and the
+ *   token expands to nothing. Putting it in the manifest (rather than a
+ *   blind prepend) lets the manifest author place it correctly relative to
+ *   any leading subcommand. Only the standalone token is supported.
  *
  * Pure; exported for tests.
  */
@@ -31,6 +39,8 @@ export function resolveCliArgs(
   args: readonly string[],
   opts: Pick<RunnerOptions, 'prompt' | 'agent' | 'mcpConfigPath'> & {
     promptVia: 'arg' | 'stdin';
+    /** Args to expand `{dangerousArgs}` into. Empty/undefined → token drops. */
+    dangerousArgs?: readonly string[];
   },
 ): string[] {
   const out: string[] = [];
@@ -44,6 +54,10 @@ export function resolveCliArgs(
     }
   };
   for (const raw of args) {
+    if (raw === '{dangerousArgs}') {
+      if (opts.dangerousArgs) out.push(...opts.dangerousArgs);
+      continue;
+    }
     if (raw === '{agent}') {
       if (agent.length === 0) {
         dropPrecedingFlag();
@@ -121,10 +135,18 @@ async function runCliProvider(
   const bin = resolveBin(manifest);
   // Loader normalizes a missing `promptVia` to 'arg', so we can trust it here.
   const promptVia = manifest.promptVia;
+  // The dangerous arg set is injected only when the Agent node explicitly
+  // opted in; otherwise `{dangerousArgs}` expands to nothing, so the CLI runs
+  // with its normal permission posture. See AgentConfig.dangerouslySkipPermissions.
+  const dangerousArgs =
+    opts.dangerouslySkipPermissions === true
+      ? manifest.dangerousArgs ?? []
+      : [];
   const args = resolveCliArgs(manifest.args, {
     prompt: opts.prompt,
     agent: opts.agent,
     mcpConfigPath: opts.mcpConfigPath,
+    dangerousArgs,
     promptVia,
   });
   const parserFactory = parserFactories[manifest.outputFormat];
@@ -145,8 +167,16 @@ async function runCliProvider(
   return new Promise<RunnerResult>((resolve) => {
     // detached:true puts the child in its own process group so we can kill
     // the whole group (including grandchildren like `sleep`) on timeout/abort.
-    const child = spawn(bin, args, {
+    // env: a scrubbed allowlist, NOT the inherited process.env — the CLI runs
+    // untrusted, prompt-shaped code and must not see the orchestrator's
+    // secrets (INFLOOP_API_TOKEN et al.). See lib/server/child-env.ts.
+    // Explicit return-type annotation: the `stdio` tuple's first element is
+    // a conditional and the options literal also carries `env`, which
+    // together leave `spawn`'s overloads ambiguous and infer `never`.
+    // Pinning the type keeps overload resolution stable.
+    const child: ReturnType<typeof spawn> = spawn(bin, args, {
       cwd: opts.cwd,
+      env: buildChildEnv({ passthrough: manifest.envPassthrough }),
       stdio: [promptVia === 'stdin' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       detached: true,
     });

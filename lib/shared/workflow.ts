@@ -78,6 +78,14 @@ export interface AgentConfig {
    * true. NOTE: uncommitted edits in `cwd` are NOT carried into the worktree
    * — commit or stash first if you want the agent to see them. */
   worktreeRef?: string;
+  /** When true, the agent CLI runs with every tool-permission prompt
+   * disabled — full autonomous file, shell, and network access (the Claude
+   * CLI's `--dangerously-skip-permissions`). Off by default: a missing or
+   * false value runs the CLI with its normal permission posture, so a child
+   * spawned from an untrusted prompt cannot act without the operator opting
+   * in. Only enable for trusted prompts, ideally inside the sandboxed
+   * container. CLI-transport providers only — HTTP providers ignore it. */
+  dangerouslySkipPermissions?: boolean;
   /** Declared named outputs the agent may emit via the injected SetOutput
    * MCP server (`set_output({ key, value })`). On agent exit, recorded
    * values flatten into this node's outputs map alongside `stdout` /

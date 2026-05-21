@@ -85,6 +85,13 @@ COPY --from=builder /app/webhook-plugins ./webhook-plugins
 # writable ownership for the unprivileged `bun` user on first creation.
 RUN mkdir -p /data && chown -R bun:bun /data
 
+# $HOME for the unprivileged user. Agent CLIs spawned inside the container
+# (Claude Code, git, the Bun transpile cache) write config and credentials
+# under $HOME; the hardened docker-compose.yml backs it with a writable named
+# volume on an otherwise read-only root filesystem. Create the directory and
+# chown it so a fresh volume inherits bun-writable ownership.
+RUN mkdir -p /home/bun && chown -R bun:bun /home/bun
+
 USER bun
 EXPOSE 3000
 

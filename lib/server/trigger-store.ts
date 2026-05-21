@@ -88,6 +88,29 @@ async function validateTrigger(t: Omit<WebhookTrigger, 'createdAt' | 'updatedAt'
   }
 }
 
+/** Shallow shape guard for a trigger file's parsed content — same role as
+ *  run-store's `isRunRecord` and queue-store's `isPersistedQueuedRun`. Checks
+ *  the structural fields the webhook-dispatch path dereferences, so a file that
+ *  is valid JSON but the wrong shape (an old-schema trigger surfaced by a
+ *  backup restore, a hand-edit, a torn write) is rejected on read instead of
+ *  detonating later inside dispatch. Deep predicate/input validation stays in
+ *  `validateTrigger`, which gates the write path. */
+function isWebhookTrigger(v: unknown): v is WebhookTrigger {
+  if (!v || typeof v !== 'object') return false;
+  const t = v as Record<string, unknown>;
+  return (
+    typeof t.id === 'string' &&
+    typeof t.name === 'string' &&
+    typeof t.enabled === 'boolean' &&
+    typeof t.workflowId === 'string' &&
+    typeof t.pluginId === 'string' &&
+    Array.isArray(t.match) &&
+    !!t.inputs &&
+    typeof t.inputs === 'object' &&
+    !Array.isArray(t.inputs)
+  );
+}
+
 export async function listTriggers(): Promise<WebhookTrigger[]> {
   const dir = triggersDir();
   let entries: string[];
@@ -100,27 +123,56 @@ export async function listTriggers(): Promise<WebhookTrigger[]> {
   const files = entries.filter((e) => e.endsWith('.json') && !e.endsWith('.json.tmp'));
   const out: WebhookTrigger[] = [];
   for (const file of files) {
+    let raw: string;
     try {
-      const raw = await fs.readFile(path.join(dir, file), 'utf8');
-      const parsed = JSON.parse(raw) as WebhookTrigger;
-      out.push(parsed);
+      raw = await fs.readFile(path.join(dir, file), 'utf8');
     } catch (err) {
       log.error('failed to read trigger file', { file, err });
+      continue;
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      log.error('skipping malformed trigger file (invalid JSON)', { file, err });
+      continue;
+    }
+    if (!isWebhookTrigger(parsed)) {
+      log.error('skipping malformed trigger file (invalid shape)', { file });
+      continue;
+    }
+    out.push(parsed);
   }
   return out;
 }
 
 export async function getTrigger(id: string): Promise<WebhookTrigger> {
+  let raw: string;
   try {
-    const raw = await fs.readFile(fileFor(id), 'utf8');
-    return JSON.parse(raw) as WebhookTrigger;
+    raw = await fs.readFile(fileFor(id), 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new TriggerNotFoundError(id);
     }
     throw err;
   }
+  // A file that is unreadable as a valid trigger is treated as not-found —
+  // same call as run-store's `getRun`, where `readRunFile` collapses a corrupt
+  // file into `null`. The alternative (surfacing a parse/shape error to the
+  // caller) just relocates the crash; not-found is a state every caller of
+  // getTrigger already handles.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    log.error('malformed trigger file (invalid JSON)', { id, err });
+    throw new TriggerNotFoundError(id);
+  }
+  if (!isWebhookTrigger(parsed)) {
+    log.error('malformed trigger file (invalid shape)', { id });
+    throw new TriggerNotFoundError(id);
+  }
+  return parsed;
 }
 
 export async function saveTrigger(

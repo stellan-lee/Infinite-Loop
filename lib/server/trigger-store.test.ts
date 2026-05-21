@@ -133,6 +133,58 @@ describe('trigger-store', () => {
   });
 });
 
+describe('malformed trigger files', () => {
+  // Trigger files are read with a shape guard (isWebhookTrigger), so a file
+  // that is valid JSON but the wrong shape — an old-schema trigger surfaced by
+  // a backup restore, a hand-edit, a torn write — is rejected on read instead
+  // of detonating later inside webhook dispatch on an undefined deref.
+
+  test('listTriggers skips a valid-JSON-but-wrong-shape file', async () => {
+    await saveTrigger(baseTrigger());
+    await fs.writeFile(path.join(tmpTrDir, 'corrupt-shape.json'), '{}');
+    const list = await listTriggers();
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe('idAAAAAAAAAAAAAAAAAAAA');
+  });
+
+  test('listTriggers skips a null file', async () => {
+    await saveTrigger(baseTrigger());
+    await fs.writeFile(path.join(tmpTrDir, 'corrupt-null.json'), 'null');
+    expect(await listTriggers()).toHaveLength(1);
+  });
+
+  test('listTriggers skips a syntactically invalid JSON file', async () => {
+    await saveTrigger(baseTrigger());
+    await fs.writeFile(path.join(tmpTrDir, 'corrupt-syntax.json'), 'not json');
+    expect(await listTriggers()).toHaveLength(1);
+  });
+
+  test('getTrigger treats a wrong-shape file as not-found', async () => {
+    await fs.writeFile(path.join(tmpTrDir, 'wrongshape.json'), '{"id":"wrongshape"}');
+    await expect(getTrigger('wrongshape')).rejects.toThrow(/not found/i);
+  });
+
+  test('getTrigger treats a syntactically invalid JSON file as not-found', async () => {
+    await fs.writeFile(path.join(tmpTrDir, 'badjson.json'), '{ broken');
+    await expect(getTrigger('badjson')).rejects.toThrow(/not found/i);
+  });
+
+  test('saveTrigger heals a corrupt existing file by overwriting it', async () => {
+    // saveTrigger looks up the existing trigger to preserve createdAt; when
+    // that file is corrupt, getTrigger reports not-found and the save proceeds
+    // as a fresh write, replacing the corrupt file with a valid one.
+    await fs.writeFile(
+      path.join(tmpTrDir, 'idAAAAAAAAAAAAAAAAAAAA.json'),
+      '{}',
+    );
+    const saved = await saveTrigger(baseTrigger());
+    expect(saved.createdAt).toBeGreaterThan(0);
+    const list = await listTriggers();
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe('idAAAAAAAAAAAAAAAAAAAA');
+  });
+});
+
 describe('touchLastFired', () => {
   test('updates lastFiredAt without re-validation', async () => {
     await saveTrigger(baseTrigger());

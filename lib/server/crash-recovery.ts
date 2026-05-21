@@ -56,6 +56,7 @@ import { listPersistedQueuedRuns } from './queue-store';
 import type { QueuedRun, QueueRestoreTarget } from './trigger-queue';
 import { createLogger } from './logger';
 import { recordAudit } from './audit-log';
+import { metrics } from './metrics';
 
 const log = createLogger('crash-recovery');
 
@@ -235,6 +236,12 @@ export async function reconcileInterruptedRuns(): Promise<void> {
         events: [],
       });
       reconciled++;
+      // Fold this crash-interrupted run into the process-lifetime metrics.
+      // It never went through RunController's settle path (recordRunSettled),
+      // so without this `infloop_runs_total{status="failed"}` would silently
+      // undercount hard crashes — the worst failure mode, and the one an
+      // operator most needs their failure alert to catch. See metrics.ts.
+      metrics.recordCrashRecoveredRun();
       // Record the interrupted run in the audit log too: it left a
       // `run/started` entry with no `run/finished`, and this closes that gap.
       void recordAudit({

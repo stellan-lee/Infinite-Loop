@@ -32,14 +32,20 @@
  * `run_finished` event carries status but not duration or cost; webhook HTTP
  * outcomes never touch the bus at all).
  *
- * KNOWN LIMITATION: a run reconstructed from a crash-recovery marker on the
- * next boot (see crash-recovery.ts) becomes a `failed` history record WITHOUT
- * going through RunController's settle path, so it never calls
- * `recordRunSettled`. `infloop_runs_total{status="failed"}` and
- * `infloop_run_duration_seconds` therefore undercount crash-killed runs. This
- * is acceptable for a v1 surface, but an alert wired to the failure counter
- * must be aware that a hard crash is invisible to it (use `/api/health` and
- * `infloop_process_uptime_seconds` to catch restarts).
+ * Crash-recovered runs: a run reconstructed from a crash-recovery marker on
+ * the next boot (see crash-recovery.ts) never goes through RunController's
+ * settle path, so it never calls `recordRunSettled`. To keep the failure
+ * counter — the series an operator alerts on — honest about hard crashes,
+ * `reconcileInterruptedRuns` calls `recordCrashRecoveredRun` instead, which
+ * folds the run into `infloop_runs_total{status="failed"}`.
+ *
+ * `infloop_run_duration_seconds` still excludes such runs, and deliberately:
+ * a hard crash leaves the wall-clock duration unknowable (the reconciled
+ * record uses a 0ms duration to signal "interrupted" rather than invent a
+ * span), so feeding the histogram a fabricated 0 would skew it toward instant
+ * runs. The histogram therefore covers only runs this process actually timed
+ * — its `_count` can legitimately trail `infloop_runs_total` by the crash
+ * count.
  */
 
 import { eventBus, type EventBus } from './event-bus';
@@ -185,6 +191,22 @@ export class MetricsRegistry {
     for (let i = 0; i < DURATION_BUCKETS_SECONDS.length; i++) {
       if (seconds <= DURATION_BUCKETS_SECONDS[i]) this.runDuration.counts[i] += 1;
     }
+  }
+
+  /**
+   * Count one run that a previous server's hard crash interrupted,
+   * reconstructed at boot from a leftover run marker (see crash-recovery.ts's
+   * `reconcileInterruptedRuns`). Such a run never reaches RunController's
+   * settle path and so never calls `recordRunSettled` — without this it would
+   * be invisible to `infloop_runs_total`, hiding the worst failure mode there
+   * is from any alert wired to the failure counter.
+   *
+   * Only the terminal-status counter is touched. A crash-interrupted run has
+   * no measurable wall-clock duration, so it is deliberately kept out of the
+   * `infloop_run_duration_seconds` histogram — see the module header.
+   */
+  recordCrashRecoveredRun(): void {
+    this.runsTotal.set('failed', (this.runsTotal.get('failed') ?? 0) + 1);
   }
 
   /**

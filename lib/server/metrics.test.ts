@@ -112,6 +112,31 @@ describe('MetricsRegistry — recordRunSettled', () => {
   });
 });
 
+describe('MetricsRegistry — recordCrashRecoveredRun', () => {
+  it('folds a crash-recovered run into the failure counter', () => {
+    const m = new MetricsRegistry();
+    m.recordCrashRecoveredRun();
+    m.recordCrashRecoveredRun();
+    const s = samples(m.render(ZERO_GAUGES));
+    // A run a hard crash interrupted never reaches recordRunSettled; this is
+    // the only path that keeps `status="failed"` honest about hard crashes.
+    expect(s.get('infloop_runs_total{status="failed"}')).toBe(2);
+    expect(s.get('infloop_runs_total{status="succeeded"}')).toBe(0);
+  });
+
+  it('does not touch the duration histogram — a crash run has no measured duration', () => {
+    const m = new MetricsRegistry();
+    m.recordRunSettled({ status: 'succeeded', durationMs: 1000, costUsd: 0, nodeCount: 1 });
+    m.recordCrashRecoveredRun();
+    const s = samples(m.render(ZERO_GAUGES));
+    // Only the genuinely-timed run is in the histogram; the crash-recovered
+    // one is deliberately excluded — feeding it a fabricated 0 would skew the
+    // histogram toward instant runs. So `_count` trails `runs_total` by one.
+    expect(s.get('infloop_run_duration_seconds_count')).toBe(1);
+    expect(s.get('infloop_runs_total{status="failed"}')).toBe(1);
+  });
+});
+
 describe('MetricsRegistry — webhook + queue counters', () => {
   it('counts webhook requests by outcome', () => {
     const m = new MetricsRegistry();

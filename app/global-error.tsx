@@ -6,8 +6,7 @@
  * It replaces the root layout when the layout itself throws, so it must render
  * its own <html>/<body>. Supplying it also keeps `next build` from synthesizing
  * the legacy Pages-Router `/_error` page, whose prerender path trips a spurious
- * "<Html> should not be imported outside of pages/_document" error under the
- * Next 15.5 builder.
+ * "<Html> should not be imported outside of pages/_document" prerender error.
  */
 export default function GlobalError({
   error,

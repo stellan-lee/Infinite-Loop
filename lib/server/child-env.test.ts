@@ -139,4 +139,35 @@ describe('buildChildEnv', () => {
     const env = buildChildEnv({}, { path: '/lower' }, 'linux');
     expect(env.path).toBeUndefined();
   });
+
+  it('applies overrides on top of the allowlist', () => {
+    const env = buildChildEnv(
+      { overrides: { HTTPS_PROXY: 'http://127.0.0.1:9' } },
+      { PATH: '/usr/bin' },
+      'linux',
+    );
+    expect(env.PATH).toBe('/usr/bin');
+    expect(env.HTTPS_PROXY).toBe('http://127.0.0.1:9');
+  });
+
+  it('lets an override win over an inherited base-allowlist value', () => {
+    // HTTP_PROXY is on the base allowlist, so the inherited host value would
+    // otherwise pass through — the override must replace it.
+    const env = buildChildEnv(
+      { overrides: { HTTP_PROXY: 'http://127.0.0.1:9' } },
+      { HTTP_PROXY: 'http://corp-proxy:8080' },
+      'linux',
+    );
+    expect(env.HTTP_PROXY).toBe('http://127.0.0.1:9');
+  });
+
+  it('never lets an override write into the INFLOOP_ namespace', () => {
+    const env = buildChildEnv(
+      { overrides: { INFLOOP_API_TOKEN: 'leak', SAFE: 'ok' } },
+      {},
+      'linux',
+    );
+    expect(env.INFLOOP_API_TOKEN).toBeUndefined();
+    expect(env.SAFE).toBe('ok');
+  });
 });

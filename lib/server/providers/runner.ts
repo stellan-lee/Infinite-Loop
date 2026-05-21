@@ -6,6 +6,7 @@ import { runHttpProvider } from './http-runner';
 import type { CliProviderManifest, ProviderManifest } from './types';
 import { registerChild, unregisterChild } from '../child-registry';
 import { buildChildEnv } from '../child-env';
+import { startEgressProxy, type EgressProxy } from '../egress-proxy';
 
 const SIGKILL_GRACE_MS = 2000;
 
@@ -99,6 +100,24 @@ export function resolveCliArgs(
 }
 
 /**
+ * Decide whether a CLI provider's spawned child should run behind a per-run
+ * egress filtering proxy. Returns the host allowlist to enforce when BOTH the
+ * operator opted in (`INFLOOP_EGRESS_ENFORCE=1`) AND the manifest declares an
+ * `egressAllowlist`; otherwise `null` — no proxy, unrestricted egress, the
+ * default behaviour. A declared-but-empty allowlist (`[]`) is returned as-is:
+ * it is a deliberate "no network" posture and the proxy will deny every host.
+ *
+ * Pure; exported for tests.
+ */
+export function resolveEgressEnforcement(
+  manifest: CliProviderManifest,
+  env: Record<string, string | undefined> = process.env,
+): readonly string[] | null {
+  if (env.INFLOOP_EGRESS_ENFORCE !== '1') return null;
+  return manifest.egressAllowlist ?? null;
+}
+
+/**
  * Dispatch entry point. CLI manifests go through `runCliProvider` (spawn +
  * stdout line parser); HTTP manifests go through `runHttpProvider` (fetch +
  * SSE delta stream). Both produce the same `RunnerResult` shape.
@@ -162,6 +181,27 @@ async function runCliProvider(
   }
   const parser = parserFactory();
 
+  // Egress enforcement (opt-in): when on, route the child's HTTP(S) traffic
+  // through a per-run filtering proxy that permits only the manifest's
+  // declared hosts. Started before the spawn; torn down in `finish()`.
+  const egressAllowlist = resolveEgressEnforcement(manifest);
+  let egressProxy: EgressProxy | null = null;
+  if (egressAllowlist !== null) {
+    try {
+      egressProxy = await startEgressProxy(egressAllowlist);
+    } catch (err) {
+      // Fail closed: enforcement was requested but the filter could not start,
+      // so refuse to run rather than spawn with unrestricted egress.
+      return {
+        exitCode: null,
+        stdout: '',
+        stderr: `runProvider(${manifest.id}): egress proxy failed to start: ${(err as Error).message}`,
+        durationMs: 0,
+        timedOut: false,
+      };
+    }
+  }
+
   const startedAt = Date.now();
 
   return new Promise<RunnerResult>((resolve) => {
@@ -176,7 +216,10 @@ async function runCliProvider(
     // Pinning the type keeps overload resolution stable.
     const child: ReturnType<typeof spawn> = spawn(bin, args, {
       cwd: opts.cwd,
-      env: buildChildEnv({ passthrough: manifest.envPassthrough }),
+      env: buildChildEnv({
+        passthrough: manifest.envPassthrough,
+        overrides: egressProxy?.childEnvOverrides(),
+      }),
       stdio: [promptVia === 'stdin' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       detached: true,
     });
@@ -292,6 +335,9 @@ async function runCliProvider(
       settled = true;
       cleanup();
       if (child.pid != null) unregisterChild(child.pid);
+      // Single settle path — close the per-run proxy here (not in onAbort/
+      // onTimeout) so it outlives the child until the process has exited.
+      egressProxy?.close();
       resolve({
         exitCode,
         stdout,

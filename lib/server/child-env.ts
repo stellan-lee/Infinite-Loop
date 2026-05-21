@@ -115,6 +115,12 @@ export interface ChildEnvOptions {
   /** Extra variable names / `PREFIX_*` wildcards to allow through on top of
    *  the base set — sourced from a provider manifest's `envPassthrough`. */
   passthrough?: readonly string[];
+  /** Variables the orchestrator sets itself — NOT inherited from the host env.
+   *  Used to route a child's HTTP(S) egress through a per-run filtering proxy
+   *  (`HTTP_PROXY`, `NO_PROXY`, …). Applied after the allowlist and
+   *  unconditionally overriding any same-named base/inherited value. The
+   *  `INFLOOP_` hard rule is still enforced on override keys. */
+  overrides?: Record<string, string>;
 }
 
 interface CompiledAllowlist {
@@ -182,6 +188,16 @@ export function buildChildEnv(
     // passthrough entry would match it.
     if (key.startsWith(forbidden)) continue;
     if (exact.has(key) || prefixes.some((pre) => key.startsWith(pre))) {
+      out[name] = value;
+    }
+  }
+  // Orchestrator-set overrides: applied last so they win over any inherited
+  // base value (notably a host `HTTP_PROXY`), bypassing the allowlist because
+  // they are our own values, not host secrets. The `INFLOOP_` hard rule still
+  // holds — nothing in that namespace reaches a child by any path.
+  if (opts.overrides) {
+    for (const [name, value] of Object.entries(opts.overrides)) {
+      if (fold(name).startsWith(forbidden)) continue;
       out[name] = value;
     }
   }

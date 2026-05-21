@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveCliArgs, runProvider } from './runner';
-import type { ProviderManifest } from './types';
+import { resolveCliArgs, resolveEgressEnforcement, runProvider } from './runner';
+import type { CliProviderManifest, ProviderManifest } from './types';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FAKE_BIN = resolve(here, '../../../tests/fixtures/fake-claude.sh');
@@ -38,6 +38,7 @@ beforeEach(() => {
   // The fake script ignores argv; ensure no INFLOOP_*_BIN overrides leak.
   delete process.env.INFLOOP_PROVIDER_BIN_CLAUDE;
   delete process.env.INFLOOP_CLAUDE_BIN;
+  delete process.env.INFLOOP_EGRESS_ENFORCE;
 });
 
 afterEach(() => {
@@ -424,6 +425,90 @@ describe('runProvider', () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).not.toContain('--dangerously-skip-permissions');
       expect(result.stdout).toContain('ARG:p');
+    });
+  });
+
+  describe('resolveEgressEnforcement', () => {
+    const base: CliProviderManifest = {
+      id: 'eg',
+      label: 'EG',
+      description: 'd',
+      transport: 'cli',
+      bin: 'x',
+      args: [],
+      outputFormat: 'plain',
+      promptVia: 'arg',
+    };
+
+    it('returns null when INFLOOP_EGRESS_ENFORCE is unset', () => {
+      const m = { ...base, egressAllowlist: ['api.anthropic.com'] };
+      expect(resolveEgressEnforcement(m, {})).toBeNull();
+    });
+
+    it('returns null when enforcement is on but no allowlist is declared', () => {
+      expect(
+        resolveEgressEnforcement(base, { INFLOOP_EGRESS_ENFORCE: '1' }),
+      ).toBeNull();
+    });
+
+    it('returns the allowlist when enforcement is on and one is declared', () => {
+      const m = { ...base, egressAllowlist: ['api.anthropic.com'] };
+      expect(
+        resolveEgressEnforcement(m, { INFLOOP_EGRESS_ENFORCE: '1' }),
+      ).toEqual(['api.anthropic.com']);
+    });
+
+    it('returns an empty declared allowlist as-is (deliberate no-network posture)', () => {
+      const m = { ...base, egressAllowlist: [] };
+      expect(
+        resolveEgressEnforcement(m, { INFLOOP_EGRESS_ENFORCE: '1' }),
+      ).toEqual([]);
+    });
+  });
+
+  describe('egress enforcement wiring', () => {
+    const ENV_ECHO = resolve(here, '../../../tests/fixtures/fake-env-echo.sh');
+    const egressManifest: ProviderManifest = {
+      id: 'eg',
+      label: 'EG',
+      description: 'd',
+      transport: 'cli',
+      bin: ENV_ECHO,
+      args: [],
+      outputFormat: 'plain',
+      promptVia: 'arg',
+      egressAllowlist: ['api.anthropic.com'],
+    };
+
+    it('routes the child through a loopback proxy when enforcement is on', async () => {
+      process.env.INFLOOP_EGRESS_ENFORCE = '1';
+      const ctrl = new AbortController();
+      const result = await runProvider(egressManifest, {
+        prompt: 'p',
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+        signal: ctrl.signal,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(
+        /ENV:HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+/,
+      );
+      expect(result.stdout).toMatch(/ENV:NO_PROXY=[^\n]*127\.0\.0\.1/);
+    });
+
+    it('leaves the child env unproxied when enforcement is off', async () => {
+      // INFLOOP_EGRESS_ENFORCE is cleared by beforeEach.
+      const ctrl = new AbortController();
+      const result = await runProvider(egressManifest, {
+        prompt: 'p',
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+        signal: ctrl.signal,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).not.toMatch(
+        /ENV:HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+/,
+      );
     });
   });
 

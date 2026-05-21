@@ -33,6 +33,8 @@ Each agent node picks a runner from `providers/*.json`. A manifest declares eith
 | `args` | Argument template. `{prompt}` / `{agent}` are substituted at runtime. |
 | `outputFormat` | `claude-stream-json` for token-by-token streaming, `plain` for end-of-process stdout. |
 | `promptVia` | `arg` (passed positionally) or `stdin`. |
+| `envPassthrough` | Host env var names / `PREFIX_*` wildcards the spawned child may see, on top of the scrubbed non-secret base allowlist. |
+| `egressAllowlist` | Hostnames the spawned child may reach — exact (`api.anthropic.com`) or leading-wildcard (`*.anthropic.com`, any subdomain, not the apex). Enforced per run via a loopback filtering proxy when `INFLOOP_EGRESS_ENFORCE=1`; absent or enforcement off → unrestricted egress. See [security.md](security.md#per-run-egress-allowlist). |
 
 ## HTTP provider
 

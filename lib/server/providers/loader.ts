@@ -128,6 +128,60 @@ function validateEnvPassthrough(
   return cleaned;
 }
 
+/**
+ * Validate a CLI manifest's `egressAllowlist`: a list of hostnames the
+ * provider's child process is permitted to reach when egress enforcement is on
+ * (see lib/server/egress-proxy.ts). Each entry is an exact hostname or a
+ * leading-wildcard `*.suffix`. Rejects empty entries, a bare `*`, a non-leading
+ * `*`, and anything carrying a scheme, port, path, or whitespace. Entries are
+ * lowercased on the way out so the stored manifest matches what the runtime
+ * matcher (also case-insensitive) applies.
+ */
+function validateEgressAllowlist(
+  raw: unknown,
+  file: string,
+): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!isStringArray(raw)) {
+    throw new Error(
+      `provider ${file}: \`egressAllowlist\` must be a string array if set`,
+    );
+  }
+  const cleaned: string[] = [];
+  for (const entry of raw) {
+    const e = entry.trim().toLowerCase();
+    if (e.length === 0) {
+      throw new Error(
+        `provider ${file}: \`egressAllowlist\` entries must be non-empty`,
+      );
+    }
+    if (e === '*') {
+      throw new Error(
+        `provider ${file}: \`egressAllowlist\` may not contain a bare "*" — it would allow every host`,
+      );
+    }
+    if (e.includes('*') && !e.startsWith('*.')) {
+      throw new Error(
+        `provider ${file}: \`egressAllowlist\` entry "${e}" — "*" is only allowed as a leading "*." wildcard`,
+      );
+    }
+    const host = e.startsWith('*.') ? e.slice(2) : e;
+    // A plain hostname: dot-separated labels, no scheme, port, path, or
+    // residual wildcard. IPv4 literals are accepted (digits are valid labels).
+    if (
+      !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(
+        host,
+      )
+    ) {
+      throw new Error(
+        `provider ${file}: \`egressAllowlist\` entry "${e}" is not a valid hostname (no scheme, port, path, or wildcard beyond a leading "*.")`,
+      );
+    }
+    cleaned.push(e);
+  }
+  return cleaned;
+}
+
 function validateCliManifest(
   m: Record<string, unknown>,
   file: string,
@@ -170,6 +224,7 @@ function validateCliManifest(
     promptVia: (m.promptVia as 'arg' | 'stdin' | undefined) ?? 'arg',
     envPassthrough: validateEnvPassthrough(m.envPassthrough, file),
     dangerousArgs: m.dangerousArgs as string[] | undefined,
+    egressAllowlist: validateEgressAllowlist(m.egressAllowlist, file),
   };
 }
 
@@ -250,9 +305,9 @@ function validateHttpManifest(
   if (m.defaultProfile !== undefined && typeof m.defaultProfile !== 'string') {
     throw new Error(`provider ${file}: \`defaultProfile\` must be a string if set`);
   }
-  // `envPassthrough` / `dangerousArgs` shape how a *spawned child process* is
-  // built; an HTTP provider spawns nothing, so naming them is a manifest
-  // mistake worth surfacing rather than silently ignoring.
+  // `envPassthrough` / `dangerousArgs` / `egressAllowlist` shape how a *spawned
+  // child process* is built; an HTTP provider spawns nothing, so naming them is
+  // a manifest mistake worth surfacing rather than silently ignoring.
   if (m.envPassthrough !== undefined) {
     throw new Error(
       `provider ${file}: \`envPassthrough\` is not supported for HTTP providers`,
@@ -261,6 +316,11 @@ function validateHttpManifest(
   if (m.dangerousArgs !== undefined) {
     throw new Error(
       `provider ${file}: \`dangerousArgs\` is not supported for HTTP providers`,
+    );
+  }
+  if (m.egressAllowlist !== undefined) {
+    throw new Error(
+      `provider ${file}: \`egressAllowlist\` is not supported for HTTP providers`,
     );
   }
   return {

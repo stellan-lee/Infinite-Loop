@@ -21,6 +21,7 @@
 | `INFLOOP_PYTHON_BIN` | `python3` | Interpreter for Script nodes with `language: py` |
 | `INFLOOP_BUN_BIN` | `bun` | Interpreter for Script nodes with `language: ts` |
 | `INFLOOP_CHILD_ENV_PASSTHROUGH` | _(unset)_ | Extra host environment variables to expose to spawned Agent/Script children, on top of the scrubbed non-secret allowlist. Comma-separated exact names or `PREFIX_*` trailing wildcards (e.g. `AWS_*,SSH_AUTH_SOCK`). The `INFLOOP_` namespace is never passed regardless. See [security.md](security.md#containment-of-executed-code). |
+| `INFLOOP_EGRESS_ENFORCE` | _(unset)_ | Set to `1` to route a CLI provider child's HTTP(S) traffic through a per-run filtering proxy that permits only the hosts named in the manifest's `egressAllowlist`. Off-allowlist requests get `403`; if the proxy cannot start, the run fails closed. Off by default — children spawn with unrestricted egress. See [security.md](security.md#per-run-egress-allowlist). |
 | `INFLOOP_WEBHOOK_PLUGINS_DIR` | `<cwd>/webhook-plugins` | Where webhook plugin manifests live |
 | `INFLOOP_LOG_LEVEL` | `info` | Minimum level for structured server logs (`debug`, `info`, `warn`, `error`) |
 | `INFLOOP_AUDIT_MAX_BYTES` | `5000000` | Size threshold (bytes) at which the audit log rotates to a new file |

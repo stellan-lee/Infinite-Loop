@@ -6,6 +6,13 @@
   "bin": "codex",
   "args": ["exec", "{prompt}"],
   "envPassthrough": ["OPENAI_*", "CODEX_*"],
+  "egressAllowlist": [
+    "api.openai.com",
+    "openai.com",
+    "*.openai.com",
+    "chatgpt.com",
+    "*.chatgpt.com"
+  ],
   "outputFormat": "plain",
   "promptVia": "arg"
 }

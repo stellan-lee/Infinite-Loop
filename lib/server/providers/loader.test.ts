@@ -487,4 +487,85 @@ describe('providers/loader', () => {
     const { loadProviders } = await import('./loader');
     expect(await loadProviders()).toEqual([]);
   });
+
+  it('loads a cli manifest with a valid egressAllowlist (lowercased)', async () => {
+    writeManifest('eg.json', {
+      id: 'eg',
+      label: 'EG',
+      description: 'd',
+      bin: 'x',
+      args: ['{prompt}'],
+      outputFormat: 'plain',
+      egressAllowlist: ['API.Anthropic.com', '*.anthropic.com', '127.0.0.1'],
+    });
+    const { loadProviders } = await import('./loader');
+    const list = await loadProviders();
+    expect(list).toHaveLength(1);
+    const m = list[0];
+    if (m.transport !== 'cli') throw new Error('expected cli transport');
+    expect(m.egressAllowlist).toEqual([
+      'api.anthropic.com',
+      '*.anthropic.com',
+      '127.0.0.1',
+    ]);
+  });
+
+  it('rejects a cli manifest whose egressAllowlist is a bare "*"', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      bin: 'x',
+      args: ['{prompt}'],
+      outputFormat: 'plain',
+      egressAllowlist: ['*'],
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
+
+  it('rejects a cli manifest whose egressAllowlist has a non-leading wildcard', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      bin: 'x',
+      args: ['{prompt}'],
+      outputFormat: 'plain',
+      egressAllowlist: ['api.*.com'],
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
+
+  it('rejects a cli manifest whose egressAllowlist entry carries a scheme/port/path', async () => {
+    for (const entry of ['https://api.anthropic.com', 'api.anthropic.com:443', 'api.anthropic.com/v1']) {
+      writeManifest('bad.json', {
+        id: 'bad',
+        label: 'Bad',
+        description: 'd',
+        bin: 'x',
+        args: ['{prompt}'],
+        outputFormat: 'plain',
+        egressAllowlist: [entry],
+      });
+      const { loadProviders, _resetProviderCache } = await import('./loader');
+      _resetProviderCache();
+      expect(await loadProviders()).toEqual([]);
+    }
+  });
+
+  it('rejects an http manifest that declares egressAllowlist', async () => {
+    writeManifest('bad.json', {
+      id: 'bad',
+      label: 'Bad',
+      description: 'd',
+      transport: 'http',
+      baseUrl: 'https://x',
+      endpoint: '/c',
+      egressAllowlist: ['api.openai.com'],
+    });
+    const { loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+  });
 });

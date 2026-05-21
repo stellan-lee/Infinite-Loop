@@ -19,6 +19,7 @@
   ],
   "dangerousArgs": ["--dangerously-skip-permissions"],
   "envPassthrough": ["ANTHROPIC_*", "CLAUDE_*"],
+  "egressAllowlist": ["api.anthropic.com", "anthropic.com", "*.anthropic.com"],
   "outputFormat": "claude-stream-json",
   "promptVia": "arg"
 }

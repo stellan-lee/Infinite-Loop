@@ -61,6 +61,14 @@ export interface CliProviderManifest extends ProviderManifestCommon {
    * the node has not opted in, `{dangerousArgs}` expands to nothing. For the
    * Claude CLI this is `["--dangerously-skip-permissions"]`. */
   dangerousArgs?: string[];
+  /** Network hosts this CLI's child process is allowed to reach. Each entry is
+   * a hostname — exact (`api.anthropic.com`) or a leading-wildcard
+   * (`*.anthropic.com`, matching any subdomain but NOT the apex). When the
+   * operator opts into enforcement with `INFLOOP_EGRESS_ENFORCE=1`, the runner
+   * routes the child's HTTP(S) traffic through a per-run filtering proxy that
+   * permits only these hosts and refuses everything else. Absent → no proxy,
+   * unrestricted egress (the default). See lib/server/egress-proxy.ts. */
+  egressAllowlist?: string[];
 }
 
 export interface HttpProviderAuth {

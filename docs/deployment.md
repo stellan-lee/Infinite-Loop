@@ -165,9 +165,11 @@ docker run -d --name infinite-loop \
 
 ## Putting it behind a proxy
 
-Infinite Loop has no per-user auth, no rate limiting, and no audit log — do
-not expose it straight to the internet. Front it with a Cloudflare Tunnel and
-Access policy, a Tailscale ACL host, or a reverse proxy with HTTP auth, as
+Infinite Loop has no per-user auth — one shared token, no accounts — so do
+not expose it straight to the internet. Webhook ingress and browser login are
+rate-limited and trust-relevant events are recorded in an audit log, but for a
+publicly reachable surface you should still front it with a Cloudflare Tunnel
+and Access policy, a Tailscale ACL host, or a reverse proxy with HTTP auth, as
 described in
 [security.md](security.md#dont-expose-to-the-public-internet).
 

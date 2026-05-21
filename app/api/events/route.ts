@@ -1,3 +1,4 @@
+import { requireAuth } from '@/lib/server/auth';
 import { eventBus } from '@/lib/server/event-bus';
 import { workflowEngine } from '@/lib/server/workflow-engine';
 import type { RunSnapshot, WorkflowEvent } from '@/lib/shared/workflow';
@@ -26,6 +27,11 @@ function sseFrame(payload: unknown): string {
  * existing client. Future stages can flip the client to read `runs` directly.
  */
 export async function GET(req: Request): Promise<Response> {
+  // The browser's EventSource sends the session cookie on this same-origin
+  // request automatically; MCP / API clients pass a bearer token.
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   const encoder = new TextEncoder();
   const url = new URL(req.url);
   const filterRunId = url.searchParams.get('runId') ?? undefined;

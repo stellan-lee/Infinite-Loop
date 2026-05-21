@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 import { getProvider } from '@/lib/server/providers/loader';
 import type { HttpProviderManifest, HttpProviderProfile } from '@/lib/server/providers/types';
 
@@ -68,9 +69,12 @@ function normalizeProfilesPayload(body: unknown): HttpProviderProfile[] {
 }
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   const { id } = await params;
   const manifest = await getProvider(id);
   if (!manifest) {

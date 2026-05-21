@@ -19,19 +19,37 @@ If you don't need LAN access:
 HOST=127.0.0.1 bun run dev
 ```
 
-## Headless / multi-user posture
+## Authenticated mode
 
-Set `INFLOOP_API_TOKEN` to require a bearer token on every `/api/*` call:
+Set `INFLOOP_API_TOKEN` to require authentication on every `/api/*` call
+(webhook ingress is the one exception — see below):
 
 ```bash
 INFLOOP_API_TOKEN=$(openssl rand -hex 32) bun run start
 ```
 
-Caveats:
+In this mode:
 
-- The browser UI **stops working** for that server (the UI doesn't forward the token).
-- Use this for Infinite Loop instances dedicated to serving agent / MCP traffic.
-- The token is compared in constant time but is otherwise a plain shared secret — rotate it like a password.
+- **The browser UI keeps working.** Visiting the console redirects to a login
+  page; enter the token once and the server sets an `httpOnly`,
+  `SameSite=Strict` session cookie, after which the console behaves normally.
+- **MCP / API / scripted clients** keep authenticating with
+  `Authorization: Bearer <token>` — unchanged.
+- The session cookie value is a SHA-256 hash of the token, not the token
+  itself: a leaked cookie cannot be replayed as the bearer credential and
+  never exposes the literal `INFLOOP_API_TOKEN`. It is still a bearer
+  credential for *this* server, though — a stolen cookie grants full access
+  until the token is rotated, so treat it like a password.
+- The session is stateless (no server-side store): it survives a server
+  restart, and rotating `INFLOOP_API_TOKEN` invalidates every issued cookie
+  immediately.
+- The cookie is marked `Secure` automatically when a reverse proxy reports
+  HTTPS via `X-Forwarded-Proto`; over plain HTTP it is not, because a `Secure`
+  cookie would never be stored.
+- The token is compared in constant time but is otherwise a plain shared
+  secret — rotate it like a password.
+
+This is a single-tenant model: one shared token, no per-user accounts.
 
 ## Webhooks
 

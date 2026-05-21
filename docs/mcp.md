@@ -60,7 +60,7 @@ If `INFLOOP_API_TOKEN` is set on the server, every request must carry the token.
 }
 ```
 
-> **Heads-up.** Setting `INFLOOP_API_TOKEN` protects the HTTP API against off-host callers but **disables the browser UI** for that server (the UI doesn't forward the token). Use this for Infinite Loop instances that exist purely to serve agent traffic.
+> **Heads-up.** Setting `INFLOOP_API_TOKEN` protects the HTTP API against off-host callers. The browser UI keeps working — it redirects to a login page where you enter the token once. MCP clients authenticate with the `Authorization: Bearer` header shown above.
 
 ## Tools exposed
 

@@ -47,7 +47,7 @@ describe('GET /api/providers', () => {
     ];
     mocked.loadProviders.mockResolvedValueOnce(providers);
 
-    const res = await GET();
+    const res = await GET(new Request('http://localhost/api/providers'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.providers).toEqual([

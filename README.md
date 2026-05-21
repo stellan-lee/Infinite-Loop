@@ -144,7 +144,7 @@ Three ways to start a workflow:
 Infinite Loop can run **local agent CLIs, inline TypeScript and Python, and shell commands** on your machine. Treat workflows as executable code, and treat the server as a local code-execution surface.
 
 - **Default bind is `0.0.0.0`** for LAN convenience. Use `HOST=127.0.0.1` if you don't need it.
-- **`INFLOOP_API_TOKEN`** gates the management/MCP API with a bearer token; setting it disables the browser UI (use for headless servers).
+- **`INFLOOP_API_TOKEN`** gates the management/MCP API; MCP/API clients pass a bearer token, and the browser UI prompts for it at a login page.
 - **Webhook URLs are credentials.** The unguessable `triggerId` in the URL is the only auth — treat URLs like passwords and rotate via the Dispatch UI.
 - **Workflow JSON files are executable code.** Review every workflow you import or download before running it. The same goes for files in `providers/`, `webhook-plugins/`, and `triggers/`.
 - **Do not expose Infinite Loop directly to the public internet.** No rate limiting, no per-user auth, no audit log yet. Put it behind a Cloudflare Tunnel with Access policies, a Tailscale ACL, or a reverse proxy with HTTP auth.

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 import {
   deleteConnection,
   getConnection,
@@ -8,9 +9,12 @@ import {
 } from '@/lib/server/providers/hermes-local-store';
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   const { id } = await params;
   if (!isValidLocalId(id)) {
     return NextResponse.json({ error: 'invalid id' }, { status: 400 });
@@ -26,6 +30,9 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   const { id } = await params;
   if (!isValidLocalId(id)) {
     return NextResponse.json({ error: 'invalid id' }, { status: 400 });
@@ -54,9 +61,12 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   const { id } = await params;
   if (!isValidLocalId(id)) {
     return NextResponse.json({ error: 'invalid id' }, { status: 400 });

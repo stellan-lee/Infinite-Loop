@@ -161,7 +161,7 @@ export class WorkflowEngine {
 // `globalThis.__infiniteLoopWorkflowRegistry` was constructed with the old
 // class definition and behaves the old way for the rest of the dev server's
 // life.
-const ENGINE_VERSION = 14;
+const ENGINE_VERSION = 15;
 
 declare global {
   // eslint-disable-next-line no-var

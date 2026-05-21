@@ -55,6 +55,23 @@ const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   script: ['cwd'],
 };
 
+/**
+ * Subset of `TEXT_CONFIG_FIELDS` whose template references are *required*.
+ * An unresolved `{{...}}` in one of these fields means the node would run on
+ * a silently degraded value, so the engine fails the node loudly onto its
+ * `error` branch instead of substituting an empty string and continuing.
+ * Non-critical fields keep the warn-and-continue behavior (`template_warning`).
+ *
+ * `agent.prompt` is the canonical case: a partial prompt like
+ * "summarize {{missing.ref}}" is still non-empty, so `agent.ts`'s own
+ * empty-prompt guard does not catch it — the agent would burn a real,
+ * billed provider call doing the wrong thing. This map is the extension
+ * point for any future field with the same "must be meaningful" contract.
+ */
+const CRITICAL_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
+  agent: ['prompt'],
+};
+
 interface ExecutionScope {
   parentNode?: WorkflowNode;
   /** Iteration index for the nearest enclosing Loop. */
@@ -1162,7 +1179,8 @@ export class RunController {
     const executor = this.executors[node.type];
     if (!executor) throw new Error(`unknown node type: ${node.type}`);
 
-    const resolvedConfig = this.resolveConfigTemplates(node, scope, exec);
+    const { resolved: resolvedConfig, criticalMisses } =
+      this.resolveConfigTemplates(node, scope, exec);
     const namespacedId = this.namespaced(node.id, exec);
 
     this.emit({
@@ -1210,15 +1228,30 @@ export class RunController {
     };
 
     let result;
-    try {
-      result = await executor.execute(ctx);
-    } catch (err) {
-      if (signal.aborted) {
-        throw err;
-      }
-      const message = err instanceof Error ? err.message : String(err);
+    if (criticalMisses.length > 0) {
+      // A required templated field had an unresolved `{{...}}` reference.
+      // Fail the node loudly onto its `error` branch rather than letting the
+      // executor run on a silently degraded value — see CRITICAL_CONFIG_FIELDS.
+      // Dedup: `resolve()` reports one warning per `{{...}}` occurrence, so a
+      // field that repeats the same missing reference would otherwise list it
+      // twice in this operator-facing message.
+      const detail = [
+        ...new Set(criticalMisses.map((m) => `${m.field} ({{${m.missingKey}}})`)),
+      ].join(', ');
+      const message = `unresolved template reference in required field: ${detail}`;
       this.emit({ type: 'error', nodeId: namespacedId, message });
       result = { outputs: { errorMessage: message }, branch: 'error' as EdgeHandle };
+    } else {
+      try {
+        result = await executor.execute(ctx);
+      } catch (err) {
+        if (signal.aborted) {
+          throw err;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        this.emit({ type: 'error', nodeId: namespacedId, message });
+        result = { outputs: { errorMessage: message }, branch: 'error' as EdgeHandle };
+      }
     }
 
     scope[node.id] = result.outputs;
@@ -1253,16 +1286,28 @@ export class RunController {
     node: WorkflowNode,
     scope: Scope,
     exec: ExecutionScope,
-  ): Record<string, unknown> {
+  ): {
+    resolved: Record<string, unknown>;
+    criticalMisses: Array<{ field: string; missingKey: string }>;
+  } {
     const fields = TEXT_CONFIG_FIELDS[node.type] ?? [];
+    const criticalFields = CRITICAL_CONFIG_FIELDS[node.type] ?? [];
     const cfg = node.config as Record<string, unknown>;
     const resolved: Record<string, unknown> = { ...cfg };
+    const criticalMisses: Array<{ field: string; missingKey: string }> = [];
     for (const field of fields) {
       const raw = cfg[field];
       if (typeof raw === 'string') {
         const { text, warnings } = resolveTemplate(raw, scope);
         resolved[field] = text;
+        const isCritical = criticalFields.includes(field);
         for (const w of warnings) {
+          if (isCritical) {
+            // Defer to the loud `error` event raised in `executeNode`; a
+            // `template_warning` here too would just be redundant noise.
+            criticalMisses.push({ field, missingKey: w.missingKey });
+            continue;
+          }
           this.emit({
             type: 'template_warning',
             nodeId: this.namespaced(node.id, exec),
@@ -1292,6 +1337,6 @@ export class RunController {
         resolved.inputs = next;
       }
     }
-    return resolved;
+    return { resolved, criticalMisses };
   }
 }

@@ -97,6 +97,11 @@ export const agentExecutor: NodeExecutor = {
   async execute(ctx: NodeExecutorContext): Promise<NodeExecutorResult> {
     const cfg = ctx.config as AgentConfig;
 
+    // Catches a missing providerId and a literal-empty / non-string prompt.
+    // A *templated* prompt whose `{{...}}` reference is unresolved is now
+    // front-stopped by the engine before this executor runs — see
+    // CRITICAL_CONFIG_FIELDS in run-controller.ts — so this guard no longer
+    // has to reason about silently-degraded templated prompts.
     if (!isNonEmptyString(cfg?.providerId) || !isNonEmptyString(cfg?.prompt)) {
       return {
         outputs: { errorMessage: 'invalid agent config' },

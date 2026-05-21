@@ -1,0 +1,53 @@
+# Supervised single-node deployment of Infinite Loop.
+# Full guide: docs/deployment.md
+#
+# Quick start:
+#   cp .env.example .env
+#   echo "INFLOOP_API_TOKEN=$(openssl rand -hex 32)" >> .env
+#   docker compose up -d --build
+
+services:
+  infinite-loop:
+    build:
+      # Bun version is pinned in the Dockerfile (ARG BUN_VERSION).
+      context: .
+    image: infinite-loop:local
+
+    # Restart after any abnormal exit. This is what makes boot-time crash
+    # recovery actually run: an uncaughtException makes the process exit(1),
+    # the container restarts, and the next boot reaps orphaned agent CLIs and
+    # reconciles interrupted runs. `unless-stopped` keeps it down only when an
+    # operator explicitly stops it.
+    restart: unless-stopped
+
+    # Run a real init (tini) as PID 1. Infinite Loop spawns detached
+    # provider/script child processes; tini reaps the ones re-parented to
+    # PID 1 instead of leaving zombies.
+    init: true
+
+    # Published to the host loopback only. Put a reverse proxy or tunnel in
+    # front for real access (see docs/security.md). To expose directly on the
+    # LAN, change this to "3000:3000" — trusted networks only.
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    environment:
+      # Bind every interface *inside the container* so the published port can
+      # reach the app. Real network exposure is governed by `ports` above,
+      # not by this. See docs/deployment.md#how-network-exposure-works.
+      HOST: "0.0.0.0"
+      INFLOOP_DATA_DIR: /data
+      INFLOOP_LOG_LEVEL: ${INFLOOP_LOG_LEVEL:-info}
+      # Required: the network-posture gate refuses a non-loopback bind with no
+      # token. `docker compose up` fails fast if INFLOOP_API_TOKEN is unset.
+      INFLOOP_API_TOKEN: ${INFLOOP_API_TOKEN:?set INFLOOP_API_TOKEN in .env — see docs/deployment.md}
+
+    volumes:
+      # All persistent state (run history, saved workflows, triggers,
+      # connections, crash-recovery markers) lives here and survives restarts
+      # and rebuilds. The shipped library presets are baked into the image,
+      # not stored here.
+      - infinite-loop-data:/data
+
+volumes:
+  infinite-loop-data:

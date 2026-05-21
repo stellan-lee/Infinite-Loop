@@ -66,6 +66,8 @@ bun run dev
 
 Other scripts: `bun run test`, `bun run typecheck`, `bun run build`, `bun run start`.
 
+**Deploying for a team?** A supervised Docker setup — auto-restart, health checks, and a persistent data volume — is documented in [docs/deployment.md](docs/deployment.md).
+
 ## Core concepts
 
 A workflow is a directed graph of typed nodes. Each node writes outputs into a flat scope keyed by node id; downstream nodes reference them with `{{node-id.field}}` templating.

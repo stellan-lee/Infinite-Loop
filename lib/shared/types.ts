@@ -51,6 +51,11 @@ export interface RunnerResult {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  /** Cumulative cost in USD the provider reported for this invocation, when
+   * it reports one. CLI providers surface it from their result frame (e.g.
+   * the `claude` CLI's `total_cost_usd`); HTTP providers do not report cost
+   * and leave this undefined. Feeds the run-level cost budget. */
+  costUsd?: number;
 }
 
 export interface ConditionStrategy {

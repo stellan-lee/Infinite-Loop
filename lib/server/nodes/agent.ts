@@ -297,6 +297,17 @@ export const agentExecutor: NodeExecutor = {
         ...consumed,
       };
       if (worktreePath) outputs.worktreePath = worktreePath;
+      // Surface provider-reported cost when present (CLI providers only; HTTP
+      // providers leave it undefined). Also consumed by the run-level cost
+      // budget — see RunController.recordCost. Guarded so a malformed value
+      // never reaches the budget accumulator.
+      if (
+        typeof result.costUsd === 'number' &&
+        Number.isFinite(result.costUsd) &&
+        result.costUsd >= 0
+      ) {
+        outputs.costUsd = result.costUsd;
+      }
 
       const success = result.exitCode === 0 && !result.timedOut;
       return { outputs, branch: success ? 'next' : 'error' };

@@ -106,6 +106,7 @@ export const AGENT_RESERVED_OUTPUT_NAMES: readonly string[] = [
   'timedOut',
   'worktreePath',
   'errorMessage',
+  'costUsd',
 ];
 
 /** Validate the declared-outputs shape on an Agent node. Pure (no IO) so the

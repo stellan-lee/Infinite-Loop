@@ -127,15 +127,29 @@ credits) until a human notices. Every run is therefore capped by a
 - `INFLOOP_MAX_RUN_NODE_EXECUTIONS` (default `10000`) — the maximum number of
   node-execution steps in a single run. When exceeded, the run is aborted and
   settles as **failed** with a budget message. `0` disables the ceiling.
-- `INFLOOP_MAX_RUN_DURATION_MS` (default `0`, disabled) — an optional
-  wall-clock cap, checked at each node-step boundary. A run that exceeds it is
-  stopped at its next step; a single long-running node is not interrupted
-  mid-flight.
+- `INFLOOP_MAX_RUN_DURATION_MS` (default `86400000`, 24h) — a wall-clock cap,
+  checked at each node-step boundary. A run that exceeds it is stopped at its
+  next step; a single long-running node is not interrupted mid-flight. The
+  default is a generous backstop against a genuinely-stuck run, not a tight
+  SLA — long autonomous runs are expected. A run that legitimately needs more
+  than 24h must raise this or set it to `0` (disabled).
+- `INFLOOP_MAX_RUN_COST_USD` (default `0`, disabled) — a cumulative cost
+  ceiling in US dollars. When set, the run is aborted and settles as
+  **failed** once the total cost reported by its agents exceeds the cap. It is
+  opt-in because no single dollar figure is safe for every user; set it to
+  your real per-run budget.
 
-The node ceiling is the deterministic guard: an unbounded loop will always
-hit it. Raise the limit if you have a legitimately large workflow — but treat
-a budget failure as a prompt to add an explicit `maxIterations` cap, not just
-to raise the ceiling.
+The node and wall-clock ceilings bound **every** run. The node ceiling is the
+deterministic guard: an unbounded loop will always hit it. Raise the limit if
+you have a legitimately large workflow — but treat a budget failure as a
+prompt to add an explicit `maxIterations` cap, not just to raise the ceiling.
+
+**Cost-cap coverage.** `INFLOOP_MAX_RUN_COST_USD` only counts cost from
+providers that report it — currently the `claude` CLI (via its `total_cost_usd`
+result frame). HTTP providers report no cost, so a workflow built entirely on
+HTTP providers is **not** bounded by the cost cap; the node and wall-clock
+ceilings remain its backstop. The cost is also surfaced per agent node as the
+`costUsd` output (usable in `{{ ... }}` templates).
 
 ## Crash recovery
 

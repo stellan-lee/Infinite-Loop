@@ -66,9 +66,11 @@ export const createClaudeStreamJsonParser: LineParserFactory = () => {
       return { kind: 'json', text: '' };
     }
     if (obj.type === 'result') {
-      const text = formatResult(obj);
+      const { text, costUsd } = formatResult(obj);
       inflightTools.clear();
-      return { kind: 'json', text };
+      return costUsd === undefined
+        ? { kind: 'json', text }
+        : { kind: 'json', text, costUsd };
     }
 
     return { kind: 'json', text: '' };
@@ -212,13 +214,25 @@ function truncateInline(s: string): string {
   return `${oneLine.slice(0, TRUNCATE_AT)}…`;
 }
 
-function formatResult(obj: Record<string, unknown>): string {
+/**
+ * Render the CLI's terminal `result` event to its annotation line, and — when
+ * the frame declares `total_cost_usd` — surface that cost structurally so the
+ * runner can feed it to the run-level cost budget. `total_cost_usd` is the
+ * cumulative cost for the whole invocation; a negative value is treated as
+ * absent so a malformed frame cannot poison the budget accumulator.
+ */
+function formatResult(obj: Record<string, unknown>): {
+  text: string;
+  costUsd?: number;
+} {
   const parts: string[] = [];
   const subtype = typeof obj.subtype === 'string' ? obj.subtype : 'unknown';
   parts.push(subtype);
 
+  let costUsd: number | undefined;
   const cost = obj.total_cost_usd;
-  if (typeof cost === 'number' && Number.isFinite(cost)) {
+  if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) {
+    costUsd = cost;
     parts.push(`$${cost.toFixed(4)}`);
   }
 
@@ -236,7 +250,7 @@ function formatResult(obj: Record<string, unknown>): string {
     parts.push(`${(dur / 1000).toFixed(1)}s`);
   }
 
-  return `\n[result: ${parts.join(' | ')}]\n`;
+  return { text: `\n[result: ${parts.join(' | ')}]\n`, costUsd };
 }
 
 function numericField(v: unknown): number | null {

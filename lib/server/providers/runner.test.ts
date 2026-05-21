@@ -168,6 +168,53 @@ describe('runProvider', () => {
     expect(result.stdout).toContain('hello-from-stdin');
   });
 
+  it('surfaces costUsd from a claude-stream-json result frame', async () => {
+    process.env.FAKE_STDOUT_LINES = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 0.0731,
+    });
+    const ctrl = new AbortController();
+    const result = await runProvider(claudeStreamManifest, {
+      prompt: 'p',
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      signal: ctrl.signal,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.costUsd).toBe(0.0731);
+  });
+
+  it('takes the last cost when multiple result frames stream', async () => {
+    // `total_cost_usd` is cumulative, so the final frame is the invocation
+    // total — the runner must not sum frames.
+    process.env.FAKE_STDOUT_LINES = [
+      JSON.stringify({ type: 'result', subtype: 'success', total_cost_usd: 0.1 }),
+      JSON.stringify({ type: 'result', subtype: 'success', total_cost_usd: 0.25 }),
+    ].join('\n');
+    const ctrl = new AbortController();
+    const result = await runProvider(claudeStreamManifest, {
+      prompt: 'p',
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      signal: ctrl.signal,
+    });
+    expect(result.costUsd).toBe(0.25);
+  });
+
+  it('leaves costUsd undefined for a provider that reports no cost', async () => {
+    process.env.FAKE_STDOUT_LINES = 'hello';
+    const ctrl = new AbortController();
+    const result = await runProvider(plainManifest, {
+      prompt: 'p',
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      signal: ctrl.signal,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.costUsd).toBeUndefined();
+  });
+
   describe('resolveCliArgs', () => {
     it('substitutes {prompt} in arg mode', () => {
       const out = resolveCliArgs(['--print', '{prompt}'], {

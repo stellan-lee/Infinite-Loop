@@ -21,7 +21,15 @@
 import { createClaudeStreamJsonParser } from './claude-stream-json';
 import { createPlainParser } from './plain';
 
-export type LineParseResult = { kind: 'json'; text: string } | { kind: 'plain' };
+/**
+ * `costUsd` (json variant only) carries a provider-reported cumulative cost
+ * for the invocation, when the line is a result/summary frame that declares
+ * one. It is optional and absent on every other line; the runner takes the
+ * last value seen as the invocation's total (see `runCliProvider`).
+ */
+export type LineParseResult =
+  | { kind: 'json'; text: string; costUsd?: number }
+  | { kind: 'plain' };
 export type LineParser = (line: string) => LineParseResult;
 export type LineParserFactory = () => LineParser;
 

@@ -162,6 +162,12 @@ async function runCliProvider(
     let stderr = '';
     let lineBuf = '';
     let timedOut = false;
+    // Last cost a parsed line reported. Provider result frames carry the
+    // *cumulative* invocation cost (e.g. `total_cost_usd`), so the final
+    // value seen — not a sum — is this invocation's total. Cross-invocation
+    // accumulation is the run controller's job. Stays undefined for providers
+    // that report no cost.
+    let costUsd: number | undefined;
     let killTimer: NodeJS.Timeout | null = null;
     let timeoutTimer: NodeJS.Timeout | null = null;
     let settled = false;
@@ -233,6 +239,9 @@ async function runCliProvider(
         let emit = '';
         if (classified.kind === 'json') {
           emit = classified.text;
+          if (typeof classified.costUsd === 'number') {
+            costUsd = classified.costUsd;
+          }
         } else {
           emit = lineWithNl;
         }
@@ -259,6 +268,7 @@ async function runCliProvider(
         stderr,
         durationMs: Date.now() - startedAt,
         timedOut,
+        costUsd,
       });
     };
 
@@ -280,6 +290,9 @@ async function runCliProvider(
         if (trimmed.length > 0) {
           const classified = parser(trimmed);
           const emit = classified.kind === 'json' ? classified.text : tail;
+          if (classified.kind === 'json' && typeof classified.costUsd === 'number') {
+            costUsd = classified.costUsd;
+          }
           if (emit.length > 0) {
             stdout += emit;
             opts.onStdoutChunk?.(emit);

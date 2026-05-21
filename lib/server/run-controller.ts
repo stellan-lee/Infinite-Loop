@@ -75,35 +75,66 @@ const PERSIST_EVENT_CAP = 50_000;
  * node can spend the user's API budget until a human notices. This budget is
  * the automatic backstop the manual kill switch isn't.
  *
+ * Three independent ceilings, each disabled by a value of `0`:
+ *
  * `maxNodeExecutions` counts node steps across the entire run — every node
  * the walk visits, including `start`/`end` and the `loop`/`parallel`/
  * `subworkflow` container nodes themselves, summed over every loop iteration
  * and every parallel branch. It is therefore a conservative ceiling, not a
- * precise count of "real work"; size it with headroom. `0` disables it.
+ * precise count of "real work"; size it with headroom.
  *
- * `maxDurationMs` is an optional wall-clock cap, evaluated at each node-step
- * boundary — a single long-running node (e.g. an Agent CLI) is not
- * interrupted mid-flight; the cap trips on the next step. `0` disables it and
- * is the default: this tool's whole purpose is long-running autonomous runs,
- * so a tight time cap would kill legitimate work. The node ceiling is the
- * deterministic guard against the actual runaway class.
+ * `maxDurationMs` is a wall-clock cap, evaluated at each node-step boundary —
+ * a single long-running node (e.g. an Agent CLI) is not interrupted
+ * mid-flight; the cap trips on the next step. It defaults to a generous 24h:
+ * a backstop against a genuinely-stuck run, NOT a tight SLA. Long autonomous
+ * runs are this tool's whole point, so the default is wide enough not to kill
+ * legitimate work while still bounding a run whose exit condition never fires.
+ *
+ * `maxCostUsd` is a cumulative cost ceiling in US dollars, accumulated from
+ * the cost each Agent node's provider reports (see `recordCost`). It is
+ * checked after each node settles — cost is only known once the node has run,
+ * so unlike the two ceilings above it trips *after* the offending node, not
+ * before it. It defaults to `0` (opt-in): no single dollar figure is safe for
+ * every user, and a surprise mid-run abort destroys uncommitted agent work,
+ * so the precise cost cap is left for the operator to set to their real
+ * budget. Only providers that report cost contribute (currently the `claude`
+ * CLI); HTTP providers report none, so a cost cap does not bound a workflow
+ * built entirely on them — `maxDurationMs` remains their backstop.
  */
 export interface RunBudget {
   maxNodeExecutions: number;
   maxDurationMs: number;
+  maxCostUsd: number;
 }
 
 const DEFAULT_MAX_NODE_EXECUTIONS = 10_000;
-const DEFAULT_MAX_DURATION_MS = 0;
+/** 24h — a stuck-run backstop, not a tight SLA. See the budget block above. */
+const DEFAULT_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
+/** 0 — opt-in: there is no universally-safe default dollar cap. */
+const DEFAULT_MAX_COST_USD = 0;
 
-function readBudgetEnv(name: string, fallback: number): number {
+function readBudgetEnvWith(
+  name: string,
+  fallback: number,
+  parse: (raw: string) => number,
+): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
-  const n = Number.parseInt(raw, 10);
+  const n = parse(raw);
   // A literal 0 is meaningful — it disables that ceiling. NaN / negative is a
   // typo, not an intent to disable, so fall back to the default.
   if (!Number.isFinite(n) || n < 0) return fallback;
   return n;
+}
+
+/** Integer-valued budget env (node steps, milliseconds). */
+function readBudgetEnv(name: string, fallback: number): number {
+  return readBudgetEnvWith(name, fallback, (raw) => Number.parseInt(raw, 10));
+}
+
+/** Float-valued budget env — `maxCostUsd` is a dollar amount, not an integer. */
+function readBudgetFloatEnv(name: string, fallback: number): number {
+  return readBudgetEnvWith(name, fallback, (raw) => Number.parseFloat(raw));
 }
 
 /** Resolve the run budget from the environment. Called per controller so an
@@ -117,6 +148,10 @@ export function resolveRunBudget(): RunBudget {
     maxDurationMs: readBudgetEnv(
       'INFLOOP_MAX_RUN_DURATION_MS',
       DEFAULT_MAX_DURATION_MS,
+    ),
+    maxCostUsd: readBudgetFloatEnv(
+      'INFLOOP_MAX_RUN_COST_USD',
+      DEFAULT_MAX_COST_USD,
     ),
   };
 }
@@ -161,6 +196,10 @@ export class RunController {
   private readonly budget: RunBudget;
   /** Node steps taken so far this run — counted against `budget`. */
   private nodeExecutionCount = 0;
+  /** Provider-reported cost (USD) accumulated so far this run — counted
+   *  against `budget.maxCostUsd`. Only providers that report a cost (CLI
+   *  agents) contribute; reset per run in `start()`. */
+  private runCostUsd = 0;
   /** Wall-clock start, captured in `start()`; used for the duration ceiling. */
   private runStartedAt = 0;
   /** Set when a budget ceiling trips; reclassifies the run as failed. */
@@ -289,6 +328,7 @@ export class RunController {
     this.runEventLog = [];
     this.runEventLogTruncated = false;
     this.nodeExecutionCount = 0;
+    this.runCostUsd = 0;
     this.budgetExceededMessage = undefined;
     const captureUnsub = eventBus.subscribe((ev) => {
       this.recentEvents.push(ev);
@@ -553,6 +593,44 @@ export class RunController {
     this.budgetExceededMessage = message;
     this.emit({ type: 'error', message });
     this.abort.abort();
+  }
+
+  /**
+   * Accumulate a settled node's provider-reported cost against the run-level
+   * cost ceiling, and trip the run when it is breached. Called once per node
+   * from `executeNode` with the raw `costUsd` off the node's outputs (only
+   * Agent nodes backed by a cost-reporting provider supply one).
+   *
+   * MUST stay fully synchronous — no `await`. Parallel branches call this
+   * concurrently; on Node's single thread an await-free read-modify-write of
+   * `runCostUsd` cannot interleave, so the accumulation is race-free.
+   *
+   * Non-numeric / non-finite / negative values are ignored so a malformed
+   * cost cannot poison the accumulator (a `NaN` would make every later
+   * comparison false and silently disable the ceiling) or under-count it. A
+   * legitimate `0` is skipped too — it contributes nothing, so the guard
+   * uses `<= 0` purely as a harmless fast path; upstream hops keep their
+   * `>= 0` filter since `0` is a valid cost to surface as an output.
+   */
+  private recordCost(costUsd: unknown): void {
+    if (this.budgetExceededMessage) return;
+    if (
+      typeof costUsd !== 'number' ||
+      !Number.isFinite(costUsd) ||
+      costUsd <= 0
+    ) {
+      return;
+    }
+    this.runCostUsd += costUsd;
+    const { maxCostUsd } = this.budget;
+    if (maxCostUsd > 0 && this.runCostUsd > maxCostUsd) {
+      this.tripBudget(
+        `run aborted: cost budget exceeded ($${maxCostUsd}). ` +
+          `Accumulated provider cost reached $${this.runCostUsd.toFixed(4)} ` +
+          'after the last node completed. Raise or disable ' +
+          'INFLOOP_MAX_RUN_COST_USD.',
+      );
+    }
   }
 
   /**
@@ -1123,6 +1201,11 @@ export class RunController {
     }
 
     scope[node.id] = result.outputs;
+    // Charge any provider-reported cost against the run-level cost ceiling.
+    // Post-execution by necessity — cost is only known once the node has run
+    // — so this can only trip *after* the offending node; `tripBudget` then
+    // aborts and the walk halts at its next step.
+    this.recordCost((result.outputs as { costUsd?: unknown }).costUsd);
     this.emit({
       type: 'node_finished',
       nodeId: namespacedId,

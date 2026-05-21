@@ -344,6 +344,46 @@ describe('claudeStreamJsonParser', () => {
       }
     });
 
+    it('surfaces total_cost_usd structurally as costUsd', () => {
+      const out = claudeStreamJsonParser(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          total_cost_usd: 0.0412,
+        }),
+      );
+      expect(out.kind).toBe('json');
+      if (out.kind === 'json') expect(out.costUsd).toBe(0.0412);
+    });
+
+    it('leaves costUsd undefined when the frame declares no cost', () => {
+      const out = claudeStreamJsonParser(
+        JSON.stringify({ type: 'result', subtype: 'success' }),
+      );
+      if (out.kind === 'json') expect(out.costUsd).toBeUndefined();
+    });
+
+    it('ignores a negative total_cost_usd', () => {
+      const out = claudeStreamJsonParser(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          total_cost_usd: -1,
+        }),
+      );
+      if (out.kind === 'json') expect(out.costUsd).toBeUndefined();
+    });
+
+    it('propagates costUsd through a stream_event-wrapped result', () => {
+      const out = claudeStreamJsonParser(
+        JSON.stringify({
+          type: 'stream_event',
+          event: { type: 'result', subtype: 'success', total_cost_usd: 0.5 },
+        }),
+      );
+      if (out.kind === 'json') expect(out.costUsd).toBe(0.5);
+    });
+
     it('clears in-flight tool_use ids so subsequent runs do not leak state', () => {
       claudeStreamJsonParser(
         JSON.stringify({

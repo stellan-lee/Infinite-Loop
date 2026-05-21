@@ -13,7 +13,8 @@
 | `INFLOOP_RUNS_DIR` | `<cwd>/runs` | Where completed-run records are persisted |
 | `INFLOOP_RUN_HISTORY_LIMIT` | `100` | Max persisted runs per workflow (oldest pruned first) |
 | `INFLOOP_MAX_RUN_NODE_EXECUTIONS` | `10000` | Run-level safety ceiling: max node-execution steps per run before it is aborted and marked failed. Bounds runaway loops, including `infinite: true`. `0` disables. |
-| `INFLOOP_MAX_RUN_DURATION_MS` | `0` (disabled) | Optional run-level wall-clock cap, in milliseconds, checked at each node-step boundary (a single long-running node is not interrupted mid-flight). `0` disables. |
+| `INFLOOP_MAX_RUN_DURATION_MS` | `86400000` (24h) | Run-level wall-clock cap, in milliseconds, checked at each node-step boundary (a single long-running node is not interrupted mid-flight). A backstop against a genuinely-stuck run, not a tight SLA. `0` disables. |
+| `INFLOOP_MAX_RUN_COST_USD` | `0` (disabled) | Run-level cost ceiling, in US dollars. When set, a run is aborted and marked failed once accumulated provider-reported cost exceeds it. Only providers that report cost are counted (currently the `claude` CLI); HTTP providers report none. `0` disables. |
 | `INFLOOP_PROVIDERS_DIR` | `<cwd>/providers` | Where provider manifests live |
 | `INFLOOP_PROVIDER_BIN_<ID>` | _(unset)_ | Override the binary for provider `<ID>` (upper-cased), e.g. `INFLOOP_PROVIDER_BIN_CLAUDE=/opt/claude` |
 | `INFLOOP_CLAUDE_BIN` | `claude` | Legacy override for the `claude` provider only — kept for back-compat |
@@ -128,14 +129,18 @@ bun run start
 **Tightening the runaway guard:**
 
 ```bash
-# Abort any run that exceeds 2000 node steps or 30 minutes of wall-clock.
+# Abort any run over 2000 node steps, 30 minutes of wall-clock, or $5 of cost.
 INFLOOP_MAX_RUN_NODE_EXECUTIONS=2000 \
 INFLOOP_MAX_RUN_DURATION_MS=1800000 \
+INFLOOP_MAX_RUN_COST_USD=5 \
 bun run start
 ```
 
-The node ceiling is the deterministic guard against unbounded loops; the
-wall-clock cap is an optional hard stop. See [docs/security.md](./security.md#runaway-protection).
+The node and wall-clock ceilings are on by default (10000 steps / 24h) and
+bound every run; the cost ceiling is opt-in — set it to your real per-run
+budget. **Behavior note:** the 24h wall-clock cap is a default — a run that
+legitimately needs to exceed it must set `INFLOOP_MAX_RUN_DURATION_MS` higher
+or to `0`. See [docs/security.md](./security.md#runaway-protection).
 
 **Containerized deployment:**
 

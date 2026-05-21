@@ -833,6 +833,46 @@ describe('WorkflowEngine — run-level execution budget', () => {
     expect(eng.getState().errorMessage).toContain('wall-clock budget');
   });
 
+  it('aborts a run that exceeds the per-run cost ceiling', async () => {
+    const executors = passthroughExecutors();
+    executors.agent = {
+      async execute() {
+        // Each agent reports $0.50 of provider cost via its outputs.
+        return { branch: 'next' as EdgeHandle, outputs: { costUsd: 0.5 } };
+      },
+    };
+    const eng = new WorkflowEngine(executors, undefined, {
+      // Node + duration ceilings stay well clear; only the $1 cost cap trips.
+      runBudget: { maxNodeExecutions: 5000, maxDurationMs: 0, maxCostUsd: 1 },
+    });
+
+    await eng.start(infiniteLoopWorkflow('w-budget-cost'));
+
+    // Cumulative cost crosses $1 on the third agent — reclassified as
+    // `failed`, NOT `cancelled` (a runaway is not a user stop).
+    expect(eng.getState().status).toBe('failed');
+    expect(eng.getState().errorMessage).toContain('cost budget');
+  });
+
+  it('treats maxCostUsd: 0 as a disabled cost ceiling', async () => {
+    const executors = passthroughExecutors();
+    executors.agent = {
+      async execute() {
+        return { branch: 'next' as EdgeHandle, outputs: { costUsd: 100 } };
+      },
+    };
+    const eng = new WorkflowEngine(executors, undefined, {
+      runBudget: { maxNodeExecutions: 50, maxDurationMs: 0, maxCostUsd: 0 },
+    });
+
+    await eng.start(infiniteLoopWorkflow('w-budget-cost-off'));
+
+    // With the cost cap disabled, a $100/agent run is bounded only by the
+    // node ceiling — proving the cost cap did not abort it earlier.
+    expect(eng.getState().status).toBe('failed');
+    expect(eng.getState().errorMessage).toContain('node-execution budget');
+  });
+
   it('allows a run that exactly meets the node budget', async () => {
     // start → agent → end is exactly 3 node steps.
     const wf: Workflow = {

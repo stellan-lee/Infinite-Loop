@@ -116,14 +116,18 @@ deployment, with a hard disk-usage ceiling.
 All writes go through one module and are serialized through an in-process
 promise chain (`tail`). The rotation check and the append are one atomic link
 in that chain (a single `writeEntry`), so lines never interleave and a queued
-append can never slip into the middle of a rotation. A second instance
-(port-fallback) is a tolerated edge: each line is small and written with
-`O_APPEND` (`fs.appendFile`), which the OS appends atomically, so individual
-lines stay intact even across processes; only a rotation racing a second
-instance could lose a few lines — the same best-effort class as run markers.
-`listAuditEntries` reads *outside* the `tail` chain (a pure read needs no
-serialization); a read concurrent with an append is expected and absorbed by
-the torn-line tolerance.
+append can never slip into the middle of a rotation. The documented
+port-fallback second instance shares the same directory, so the
+rotation-check-plus-append critical section is *also* guarded by an
+exclusively-created lock file (`audit.lock`): two instances cannot interleave
+a multi-syscall line or clobber a rotation. The lock is best-effort like the
+log itself — a lock left by a crashed holder is reclaimed after a 30 s TTL
+(single-winner steal via `rename`), and if it cannot be acquired within 5 s
+the write proceeds unlocked rather than dropping the entry, degrading to the
+prior best-effort behaviour and never worse. `listAuditEntries` reads
+*outside* the `tail` chain and the lock (a pure read needs no serialization);
+a read concurrent with an append is expected and absorbed by the torn-line
+tolerance.
 
 `recordAudit` is **best-effort and never throws / never rejects.** Audit
 logging must never break a request or a run; on any failure it logs through

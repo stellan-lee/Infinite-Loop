@@ -75,6 +75,113 @@ function maxFiles(): number {
   return Math.floor(n);
 }
 
+/* ─── cross-process append lock ──────────────────────────────────────────── */
+
+/*
+ * The in-process `tail` chain serializes writes within one process, but the
+ * documented port-fallback second instance shares this same directory. Two
+ * instances appending concurrently can interleave a multi-syscall line, and
+ * two instances rotating concurrently can clobber a generation or lose the
+ * current file. An exclusively-created lock file makes the
+ * rotation-check-plus-append critical section mutually exclusive across
+ * processes as well.
+ *
+ * The lock is best-effort, matching `recordAudit` itself: a lock left by a
+ * crashed holder is reclaimed after `LOCK_STALE_MS`, and if the lock cannot be
+ * acquired within `LOCK_MAX_WAIT_MS` the write proceeds unlocked rather than
+ * dropping the entry — degrading to the pre-lock best-effort behaviour, never
+ * worse.
+ */
+
+const LOCK_FILE = 'audit.lock';
+/** A held lock older than this is presumed abandoned by a crashed process. */
+const LOCK_STALE_MS = 30_000;
+/** Backoff between acquisition attempts while another writer holds the lock. */
+const LOCK_RETRY_MS = 20;
+/** Stop waiting after this and proceed unlocked (best-effort). */
+const LOCK_MAX_WAIT_MS = 5_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** True if the lock file at `lockPath` is stale — its stamp is older than
+ *  `LOCK_STALE_MS`, or it is corrupt (a damaged lock must not wedge writes
+ *  forever). A missing/unreadable file is "not stale": the caller simply
+ *  retries the exclusive create. */
+async function lockIsStale(lockPath: string): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(lockPath, 'utf8');
+  } catch {
+    return false;
+  }
+  try {
+    const ts = (JSON.parse(raw) as { ts?: unknown }).ts;
+    if (typeof ts !== 'number') return true; // corrupt — reclaim
+    return Date.now() - ts > LOCK_STALE_MS;
+  } catch {
+    return true; // unparseable — reclaim
+  }
+}
+
+/**
+ * Acquire the cross-process audit lock. Resolves to a `release` function that
+ * is always safe to call. Never rejects on contention or a stale lock: on
+ * timeout it resolves to a no-op release and the caller proceeds unlocked.
+ */
+async function acquireLock(dir: string): Promise<() => Promise<void>> {
+  const lockPath = path.join(dir, LOCK_FILE);
+  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+  for (;;) {
+    try {
+      const fh = await fs.open(lockPath, 'wx');
+      try {
+        await fh.writeFile(
+          JSON.stringify({ pid: process.pid, ts: Date.now() }),
+        );
+      } finally {
+        await fh.close();
+      }
+      return async () => {
+        try {
+          await fs.rm(lockPath, { force: true });
+        } catch {
+          // Best-effort release; a lock left behind self-heals via the TTL.
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
+        // Not a contention error (EACCES, ENOSPC, EROFS, …). Don't give the
+        // lock layer its own throw path: proceed unlocked, exactly as on the
+        // wait timeout, and let the subsequent append surface the real disk
+        // error. Degrade to unlocked, never worse.
+        return async () => {};
+      }
+      // Held by another writer. Reclaim it if stale, otherwise wait.
+      if (await lockIsStale(lockPath)) {
+        // Single-winner steal: `rename` atomically consumes the source, so of
+        // two racers only the first succeeds; the rest get ENOENT and fall
+        // through to a fresh exclusive-create attempt. The `.stale` target is
+        // a fixed name, so a holder that crashes between the rename and the
+        // rm leaves at most one debris file — overwritten by the next steal.
+        const claimed = `${lockPath}.stale`;
+        try {
+          await fs.rename(lockPath, claimed);
+          await fs.rm(claimed, { force: true });
+        } catch {
+          // Lost the steal race — another process reclaimed it first.
+        }
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        return async () => {}; // give up waiting — proceed unlocked
+      }
+      await delay(LOCK_RETRY_MS);
+    }
+  }
+}
+
 /* ─── write path ─────────────────────────────────────────────────────────── */
 
 /**
@@ -82,6 +189,9 @@ function maxFiles(): number {
  * never interleave and a rotation never races an in-flight append from this
  * process. The `.catch` keeps the chain alive — and resolved — after a failed
  * write, so a single failure cannot wedge all later audit writes.
+ *
+ * Cross-*process* serialization — the documented port-fallback second instance
+ * — is handled separately by the lock file (see `acquireLock`).
  */
 let tail: Promise<void> = Promise.resolve();
 
@@ -138,14 +248,23 @@ function serializeLine(entry: AuditEntry): string {
   return body + '\n';
 }
 
-/** Rotation check + append, as one atomic link in the `tail` chain. */
+/**
+ * Rotation check + append. Serialized within the process by the `tail` chain
+ * and across processes by the audit lock, so the check-then-append is atomic
+ * against any other writer — no interleaved line, no clobbered rotation.
+ */
 async function writeEntry(entry: AuditEntry): Promise<void> {
   const dir = auditDir();
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, CURRENT_FILE);
   const line = serializeLine(entry);
-  await rotateIfNeeded(dir, file, Buffer.byteLength(line));
-  await fs.appendFile(file, line, 'utf8');
+  const release = await acquireLock(dir);
+  try {
+    await rotateIfNeeded(dir, file, Buffer.byteLength(line));
+    await fs.appendFile(file, line, 'utf8');
+  } finally {
+    await release();
+  }
 }
 
 /**

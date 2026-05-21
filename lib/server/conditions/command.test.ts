@@ -94,6 +94,34 @@ describe('commandStrategy', () => {
     expect(result.detail).toMatch(/^exit \d+$/);
   });
 
+  it('runs with a scrubbed environment — no INFLOOP_ secret leaks through', async () => {
+    const prior = process.env.INFLOOP_API_TOKEN;
+    process.env.INFLOOP_API_TOKEN = 'super-secret';
+    try {
+      // `printenv VAR` exits 0 when the variable is set, 1 when it is not.
+      // The scrubbed child env must not carry the orchestrator's own
+      // INFLOOP_ namespace, so the condition must not see the token.
+      const leaked = await commandStrategy.evaluate(
+        stubIter,
+        { cmd: 'printenv INFLOOP_API_TOKEN' },
+        process.cwd(),
+      );
+      expect(leaked.met).toBe(false);
+
+      // A base-allowlist variable (PATH) still reaches the child — confirming
+      // the env was scrubbed to an allowlist, not emptied outright.
+      const allowed = await commandStrategy.evaluate(
+        stubIter,
+        { cmd: 'printenv PATH' },
+        process.cwd(),
+      );
+      expect(allowed.met).toBe(true);
+    } finally {
+      if (prior === undefined) delete process.env.INFLOOP_API_TOKEN;
+      else process.env.INFLOOP_API_TOKEN = prior;
+    }
+  });
+
   it('returns met=false with descriptive detail on invalid config', async () => {
     const r1 = await commandStrategy.evaluate(stubIter, {}, process.cwd());
     expect(r1).toEqual({ met: false, detail: 'invalid command config' });

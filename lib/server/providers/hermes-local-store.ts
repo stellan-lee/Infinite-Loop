@@ -394,9 +394,23 @@ async function writeConnection(
     token: conn.token,
     ports: conn.ports,
   };
-  await fs.writeFile(fileFor(id), JSON.stringify(payload, null, 2) + '\n', {
+  // Atomic write: a connection file holds a bearer token, so a write torn by
+  // a crash mid-`writeFile` would leave an unparseable secret on disk. Write
+  // to a temp file then rename into place — the rename is the atomic commit
+  // point, matching run-store / workflow-store. A fixed `.tmp` suffix is safe
+  // here (unlike trigger-store, which needs a random suffix) because writes
+  // for a given id are never concurrent: createConnection rejects duplicate
+  // ids and updateConnection is a manual single-connection action. Any stale
+  // temp from a prior crash is removed first — that both self-cleans the
+  // debris and guarantees the 0600 mode on the fresh create (`writeFile`'s
+  // `mode` applies only when the file is created).
+  const target = fileFor(id);
+  const tmp = `${target}.tmp`;
+  await fs.rm(tmp, { force: true });
+  await fs.writeFile(tmp, JSON.stringify(payload, null, 2) + '\n', {
     mode: 0o600,
   });
+  await fs.rename(tmp, target);
   _resetProviderCache();
 }
 

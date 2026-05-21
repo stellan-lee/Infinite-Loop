@@ -1,4 +1,5 @@
 import { exec } from 'node:child_process';
+import { buildChildEnv } from '../child-env';
 import type { CommandConfig, ConditionStrategy } from '../../shared/types';
 
 const TIMEOUT_MS = 30000;
@@ -20,7 +21,12 @@ export const commandStrategy: ConditionStrategy = {
     return new Promise((resolve) => {
       let timedOut = false;
 
-      const child = exec(cfg.cmd, { cwd }, (err) => {
+      // A `kind: command` condition runs an operator/AI-authored shell
+      // command — an untrusted-execution surface alongside Agent and Script
+      // nodes. Scrub the environment with the shared allowlist so the command
+      // cannot read the orchestrator's own secrets (`INFLOOP_API_TOKEN`, cloud
+      // credentials) out of the inherited `process.env`.
+      const child = exec(cfg.cmd, { cwd, env: buildChildEnv() }, (err) => {
         clearTimeout(timer);
 
         if (timedOut) {

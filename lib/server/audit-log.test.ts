@@ -148,6 +148,43 @@ describe('rotation', () => {
   });
 });
 
+describe('cross-process append lock', () => {
+  it('reclaims a stale lock and still records the entry', async () => {
+    const dir = auditDir();
+    await fsp.mkdir(dir, { recursive: true });
+    // A lock left behind by a crashed process: stamp well past the TTL.
+    await fsp.writeFile(
+      path.join(dir, 'audit.lock'),
+      JSON.stringify({ pid: 999999, ts: Date.now() - 120_000 }),
+    );
+    await recordAudit({
+      category: 'run',
+      action: 'after-stale',
+      outcome: 'info',
+    });
+    await flushAudit();
+    const entries = await listAuditEntries();
+    expect(entries.map((e) => e.action)).toContain('after-stale');
+    // The lock is released once the write completes.
+    expect(fs.existsSync(path.join(dir, 'audit.lock'))).toBe(false);
+  });
+
+  it('reclaims a corrupt lock file rather than wedging writes', async () => {
+    const dir = auditDir();
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, 'audit.lock'), 'not-json');
+    await recordAudit({
+      category: 'run',
+      action: 'after-corrupt',
+      outcome: 'info',
+    });
+    await flushAudit();
+    const entries = await listAuditEntries();
+    expect(entries.map((e) => e.action)).toContain('after-corrupt');
+    expect(fs.existsSync(path.join(dir, 'audit.lock'))).toBe(false);
+  });
+});
+
 describe('limit handling', () => {
   it('caps the number of returned entries', async () => {
     for (let i = 0; i < 10; i++) {

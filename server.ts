@@ -14,6 +14,7 @@ import {
 import { triggerQueue } from './lib/server/trigger-queue-singleton';
 import { setBoundPort } from './lib/server/runtime';
 import { evaluatePosture, isLoopbackHost } from './lib/server/network-posture';
+import { validateConfig } from './lib/server/config-validation';
 
 const dev = process.env.NODE_ENV !== 'production';
 const startPort = Number(process.env.PORT ?? 3000);
@@ -28,6 +29,18 @@ const host = process.env.HOST ?? '127.0.0.1';
 // boot — including in the posture gate below — or in any fire-and-forget async
 // path later fails visibly and never leaves agent CLIs orphaned.
 installCrashHandlers();
+
+// Fail fast on a malformed config value before doing any work. A typo in a
+// numeric INFLOOP_* var (e.g. INFLOOP_MAX_TOTAL_COST_USD=abc) otherwise
+// silently falls back to a default — and for a safety ceiling that default is
+// "disabled". Refuse to start rather than run unattended with a spend or
+// runaway limit the operator believes is on but isn't.
+const configErrors = validateConfig(process.env);
+if (configErrors.length > 0) {
+  console.error('Invalid configuration — refusing to start:');
+  for (const error of configErrors) console.error(`  - ${error}`);
+  process.exit(1);
+}
 
 // Fail closed before doing any work: refuse to start a network-reachable,
 // unauthenticated server. `authEnabled` mirrors requireAuth() in

@@ -31,6 +31,30 @@
 | `INFLOOP_WEBHOOK_RATE_LIMIT` | `120` | Max webhook deliveries accepted per minute, per trigger, before further requests get `429` |
 | `INFLOOP_LOGIN_RATE_LIMIT` | `20` | Max browser-login attempts accepted per minute (one global bucket) before further attempts get `429` |
 
+## Startup validation
+
+The numeric and enum-valued `INFLOOP_*` variables above are validated once at
+startup. If any is **set to a malformed value** — non-numeric, negative, a
+fractional value where a whole number is required, or a zero where a positive
+number is required — the server prints a per-variable explanation and **refuses
+to start**:
+
+```
+Invalid configuration — refusing to start:
+  - INFLOOP_MAX_TOTAL_COST_USD is set to "abc" — expected a non-negative number (US dollars across all runs since startup; 0 disables the ceiling).
+```
+
+This is deliberate fail-fast behaviour. Without it a typo'd value silently
+falls back to its default, and for a safety ceiling that default is *disabled*
+— so a fat-fingered `INFLOOP_MAX_TOTAL_COST_USD` would leave an unattended
+deployment running with no spend cap and nothing said so.
+
+An **unset or empty** variable is not an error — the documented default
+applies. A literal `0` is accepted wherever `0` is a meaningful value (it
+disables that ceiling). The validator is intentionally strict about format: it
+rejects trailing units and exponent/hex notation (`5usd`, `1e6`, `0x10`), so
+write plain decimal values (`5`, `1000000`).
+
 ## Health & observability
 
 `GET /api/health` is an unauthenticated liveness/readiness probe — it works

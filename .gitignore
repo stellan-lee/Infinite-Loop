@@ -16,3 +16,9 @@ coverage
 # Screenshots captured by integration / E2E test runs. Heavy binaries
 # that shouldn't be tracked.
 /.integration-screenshots/
+
+# Playwright production-smoke E2E suite — generated workspace, reports, traces.
+/tests/e2e/.tmp/
+/playwright-report/
+/test-results/
+/blob-report/

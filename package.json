@@ -9,6 +9,7 @@
     "start": "NODE_ENV=production bun server.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "15.11.7",
+    "@playwright/test": "^1.60.0",
     "@sinonjs/fake-timers": "13.0.5",
     "@testing-library/jest-dom": "6.6.3",
     "@testing-library/react": "16.1.0",

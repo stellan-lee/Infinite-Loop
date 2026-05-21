@@ -1,0 +1,46 @@
+{
+  "id": "crash-recovery-workflow",
+  "name": "E2E Crash Recovery — long-running agent",
+  "version": 1,
+  "createdAt": 1778400000000,
+  "updatedAt": 1778400000000,
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "position": { "x": 0, "y": 0 },
+      "config": {}
+    },
+    {
+      "id": "agent-1",
+      "type": "agent",
+      "position": { "x": 280, "y": 0 },
+      "config": {
+        "providerId": "e2e-echo",
+        "prompt": "Crash-recovery E2E: hang until the server is killed.",
+        "cwd": "/tmp",
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "position": { "x": 560, "y": 0 },
+      "config": { "outcome": "succeeded" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-agent",
+      "source": "start-1",
+      "sourceHandle": "next",
+      "target": "agent-1"
+    },
+    {
+      "id": "e-agent-end",
+      "source": "agent-1",
+      "sourceHandle": "next",
+      "target": "end-1"
+    }
+  ]
+}

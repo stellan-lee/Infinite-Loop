@@ -1,0 +1,46 @@
+{
+  "id": "loop-claude-until-condition",
+  "name": "E2E Smoke — start → agent → end",
+  "version": 1,
+  "createdAt": 1778400000000,
+  "updatedAt": 1778400000000,
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "position": { "x": 0, "y": 0 },
+      "config": {}
+    },
+    {
+      "id": "agent-1",
+      "type": "agent",
+      "position": { "x": 280, "y": 0 },
+      "config": {
+        "providerId": "e2e-echo",
+        "prompt": "Infinite Loop production-smoke E2E test prompt.",
+        "cwd": "/tmp",
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "position": { "x": 560, "y": 0 },
+      "config": { "outcome": "succeeded" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-start-agent",
+      "source": "start-1",
+      "sourceHandle": "next",
+      "target": "agent-1"
+    },
+    {
+      "id": "e-agent-end",
+      "source": "agent-1",
+      "sourceHandle": "next",
+      "target": "end-1"
+    }
+  ]
+}

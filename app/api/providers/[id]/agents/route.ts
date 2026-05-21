@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 import { getProvider } from '@/lib/server/providers/loader';
 import {
   listCliAgents,
@@ -32,6 +33,9 @@ export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   const { id } = await params;
   const manifest = await getProvider(id);
   if (!manifest) {

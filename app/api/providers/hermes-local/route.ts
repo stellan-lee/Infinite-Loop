@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 import {
   createConnection,
   isValidLocalId,
@@ -6,7 +7,10 @@ import {
   type HermesLocalInput,
 } from '@/lib/server/providers/hermes-local-store';
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   try {
     const connections = await listConnections();
     return NextResponse.json({ connections });
@@ -19,6 +23,9 @@ export async function GET(): Promise<Response> {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   let body: unknown;
   try {
     body = await req.json();

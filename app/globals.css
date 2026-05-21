@@ -4328,3 +4328,90 @@ input[type='number'].no-spin {
   color: var(--fg-soft);
   margin-bottom: 18px;
 }
+
+/* ── Login screen ──────────────────────────────────────────────────────
+ * Shown by /login when INFLOOP_API_TOKEN is set and the browser has no
+ * valid session cookie. A single centered card on the app substrate. */
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.login-checking {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 32px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+}
+
+.login-title {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+  margin: 0;
+}
+
+.login-title em {
+  font-style: normal;
+  color: var(--fg-dim);
+  margin-left: 0.4em;
+}
+
+.login-sub {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-soft);
+  margin: 0 0 8px;
+}
+
+.login-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.login-input {
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 9px 11px;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  outline: none;
+}
+
+.login-input:focus {
+  background: var(--bg-input-focus);
+  border-color: var(--border-bright);
+}
+
+.login-error {
+  font-size: 12px;
+  color: var(--accent-err);
+  margin: 0;
+}
+
+.login-submit {
+  margin-top: 6px;
+  justify-content: center;
+}

@@ -6,7 +6,7 @@
 |---|---|---|
 | `PORT` | `3000` (then next free, up to +20) | HTTP port |
 | `HOST` | `127.0.0.1` | Bind address; loopback-only by default. Set `0.0.0.0` (or a LAN IP) to expose on the network — see `INFLOOP_ALLOW_INSECURE`. |
-| `INFLOOP_API_TOKEN` | _(unset)_ | When set, all `/api/*` calls require `Authorization: Bearer <token>`. Disables the browser UI — use for headless servers only. |
+| `INFLOOP_API_TOKEN` | _(unset)_ | When set, all `/api/*` calls require authentication. MCP/API clients pass `Authorization: Bearer <token>`; the browser UI prompts for the token at a login page. |
 | `INFLOOP_ALLOW_INSECURE` | _(unset)_ | Set to `1` to allow a network-reachable bind with **no** `INFLOOP_API_TOKEN`. Without it, the server refuses to start in that configuration (it would be unauthenticated remote code execution). Trusted networks only. |
 | `INFLOOP_WORKFLOWS_DIR` | `<cwd>/workflows` | Where workflow JSON lives |
 | `INFLOOP_TRIGGERS_DIR` | `<cwd>/triggers` | Where webhook trigger JSON lives |
@@ -29,13 +29,13 @@ bun run dev
 
 Reachable only from this machine. No token needed.
 
-**Headless MCP server (no UI, token-gated):**
+**Token-gated server (UI + MCP):**
 
 ```bash
 INFLOOP_API_TOKEN=$(openssl rand -hex 32) HOST=0.0.0.0 bun run start
 ```
 
-The UI will refuse to load (browser can't forward the token), but MCP clients and the management API work normally with `Authorization: Bearer <token>`.
+The browser UI prompts for the token at a login page; MCP clients and the management API authenticate with `Authorization: Bearer <token>`.
 
 **LAN-exposed server with no token (trusted networks only):**
 

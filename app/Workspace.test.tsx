@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { cleanup, render, waitFor } from '@testing-library/react';
-import Page from './page';
+import Workspace from './Workspace';
 import type { Workflow, WorkflowSummary } from '../lib/shared/workflow';
 import { useWorkflowStore } from '../lib/client/workflow-store-client';
 
@@ -75,7 +75,7 @@ afterEach(() => {
   globalThis.EventSource = originalEventSource;
 });
 
-describe('Page initial workflow loading', () => {
+describe('Workspace initial workflow loading', () => {
   it('loads the first workflow when the old default workflow id no longer exists', async () => {
     const fetchMock = mock(async (url: RequestInfo | URL) => {
       const u = String(url);
@@ -95,7 +95,7 @@ describe('Page initial workflow loading', () => {
     });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
-    render(<Page />);
+    render(<Workspace />);
 
     await waitFor(() => {
       expect(useWorkflowStore.getState().currentWorkflow?.id).toBe('wf-a');

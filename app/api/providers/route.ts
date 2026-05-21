@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 import { loadProviders, resolveBin } from '@/lib/server/providers/loader';
 import type {
   CliProviderManifest,
@@ -62,7 +63,10 @@ async function providerHealth(manifest: ProviderManifest): Promise<ProviderHealt
   };
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   try {
     const manifests = await loadProviders();
     const providers: ProviderInfo[] = await Promise.all(

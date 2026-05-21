@@ -2,6 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/server/auth';
 
 /**
  * GET /api/fs/list?path=/some/absolute/path
@@ -14,12 +15,16 @@ import { NextResponse } from 'next/server';
  * Hidden directories (dotfiles) are excluded by default; pass
  * `?showHidden=1` to include them. Files are never returned.
  *
- * SECURITY: this route is best-effort. It exposes the server's filesystem
- * tree to anyone who can hit it. The same trust assumption already applies
- * to `/api/run` (which spawns CLIs) and the LAN-wide bind in server.ts;
- * deploy on a trusted network only.
+ * SECURITY: this route exposes the server's filesystem tree, so it is gated
+ * by `requireAuth` like every other data route. When `INFLOOP_API_TOKEN` is
+ * unset the server is in open mode and the same trust assumption applies as
+ * to `/api/run` and the LAN-wide bind in server.ts — deploy on a trusted
+ * network only.
  */
 export async function GET(req: Request) {
+  const unauth = requireAuth(req);
+  if (unauth) return unauth;
+
   const url = new URL(req.url);
   const requested = url.searchParams.get('path');
   const showHidden = url.searchParams.get('showHidden') === '1';

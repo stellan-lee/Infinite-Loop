@@ -63,12 +63,13 @@ This is a single-tenant model: one shared token, no per-user accounts.
 
 ## Webhooks
 
-The unguessable `triggerId` in a webhook URL is the credential. There is **no HMAC signature verification** in the current build.
+The unguessable `triggerId` in a webhook URL is the base credential.
 
 - Treat webhook URLs like passwords. Don't paste them in shared docs or screenshots.
 - Rotate via the regenerate-id button in the Dispatch form.
 - `INFLOOP_API_TOKEN` does **not** apply to webhook ingress — external services like GitHub can't carry custom auth headers.
-- Signature verification (GitHub HMAC, Stripe signing) is planned; see [the roadmap](../README.md#status).
+
+When a webhook plugin declares a signing scheme (e.g. GitHub's HMAC-SHA256), a trigger built on it is **signature-verified**: Infinite Loop recomputes the HMAC over the raw request body with the trigger's shared `secret` and rejects a missing or mismatched signature with `401`. Set the secret in the Dispatch form when you create the trigger. A trigger on a signing-capable plugin must either carry a secret or explicitly opt out with `verifyOptional: true` (accepts unsigned requests, logs a warning) — with neither set, the request is refused as misconfigured rather than silently trusted.
 
 ## Don't expose to the public internet
 
@@ -91,6 +92,47 @@ A `.workflow.json` file can:
 **Review every workflow you import or download before running it.** Treat them like you'd treat a Bash script from the internet.
 
 The same applies to `providers/*.json`, `webhook-plugins/*.json`, and `triggers/*.json` — they all influence what Infinite Loop will execute or accept.
+
+## Runaway protection
+
+A workflow that loops without a real bound — an `infinite: true` Loop, or
+nested loops that multiply — can keep invoking agents (and spending API
+credits) until a human notices. Every run is therefore capped by a
+**run-level budget**, independent of any per-loop `maxIterations`:
+
+- `INFLOOP_MAX_RUN_NODE_EXECUTIONS` (default `10000`) — the maximum number of
+  node-execution steps in a single run. When exceeded, the run is aborted and
+  settles as **failed** with a budget message. `0` disables the ceiling.
+- `INFLOOP_MAX_RUN_DURATION_MS` (default `0`, disabled) — an optional
+  wall-clock cap, checked at each node-step boundary. A run that exceeds it is
+  stopped at its next step; a single long-running node is not interrupted
+  mid-flight.
+
+The node ceiling is the deterministic guard: an unbounded loop will always
+hit it. Raise the limit if you have a legitimately large workflow — but treat
+a budget failure as a prompt to add an explicit `maxIterations` cap, not just
+to raise the ceiling.
+
+## Crash recovery
+
+The run-level budget only bounds spend while the server process is alive.
+Provider CLIs are spawned in their own process group (`detached: true`) so a
+per-run cancel can kill grandchildren — but the flip side is they do **not**
+die with the server. A hard crash (OOM-kill, `kill -9`, power loss) skips the
+graceful-shutdown handlers entirely, leaving every in-flight agent CLI running
+as an orphan that keeps spending API credits, invisibly.
+
+To close that gap, every detached child is recorded under `<data-dir>/pids/`
+and every in-flight run leaves a marker under `<data-dir>/active-runs/`. On the
+next start, before the HTTP server accepts traffic, Infinite Loop:
+
+- kills any orphaned process groups left behind by the previous server, and
+- records any run interrupted by the crash as **failed** in history, so it is
+  not silently lost.
+
+A normal Ctrl+C shutdown reaps children directly and leaves nothing to
+recover. Recovery is also instance-aware: when two servers run at once (port
+fallback), one never reaps the other's live children or runs.
 
 ## Reporting security issues
 

@@ -150,7 +150,7 @@ async function runCliProvider(
       stdio: [promptVia === 'stdin' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       detached: true,
     });
-    if (child.pid != null) registerChild(child.pid);
+    if (child.pid != null) registerChild(child.pid, { bin });
 
     if (promptVia === 'stdin' && child.stdin) {
       child.stdin.setDefaultEncoding('utf8');

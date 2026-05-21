@@ -1,7 +1,8 @@
 import { promises as fs } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { RunRecord, RunSummary } from '../shared/workflow';
-import { dataDir } from './paths';
+import { activeRunsDir, dataDir } from './paths';
 
 /* ─── env / paths ─────────────────────────────────────────────────────────── */
 
@@ -205,4 +206,105 @@ export async function getRun(
     throw new Error(`run not found: ${workflowId}/${runId}`);
   }
   return rec;
+}
+
+/** True if a terminal RunRecord is already persisted for this run. */
+export async function runExists(
+  workflowId: string,
+  runId: string,
+): Promise<boolean> {
+  try {
+    await fs.access(fileFor(workflowId, runId));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* ─── active-run markers (crash recovery) ─────────────────────────────────────
+ *
+ * A run is written to history only at settle (see `saveRun`). If the server
+ * crashes mid-run the run vanishes — no history entry, no record it ever ran.
+ * To close that gap, RunController writes a marker here when a run starts and
+ * removes it once the run is safely saved. On the next boot, crash-recovery.ts
+ * turns any leftover marker into a `failed` RunRecord. The marker is a
+ * deliberately separate artifact (not a `running`-status RunRecord) so the
+ * "history holds terminal runs only" contract — and the types/UI built on it —
+ * stays untouched.
+ */
+
+export interface RunMarker {
+  runId: string;
+  workflowId: string;
+  workflowName: string;
+  startedAt: number;
+  /** PID of the server running this run. Lets the boot reconciler skip a
+   *  marker still owned by a co-running second instance (port fallback). */
+  serverPid: number;
+}
+
+function markerFile(runId: string): string {
+  return path.join(activeRunsDir(), `${runId}.json`);
+}
+
+function isRunMarker(v: unknown): v is RunMarker {
+  if (!v || typeof v !== 'object') return false;
+  const m = v as Record<string, unknown>;
+  return (
+    typeof m.runId === 'string' &&
+    typeof m.workflowId === 'string' &&
+    typeof m.workflowName === 'string' &&
+    typeof m.startedAt === 'number' &&
+    typeof m.serverPid === 'number'
+  );
+}
+
+/**
+ * Write a run's active marker. Synchronous + best-effort: a run must not fail
+ * because its marker could not be written (the only cost is that the run
+ * won't be reconcilable if the server then crashes). Synchronous so it is on
+ * disk before the run takes its first `await`.
+ */
+export function writeRunMarker(marker: RunMarker): void {
+  try {
+    mkdirSync(activeRunsDir(), { recursive: true });
+    const target = markerFile(marker.runId);
+    const tmp = `${target}.tmp`;
+    writeFileSync(tmp, JSON.stringify(marker, null, 2), 'utf8');
+    renameSync(tmp, target);
+  } catch (err) {
+    console.warn('[run-store] failed to write run marker:', err);
+  }
+}
+
+/** Remove a run's active marker. Best-effort; `force` makes a missing file a
+ *  no-op (absorbs the race with a second instance's boot reconciler). */
+export async function removeRunMarker(runId: string): Promise<void> {
+  try {
+    await fs.rm(markerFile(runId), { force: true });
+  } catch {
+    // best effort
+  }
+}
+
+/** All run markers currently on disk. Used once at boot by the reconciler. */
+export async function listRunMarkers(): Promise<RunMarker[]> {
+  let names: string[];
+  try {
+    names = await fs.readdir(activeRunsDir());
+  } catch {
+    return [];
+  }
+  const out: RunMarker[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.json') || name.endsWith('.json.tmp')) continue;
+    try {
+      const raw = await fs.readFile(path.join(activeRunsDir(), name), 'utf8');
+      const parsed = JSON.parse(raw) as unknown;
+      if (isRunMarker(parsed)) out.push(parsed);
+    } catch {
+      // skip torn/unreadable marker
+    }
+  }
+  return out;
 }

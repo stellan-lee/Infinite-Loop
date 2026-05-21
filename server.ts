@@ -3,8 +3,13 @@ import { networkInterfaces } from 'node:os';
 import next from 'next';
 import {
   activeChildCount,
+  clearChildPidFiles,
   killAllChildren,
 } from './lib/server/child-registry';
+import {
+  reapOrphanProcesses,
+  reconcileInterruptedRuns,
+} from './lib/server/crash-recovery';
 import { setBoundPort } from './lib/server/runtime';
 import { evaluatePosture, isLoopbackHost } from './lib/server/network-posture';
 
@@ -33,6 +38,24 @@ if (!posture.ok) {
 
 // If the requested port is taken, walk forward up to this many ports.
 const MAX_PORT_FALLBACK = 20;
+
+// Install last-resort failure handlers before anything else, so a fault during
+// boot — or in any fire-and-forget async path later — fails visibly and never
+// leaves agent CLIs orphaned.
+installCrashHandlers();
+
+// Crash recovery: a previous server may have died hard, leaving detached
+// provider CLIs running (and spending API credits) and runs that never
+// reached history. Run this FIRST — before Next.js prepares and long before
+// the HTTP server listens — so it finishes before any code path that could
+// spawn a child, and no stale PID file can be mistaken for a live one.
+// Best-effort: a recovery failure must not block startup.
+try {
+  reapOrphanProcesses();
+  await reconcileInterruptedRuns();
+} catch (err) {
+  console.warn('crash recovery failed (continuing startup):', err);
+}
 
 const app = next({ dev, turbopack: dev });
 const handle = app.getRequestHandler();
@@ -118,6 +141,7 @@ function installShutdownHandlers(server: ReturnType<typeof createServer>): void 
     if (shuttingDown) {
       console.warn(`received second ${signal}; forcing exit`);
       killAllChildren('SIGKILL');
+      clearChildPidFiles();
       process.exit(1);
     }
     shuttingDown = true;
@@ -128,6 +152,7 @@ function installShutdownHandlers(server: ReturnType<typeof createServer>): void 
     killAllChildren('SIGTERM');
     const graceTimer = setTimeout(() => {
       killAllChildren('SIGKILL');
+      clearChildPidFiles();
       process.exit(0);
     }, GRACE_MS);
     graceTimer.unref();
@@ -136,6 +161,7 @@ function installShutdownHandlers(server: ReturnType<typeof createServer>): void 
       // of sitting on the full grace window.
       if (activeChildCount() === 0) {
         clearTimeout(graceTimer);
+        clearChildPidFiles();
         process.exit(0);
       }
     });
@@ -144,6 +170,43 @@ function installShutdownHandlers(server: ReturnType<typeof createServer>): void 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGHUP', () => shutdown('SIGHUP'));
+}
+
+/**
+ * Last-resort handlers for failures that escape every local try/catch.
+ *
+ * unhandledRejection: a fire-and-forget promise (e.g. `void persistRun(...)`)
+ * rejected with no `.catch`. Almost always non-fatal — log it loudly so the
+ * bug stays visible, then keep serving: tearing down every in-flight run over
+ * one stray rejection would itself orphan the agent CLIs those runs spawned.
+ *
+ * uncaughtException: a throw reached the event loop with nothing to catch it.
+ * Process state is now unreliable, so Node's guidance is to exit rather than
+ * limp on. But exiting bare would leave detached provider CLIs running as
+ * orphans that keep spending API credits — so SIGKILL the child process groups
+ * first, then exit non-zero. The next boot's crash recovery reconciles the
+ * interrupted runs into `failed` history records.
+ */
+function installCrashHandlers(): void {
+  let crashing = false;
+  process.on('unhandledRejection', (reason) => {
+    console.error('unhandledRejection (continuing):', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    // A second fault can re-enter this handler (e.g. EPIPE from the
+    // console.error below on a closed stdout). Guard so the reap runs once;
+    // a re-entrant call just exits. Mirrors `shuttingDown` in the handler above.
+    if (crashing) process.exit(1);
+    crashing = true;
+    console.error('uncaughtException — reaping children and exiting:', err);
+    try {
+      killAllChildren('SIGKILL');
+      clearChildPidFiles();
+    } catch {
+      // Already crashing — nothing more we can usefully do.
+    }
+    process.exit(1);
+  });
 }
 
 /** Best-effort enumeration of non-loopback IPv4 addresses for log output. */

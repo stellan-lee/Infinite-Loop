@@ -12,6 +12,8 @@
 | `INFLOOP_TRIGGERS_DIR` | `<cwd>/triggers` | Where webhook trigger JSON lives |
 | `INFLOOP_RUNS_DIR` | `<cwd>/runs` | Where completed-run records are persisted |
 | `INFLOOP_RUN_HISTORY_LIMIT` | `100` | Max persisted runs per workflow (oldest pruned first) |
+| `INFLOOP_MAX_RUN_NODE_EXECUTIONS` | `10000` | Run-level safety ceiling: max node-execution steps per run before it is aborted and marked failed. Bounds runaway loops, including `infinite: true`. `0` disables. |
+| `INFLOOP_MAX_RUN_DURATION_MS` | `0` (disabled) | Optional run-level wall-clock cap, in milliseconds, checked at each node-step boundary (a single long-running node is not interrupted mid-flight). `0` disables. |
 | `INFLOOP_PROVIDERS_DIR` | `<cwd>/providers` | Where provider manifests live |
 | `INFLOOP_PROVIDER_BIN_<ID>` | _(unset)_ | Override the binary for provider `<ID>` (upper-cased), e.g. `INFLOOP_PROVIDER_BIN_CLAUDE=/opt/claude` |
 | `INFLOOP_CLAUDE_BIN` | `claude` | Legacy override for the `claude` provider only — kept for back-compat |
@@ -53,3 +55,15 @@ INFLOOP_RUNS_DIR=/srv/infinite-loop/runs \
 INFLOOP_TRIGGERS_DIR=/srv/infinite-loop/triggers \
 bun run start
 ```
+
+**Tightening the runaway guard:**
+
+```bash
+# Abort any run that exceeds 2000 node steps or 30 minutes of wall-clock.
+INFLOOP_MAX_RUN_NODE_EXECUTIONS=2000 \
+INFLOOP_MAX_RUN_DURATION_MS=1800000 \
+bun run start
+```
+
+The node ceiling is the deterministic guard against unbounded loops; the
+wall-clock cap is an optional hard stop. See [docs/security.md](./security.md#runaway-protection).

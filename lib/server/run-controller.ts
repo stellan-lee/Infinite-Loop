@@ -25,7 +25,7 @@ import type {
 } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
-import { saveRun } from './run-store';
+import { removeRunMarker, saveRun, writeRunMarker } from './run-store';
 import { resolve as resolveTemplate } from './templating';
 import { RunWorktreesImpl } from './worktree-manager';
 import { releaseRun } from './mcp/output-registry';
@@ -63,6 +63,60 @@ interface ExecutionScope {
 const EVENT_HISTORY_CAP = 5000;
 const PERSIST_EVENT_CAP = 50_000;
 
+/* ─── run-level execution budget ─────────────────────────────────────────────
+ *
+ * A safety ceiling on a single run. The per-loop `maxIterations` cap does not
+ * cover `infinite: true` loops or nested-loop multiplication, and nothing caps
+ * total work across a whole workflow — so an unbounded loop around an Agent
+ * node can spend the user's API budget until a human notices. This budget is
+ * the automatic backstop the manual kill switch isn't.
+ *
+ * `maxNodeExecutions` counts node steps across the entire run — every node
+ * the walk visits, including `start`/`end` and the `loop`/`parallel`/
+ * `subworkflow` container nodes themselves, summed over every loop iteration
+ * and every parallel branch. It is therefore a conservative ceiling, not a
+ * precise count of "real work"; size it with headroom. `0` disables it.
+ *
+ * `maxDurationMs` is an optional wall-clock cap, evaluated at each node-step
+ * boundary — a single long-running node (e.g. an Agent CLI) is not
+ * interrupted mid-flight; the cap trips on the next step. `0` disables it and
+ * is the default: this tool's whole purpose is long-running autonomous runs,
+ * so a tight time cap would kill legitimate work. The node ceiling is the
+ * deterministic guard against the actual runaway class.
+ */
+export interface RunBudget {
+  maxNodeExecutions: number;
+  maxDurationMs: number;
+}
+
+const DEFAULT_MAX_NODE_EXECUTIONS = 10_000;
+const DEFAULT_MAX_DURATION_MS = 0;
+
+function readBudgetEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number.parseInt(raw, 10);
+  // A literal 0 is meaningful — it disables that ceiling. NaN / negative is a
+  // typo, not an intent to disable, so fall back to the default.
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return n;
+}
+
+/** Resolve the run budget from the environment. Called per controller so an
+ *  env change is picked up by the next run without a process restart. */
+export function resolveRunBudget(): RunBudget {
+  return {
+    maxNodeExecutions: readBudgetEnv(
+      'INFLOOP_MAX_RUN_NODE_EXECUTIONS',
+      DEFAULT_MAX_NODE_EXECUTIONS,
+    ),
+    maxDurationMs: readBudgetEnv(
+      'INFLOOP_MAX_RUN_DURATION_MS',
+      DEFAULT_MAX_DURATION_MS,
+    ),
+  };
+}
+
 export type WorkflowLoader = (id: string) => Promise<Workflow>;
 
 export interface RunControllerDeps {
@@ -77,6 +131,10 @@ export interface RunControllerDeps {
   /** Shared slot pool. Optional alongside lockManager for the same reason;
    *  released in the settle path so a never-acquired run cleans up cleanly. */
   slotPool?: SlotPool;
+  /** Run-level safety ceiling. Partial overrides merge over the env-derived
+   *  defaults (`resolveRunBudget`); omitted in production, supplied by tests
+   *  to exercise the guard without running thousands of nodes. */
+  budget?: Partial<RunBudget>;
 }
 
 export class RunController {
@@ -95,6 +153,15 @@ export class RunController {
   private lockManager?: DirLockManager;
   private slotPool?: SlotPool;
 
+  /** Resolved run-level budget (env defaults merged with any deps override). */
+  private readonly budget: RunBudget;
+  /** Node steps taken so far this run — counted against `budget`. */
+  private nodeExecutionCount = 0;
+  /** Wall-clock start, captured in `start()`; used for the duration ceiling. */
+  private runStartedAt = 0;
+  /** Set when a budget ceiling trips; reclassifies the run as failed. */
+  private budgetExceededMessage?: string;
+
   constructor(deps: RunControllerDeps) {
     this.runId = deps.runId;
     this.workflow = deps.workflow;
@@ -102,6 +169,7 @@ export class RunController {
     this.loadWorkflow = deps.loadWorkflow;
     this.lockManager = deps.lockManager;
     this.slotPool = deps.slotPool;
+    this.budget = { ...resolveRunBudget(), ...deps.budget };
     this.abort = new AbortController();
     this.worktrees = new RunWorktreesImpl(this.runId);
     this.snapshot = {
@@ -182,6 +250,7 @@ export class RunController {
   async start(opts?: { resolvedInputs?: ResolvedInputs }): Promise<void> {
     const workflow = this.workflow;
     const startedAt = Date.now();
+    this.runStartedAt = startedAt;
     const seedScope: Scope = {};
     if (workflow.globals && typeof workflow.globals === 'object') {
       seedScope.globals = { ...workflow.globals };
@@ -198,11 +267,25 @@ export class RunController {
       startedAt,
     };
 
+    // Persist a crash-recovery marker: if the server dies before this run
+    // settles, the next boot turns this marker into a `failed` history record
+    // (see crash-recovery.ts). Removed in `persistRun` once the run is safely
+    // saved. Synchronous + best-effort — it never fails the run.
+    writeRunMarker({
+      runId: this.runId,
+      workflowId: workflow.id,
+      workflowName: workflow.name,
+      startedAt,
+      serverPid: process.pid,
+    });
+
     // Reset both buffers at the start of a new run so a refresh doesn't
     // surface events from a previous run.
     this.recentEvents = [];
     this.runEventLog = [];
     this.runEventLogTruncated = false;
+    this.nodeExecutionCount = 0;
+    this.budgetExceededMessage = undefined;
     const captureUnsub = eventBus.subscribe((ev) => {
       this.recentEvents.push(ev);
       if (this.recentEvents.length > EVENT_HISTORY_CAP) {
@@ -246,6 +329,15 @@ export class RunController {
         this.emit({ type: 'error', message: errorMessage });
         finalStatus = 'failed';
       }
+    }
+
+    // A tripped run-level budget aborts the run via `this.abort`, which the
+    // paths above report as a user cancellation. Reclassify it as a failure
+    // carrying the budget message so the persisted record names the real
+    // cause rather than blaming the user.
+    if (this.budgetExceededMessage) {
+      finalStatus = 'failed';
+      errorMessage = this.budgetExceededMessage;
     }
 
     let finishedAt = Date.now();
@@ -345,6 +437,10 @@ export class RunController {
         events: args.events,
         truncated: args.truncated || undefined,
       });
+      // The run is safely in history — drop the crash-recovery marker. If
+      // saveRun threw, the marker is deliberately kept so the next boot
+      // reconciles this run instead of losing it.
+      await removeRunMarker(args.runId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[engine] saveRun failed:', message);
@@ -379,6 +475,49 @@ export class RunController {
   }
 
   /**
+   * Count one node-execution step against the run-level budget. Returns true
+   * — and trips the run — when a ceiling is breached, so the caller bails out
+   * of its walk immediately. Called exactly once per node step from the walk
+   * loop. The single shared counter on `this` makes it a true run-level
+   * ceiling: loop iterations, parallel branches and subworkflow nodes all
+   * accumulate against it.
+   */
+  private tickBudget(): boolean {
+    if (this.budgetExceededMessage) return true;
+    this.nodeExecutionCount += 1;
+    const { maxNodeExecutions, maxDurationMs } = this.budget;
+    if (maxNodeExecutions > 0 && this.nodeExecutionCount > maxNodeExecutions) {
+      this.tripBudget(
+        `run aborted: node-execution budget exceeded (${maxNodeExecutions}). ` +
+          'A loop is likely running away — add a maxIterations cap, or raise ' +
+          'INFLOOP_MAX_RUN_NODE_EXECUTIONS.',
+      );
+      return true;
+    }
+    if (maxDurationMs > 0 && Date.now() - this.runStartedAt > maxDurationMs) {
+      this.tripBudget(
+        `run aborted: wall-clock budget exceeded (${maxDurationMs}ms). ` +
+          'Raise or disable INFLOOP_MAX_RUN_DURATION_MS.',
+      );
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Record a budget breach and abort the run. The abort cascades to every
+   * live walk (parallel-branch signals chain off `this.abort`); `start()`
+   * reads `budgetExceededMessage` after settle to reclassify the run as
+   * failed rather than cancelled. Idempotent — only the first breach sticks.
+   */
+  private tripBudget(message: string): void {
+    if (this.budgetExceededMessage) return;
+    this.budgetExceededMessage = message;
+    this.emit({ type: 'error', message });
+    this.abort.abort();
+  }
+
+  /**
    * Walk forward from `node` until reaching an `end` node, exhausting all
    * outgoing edges of the active branch, or hitting a settle condition.
    * Returns the run's terminal status.
@@ -394,7 +533,10 @@ export class RunController {
     const allNodes = this.nodesById(workflow);
 
     while (current) {
-      if (signal.aborted) return 'cancelled';
+      // `signal.aborted` short-circuits so a node step is NOT counted once a
+      // run is already settling; otherwise `tickBudget` counts this step and
+      // trips the run if a ceiling is now breached.
+      if (signal.aborted || this.tickBudget()) return 'cancelled';
 
       this.snapshot.currentNodeId = this.namespaced(current.id, exec);
 
@@ -476,6 +618,8 @@ export class RunController {
   ): Promise<{ terminal: boolean; status?: Exclude<RunStatus, 'idle' | 'running'> }> {
     const cfg = loopNode.config as LoopConfig;
     const max = cfg.maxIterations ?? 100;
+    // `infinite: true` removes the per-loop cap; the run-level budget
+    // (see `tickBudget`) is the backstop that still bounds the whole run.
     const infinite = cfg.infinite === true;
     const children = loopNode.children ?? [];
     if (children.length === 0) return { terminal: false };

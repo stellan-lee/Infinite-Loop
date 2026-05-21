@@ -38,7 +38,9 @@ mock.module('@/lib/server/providers/runner', () => ({
   runProvider: (_manifest: unknown, opts: RunnerOptions) => runnerImpl(opts),
 }));
 
-const { agentExecutor } = await import('@/lib/server/nodes/agent');
+const { agentExecutor, DEFAULT_AGENT_TIMEOUT_MS } = await import(
+  '@/lib/server/nodes/agent'
+);
 const { _resetProviderCache } = await import('@/lib/server/providers/loader');
 const { setBoundPort, __resetBoundPortForTests } = await import('@/lib/server/runtime');
 const { __resetRegistryForTests } = await import('@/lib/server/mcp/output-registry');
@@ -335,5 +337,46 @@ describe('agentExecutor SetOutput MCP injection', () => {
     );
     expect(warnings.some((w) => w.includes('[mcp-output]') && w.includes('HTTP transport'))).toBe(true);
     expect(lastRunnerOpts?.mcpConfigPath).toBeUndefined();
+  });
+});
+
+describe('agentExecutor timeout wiring', () => {
+  // Guards the actual bug fix: agent.ts must route cfg.timeoutMs through
+  // resolveAgentTimeout before handing it to runProvider. A revert to the
+  // raw `cfg.timeoutMs` would let a missing/zero value reach the runner's
+  // `if (opts.timeoutMs > 0)` gate and arm no timeout at all.
+  it('forwards a config-provided positive timeout to runProvider unchanged', async () => {
+    await agentExecutor.execute(
+      ctx({
+        providerId: 'claude',
+        prompt: 'p',
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+      }),
+    );
+    expect(lastRunnerOpts!.timeoutMs).toBe(5000);
+  });
+
+  it('substitutes the default timeout when config timeoutMs is 0', async () => {
+    await agentExecutor.execute(
+      ctx({
+        providerId: 'claude',
+        prompt: 'p',
+        cwd: process.cwd(),
+        timeoutMs: 0,
+      }),
+    );
+    expect(lastRunnerOpts!.timeoutMs).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  });
+
+  it('substitutes the default timeout when config has no timeoutMs', async () => {
+    await agentExecutor.execute(
+      ctx({
+        providerId: 'claude',
+        prompt: 'p',
+        cwd: process.cwd(),
+      }),
+    );
+    expect(lastRunnerOpts!.timeoutMs).toBe(DEFAULT_AGENT_TIMEOUT_MS);
   });
 });

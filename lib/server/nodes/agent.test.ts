@@ -6,7 +6,11 @@ import { spawnSync } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { agentExecutor } from './agent';
+import {
+  agentExecutor,
+  DEFAULT_AGENT_TIMEOUT_MS,
+  resolveAgentTimeout,
+} from './agent';
 import { _resetProviderCache } from '../providers/loader';
 import { RunWorktreesImpl } from '../worktree-manager';
 import type { NodeExecutorContext } from '../../shared/workflow';
@@ -203,5 +207,44 @@ describe('agentExecutor', () => {
         delete process.env.INFLOOP_PROVIDER_BIN_CLAUDE;
       }
     });
+  });
+});
+
+describe('resolveAgentTimeout', () => {
+  it('honors a finite, strictly-positive timeout unchanged', () => {
+    expect(resolveAgentTimeout(5000)).toBe(5000);
+    expect(resolveAgentTimeout(1)).toBe(1);
+    expect(resolveAgentTimeout(DEFAULT_AGENT_TIMEOUT_MS)).toBe(
+      DEFAULT_AGENT_TIMEOUT_MS,
+    );
+  });
+
+  it('falls back to the default when timeoutMs is missing', () => {
+    expect(resolveAgentTimeout(undefined)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  });
+
+  it('falls back to the default for 0 — the Agent node has no disable contract', () => {
+    expect(resolveAgentTimeout(0)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  });
+
+  it('falls back to the default for negative values', () => {
+    expect(resolveAgentTimeout(-1)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+    expect(resolveAgentTimeout(-5000)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  });
+
+  it('falls back to the default for NaN and non-finite values', () => {
+    expect(resolveAgentTimeout(NaN)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+    expect(resolveAgentTimeout(Infinity)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+    expect(resolveAgentTimeout(-Infinity)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  });
+
+  it('falls back to the default for non-number inputs', () => {
+    expect(resolveAgentTimeout('5000')).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+    expect(resolveAgentTimeout(null)).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+    expect(resolveAgentTimeout({})).toBe(DEFAULT_AGENT_TIMEOUT_MS);
+  });
+
+  it('default is 30 minutes, matching the UI new-node default', () => {
+    expect(DEFAULT_AGENT_TIMEOUT_MS).toBe(30 * 60 * 1000);
   });
 });

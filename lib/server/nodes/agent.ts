@@ -17,6 +17,39 @@ import {
 } from '../mcp/output-registry';
 import { getBoundPort } from '../runtime';
 
+/** Backstop timeout (ms) applied when an Agent node's config carries no
+ * usable `timeoutMs`. Mirrors the UI's new-node default (see
+ * app/components/canvas/Canvas.tsx). Agent runs (`claude --print`, Hermes
+ * HTTP calls, …) routinely take minutes — this guards against an indefinite
+ * hang, it is not a tight SLA. */
+export const DEFAULT_AGENT_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * Resolve the effective per-invocation timeout for an Agent node.
+ *
+ * Only a finite, strictly-positive number is honored; `undefined`, `0`,
+ * negative, `NaN` and `Infinity` all fall back to DEFAULT_AGENT_TIMEOUT_MS.
+ * `AgentConfig.timeoutMs` is typed `number` but nothing enforces it —
+ * workflow-store.ts does not validate it, the v5→v6 node migration never
+ * injects it, and the MCP/API surfaces accept raw JSON — so the input is
+ * genuinely `unknown` at runtime.
+ *
+ * Unlike the Script node (whose config documents "0 disables the timer"),
+ * the Agent node has no disable contract: a backstop must always be armed.
+ * runProvider only schedules its timer `if (opts.timeoutMs > 0)`, so a
+ * missing/zero value would otherwise leave a hung CLI running forever —
+ * never releasing its directory lock or slot-pool slot, wedging the engine.
+ *
+ * Exported for unit testing.
+ */
+export function resolveAgentTimeout(timeoutMs: unknown): number {
+  return typeof timeoutMs === 'number' &&
+    Number.isFinite(timeoutMs) &&
+    timeoutMs > 0
+    ? timeoutMs
+    : DEFAULT_AGENT_TIMEOUT_MS;
+}
+
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.length > 0;
 }
@@ -238,7 +271,7 @@ export const agentExecutor: NodeExecutor = {
       const result = await runProvider(provider, {
         prompt: cfg.prompt,
         cwd: spawnCwd,
-        timeoutMs: cfg.timeoutMs,
+        timeoutMs: resolveAgentTimeout(cfg.timeoutMs),
         signal: ctx.signal,
         onStdoutChunk: ctx.emitStdoutChunk,
         profile: cfg.profile,

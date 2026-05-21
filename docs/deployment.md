@@ -130,6 +130,51 @@ Note: a restart policy reacts to the process *exiting*, not to an `unhealthy`
 health check. A hung-but-alive process shows `unhealthy` in `docker ps` but
 is not auto-killed — wire that signal to your orchestrator if you need it.
 
+## Monitoring
+
+`/api/health` answers liveness and readiness; it does not answer *how the
+workload is doing*. For that, scrape **`GET /api/metrics`** — Prometheus text
+exposition format, ready to point Grafana or Alertmanager at.
+
+Unlike `/api/health`, this endpoint is **authenticated** — run counts, cost and
+queue depth are operational detail and a reconnaissance signal. Scrape it with
+the API token:
+
+```bash
+curl -H "Authorization: Bearer $INFLOOP_API_TOKEN" http://localhost:3000/api/metrics
+```
+
+A Prometheus scrape config carries the token in `authorization`:
+
+```yaml
+scrape_configs:
+  - job_name: infinite-loop
+    authorization:
+      credentials: <INFLOOP_API_TOKEN>
+    static_configs:
+      - targets: ['localhost:3000']
+```
+
+What it exposes (all metrics are prefixed `infloop_`):
+
+| Metric | Type | Use |
+|---|---|---|
+| `runs_total{status}` | counter | Run success/failure rate, by terminal status. |
+| `run_duration_seconds` | histogram | Run-duration distribution drifting up. |
+| `run_cost_usd_total` | counter | Cumulative provider-reported spend. |
+| `node_executions_total` | counter | Workflow throughput. |
+| `queue_enqueued_total` / `queue_dropped_total{reason}` | counter | Trigger-queue intake vs. drops. |
+| `webhook_requests_total{outcome}` | counter | Webhook ingress, by coarse outcome. |
+| `runs_active`, `queue_depth` | gauge | Live load — alert before `queue_depth` nears the cap of 100. |
+| `slot_pool_in_use` / `slot_pool_capacity` / `slot_pool_waiting` | gauge | Concurrency saturation. |
+| `process_uptime_seconds` | gauge | Catches restarts. |
+
+Counters are process-lifetime and reset to 0 on restart. One known gap: a run
+killed by a hard process crash is reconstructed as `failed` at the next boot
+*without* passing through the run settle path, so it is **not** counted by
+`runs_total` / `run_duration_seconds` — alert on `process_uptime_seconds`
+resets to catch crashes.
+
 ## Known limitation — agent providers are not in the image
 
 The image contains the **orchestrator** and the Bun runtime. It does **not**

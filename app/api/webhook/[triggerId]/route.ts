@@ -10,6 +10,7 @@ import { getWorkflow } from '@/lib/server/workflow-store';
 import { verifySignature } from '@/lib/server/webhook-signature';
 import { recordAudit } from '@/lib/server/audit-log';
 import { webhookRateLimiter } from '@/lib/server/rate-limiter';
+import { metrics, type WebhookOutcome } from '@/lib/server/metrics';
 import { createLogger } from '@/lib/server/logger';
 import type { TriggerPredicate, WebhookTrigger } from '@/lib/shared/trigger';
 import type { Scope, Workflow } from '@/lib/shared/workflow';
@@ -30,7 +31,46 @@ function notFound() {
   return NextResponse.json({ error: 'not-found' }, { status: 404 });
 }
 
-export async function POST(req: Request, { params }: RouteParams): Promise<Response> {
+/**
+ * Map an HTTP status to a coarse webhook metric outcome. Range-based, so a
+ * status added at a future return point is still classified without editing
+ * this function:
+ *   2xx (≠204)  → accepted   (202 queued)
+ *   204         → ignored    (ping / wrong event type / predicate no-match)
+ *   404         → not_found  (unknown or disabled trigger / plugin / workflow)
+ *   503         → rejected   (queue full — expected back-pressure, not a fault)
+ *   other 4xx   → rejected   (bad signature, invalid inputs, rate-limited, …)
+ *   other 5xx   → error      (misconfiguration or an unexpected failure)
+ */
+function outcomeFromStatus(status: number): WebhookOutcome {
+  if (status >= 200 && status < 300) return status === 204 ? 'ignored' : 'accepted';
+  if (status === 404) return 'not_found';
+  if (status === 503) return 'rejected';
+  if (status >= 400 && status < 500) return 'rejected';
+  return 'error';
+}
+
+/**
+ * Webhook ingress. A thin wrapper over `handleWebhook` whose only job is to
+ * record one `infloop_webhook_requests_total` sample per request — the inner
+ * handler has ~10 return points, so instrumenting the single HTTP status it
+ * resolves to is both simpler and exhaustive. An unexpected throw (which
+ * Next.js turns into a 500) is recorded as `error` before being rethrown so
+ * the framework's error handling still applies.
+ */
+export async function POST(req: Request, ctx: RouteParams): Promise<Response> {
+  let res: Response;
+  try {
+    res = await handleWebhook(req, ctx);
+  } catch (err) {
+    metrics.recordWebhookRequest('error');
+    throw err;
+  }
+  metrics.recordWebhookRequest(outcomeFromStatus(res.status));
+  return res;
+}
+
+async function handleWebhook(req: Request, { params }: RouteParams): Promise<Response> {
   const { triggerId } = await params;
   // Set when a trigger with `verifyOptional` accepts an unsigned request —
   // recorded on the eventual `webhook/accepted` audit entry.

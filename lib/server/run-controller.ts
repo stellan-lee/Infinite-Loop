@@ -27,6 +27,7 @@ import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
 import { removeRunMarker, saveRun, writeRunMarker } from './run-store';
 import { recordAudit } from './audit-log';
+import { metrics } from './metrics';
 import { resolve as resolveTemplate } from './templating';
 import { RunWorktreesImpl } from './worktree-manager';
 import { releaseRun } from './mcp/output-registry';
@@ -454,6 +455,20 @@ export class RunController {
     const eventsForPersist = this.runEventLog.slice();
     const truncatedForPersist = this.runEventLogTruncated;
     const scopeForPersist = this.snapshot.scope;
+    const costUsdForPersist = this.runCostUsd;
+    const nodeCountForPersist = this.nodeExecutionCount;
+
+    // Fold this settled run into the process-lifetime metrics counters. The
+    // `run_finished` event emitted above carries the status but not the
+    // duration or cost, so this is an explicit call rather than a bus
+    // subscription. Synchronous and in-memory; `/api/metrics` exposes the
+    // aggregate.
+    metrics.recordRunSettled({
+      status: finalStatus,
+      durationMs: finishedAt - startedAt,
+      costUsd: costUsdForPersist,
+      nodeCount: nodeCountForPersist,
+    });
 
     void this.persistRun({
       runId: this.runId,
@@ -465,6 +480,8 @@ export class RunController {
       events: eventsForPersist,
       truncated: truncatedForPersist,
       scope: scopeForPersist,
+      costUsd: costUsdForPersist,
+      nodeCount: nodeCountForPersist,
     });
   }
 
@@ -478,6 +495,8 @@ export class RunController {
     events: WorkflowEvent[];
     truncated: boolean;
     scope: Scope;
+    costUsd: number;
+    nodeCount: number;
   }): Promise<void> {
     // Audit the run's settle independently of the history write below — the
     // audit record must survive even if `saveRun` fails. `cancelled` is
@@ -514,6 +533,8 @@ export class RunController {
         errorMessage: args.errorMessage,
         events: args.events,
         truncated: args.truncated || undefined,
+        nodeCount: args.nodeCount,
+        costUsd: args.costUsd,
       });
       // The run is safely in history — drop the crash-recovery marker. If
       // saveRun threw, the marker is deliberately kept so the next boot

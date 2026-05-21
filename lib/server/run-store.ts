@@ -44,6 +44,8 @@ function summarize(r: RunRecord): RunSummary {
     errorMessage: r.errorMessage,
     eventCount: r.events.length,
     truncated: r.truncated,
+    nodeCount: r.nodeCount,
+    costUsd: r.costUsd,
   };
 }
 

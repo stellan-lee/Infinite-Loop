@@ -604,6 +604,15 @@ export interface RunRecord {
    * persistence cap (e.g. an infinite loop with chatty stdout). The events
    * array still ends at the cap; older events are dropped first. */
   truncated?: boolean;
+  /** Total node-execution steps the run took — RunController's run-level
+   * budget counter at settle. Optional: absent on records written before
+   * this field existed. */
+  nodeCount?: number;
+  /** Cumulative provider-reported cost of the run, in USD. Only Agent nodes
+   * backed by a cost-reporting provider (currently the `claude` CLI)
+   * contribute; `0` for a run that incurred none. Optional: absent on
+   * records written before this field existed. */
+  costUsd?: number;
 }
 
 /** Lightweight projection used by list endpoints / UI menus. */
@@ -618,6 +627,11 @@ export interface RunSummary {
   errorMessage?: string;
   eventCount: number;
   truncated?: boolean;
+  /** See `RunRecord.nodeCount`. Carried through so list views can surface it
+   * without fetching each full record. Absent on pre-existing records. */
+  nodeCount?: number;
+  /** See `RunRecord.costUsd`. Absent on pre-existing records. */
+  costUsd?: number;
 }
 
 /* ─── node executor contract ──────────────────────────────────────────────── */

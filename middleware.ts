@@ -27,6 +27,9 @@ import { requireAuth } from '@/lib/server/auth';
  *                        credential (external senders can't add auth headers).
  *  - `/api/mcp/output` — SetOutput MCP server; authenticated by a separate
  *                        per-run token, not the global one (see that route).
+ *  - `/api/health`     — unauthenticated liveness/readiness probe; the
+ *                        payload (status, version, uptime) exposes nothing
+ *                        sensitive.
  *
  * NOTE: the `/api/webhook/` match is a prefix — anything added under
  * `app/api/webhook/` inherits this exemption. Keep new token-authed routes
@@ -37,6 +40,7 @@ function isExempt(pathname: string): boolean {
     pathname === '/login' ||
     pathname === '/api/auth' ||
     pathname === '/api/mcp/output' ||
+    pathname === '/api/health' ||
     pathname.startsWith('/api/webhook/')
   );
 }

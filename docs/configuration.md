@@ -20,6 +20,31 @@
 | `INFLOOP_PYTHON_BIN` | `python3` | Interpreter for Script nodes with `language: py` |
 | `INFLOOP_BUN_BIN` | `bun` | Interpreter for Script nodes with `language: ts` |
 | `INFLOOP_WEBHOOK_PLUGINS_DIR` | `<cwd>/webhook-plugins` | Where webhook plugin manifests live |
+| `INFLOOP_LOG_LEVEL` | `info` | Minimum level for structured server logs (`debug`, `info`, `warn`, `error`) |
+
+## Health & observability
+
+`GET /api/health` is an unauthenticated liveness/readiness probe — it works
+without a token even when `INFLOOP_API_TOKEN` is set, and also serves as the
+version endpoint. It returns the running version, process uptime, and a
+timestamp:
+
+```json
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "uptimeSeconds": 42,
+  "timestamp": "2026-05-21T00:00:00.000Z"
+}
+```
+
+Live workload telemetry (run / child-process counts) is deliberately kept
+off this endpoint — it answers unauthenticated, so activity counts would be
+a reconnaissance signal in token-gated network mode.
+
+Server-side diagnostics are emitted as one JSON object per line (`ts`,
+`level`, `scope`, `msg`, plus call-specific fields) so they pipe cleanly into
+a log aggregator. Raise or lower verbosity with `INFLOOP_LOG_LEVEL`.
 
 ## Common recipes
 

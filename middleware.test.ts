@@ -121,6 +121,13 @@ describe('middleware — authed mode, exempt API surfaces', () => {
     expect(passedThrough(call('/api/mcp/output'))).toBe(true);
   });
 
+  it('never gates /api/health (unauthenticated liveness probe)', () => {
+    // Regression guard: gating this would 401 the health/version probe
+    // exactly in token-gated headless mode, where monitoring needs it most.
+    process.env.INFLOOP_API_TOKEN = TOKEN;
+    expect(passedThrough(call('/api/health'))).toBe(true);
+  });
+
   it('still gates /api/webhook-plugins — NOT part of the webhook exemption', () => {
     process.env.INFLOOP_API_TOKEN = TOKEN;
     expect(call('/api/webhook-plugins').status).toBe(401);

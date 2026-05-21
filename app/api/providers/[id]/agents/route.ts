@@ -5,6 +5,9 @@ import {
   listCliAgents,
   type CliAgent,
 } from '@/lib/server/providers/list-cli-agents';
+import { createLogger } from '@/lib/server/logger';
+
+const log = createLogger('providers');
 
 interface AgentsResponse {
   agents: CliAgent[];
@@ -64,10 +67,11 @@ export async function GET(
   } catch (err) {
     // Log the detail server-side; return a generic reason to the client so
     // we never leak filesystem paths or stderr.
-    console.warn(
-      `[providers] agents probe failed for "${id}" in cwd=${cwd ?? '(server cwd)'}:`,
-      (err as Error).message,
-    );
+    log.warn('agents probe failed', {
+      providerId: id,
+      cwd: cwd ?? '(server cwd)',
+      err,
+    });
     const resp: AgentsResponse = {
       agents: [],
       cwd,

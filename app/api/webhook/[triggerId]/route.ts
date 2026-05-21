@@ -8,8 +8,11 @@ import { resolve as resolveTemplate } from '@/lib/server/templating';
 import { resolveRunInputs, WorkflowInputError } from '@/lib/shared/resolve-run-inputs';
 import { getWorkflow } from '@/lib/server/workflow-store';
 import { verifySignature } from '@/lib/server/webhook-signature';
+import { createLogger } from '@/lib/server/logger';
 import type { TriggerPredicate, WebhookTrigger } from '@/lib/shared/trigger';
 import type { Scope, Workflow } from '@/lib/shared/workflow';
+
+const log = createLogger('webhook');
 
 // NOTE: This route deliberately bypasses INFLOOP_API_TOKEN. The unguessable
 // `triggerId` in the path is the auth credential. Every other route uses
@@ -70,18 +73,20 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
         headerValue: req.headers.get(plugin.signature.header),
       });
       if (!verdict.ok) {
-        console.error(
-          `[webhook] signature verification failed for trigger ${hit.trigger.id}: ${verdict.reason}`,
-        );
+        log.error('signature verification failed', {
+          triggerId: hit.trigger.id,
+          reason: verdict.reason,
+        });
         return NextResponse.json({ error: 'bad-signature' }, { status: 401 });
       }
     } else if (hit.trigger.verifyOptional === true) {
-      console.warn(
-        `[webhook] verifyOptional=true on trigger ${hit.trigger.id} — accepting unsigned request`,
-      );
+      log.warn('verifyOptional=true — accepting unsigned request', {
+        triggerId: hit.trigger.id,
+      });
     } else {
-      console.error(
-        `[webhook] trigger ${hit.trigger.id} requires a secret (plugin "${plugin.id}" declares signing) and has neither secret nor verifyOptional set`,
+      log.error(
+        'trigger requires a secret (plugin declares signing) but has neither secret nor verifyOptional set',
+        { triggerId: hit.trigger.id, pluginId: plugin.id },
       );
       return NextResponse.json({ error: 'trigger-misconfigured' }, { status: 500 });
     }
@@ -108,7 +113,7 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
   try {
     suppliedInputs = resolveTriggerInputs(hit.trigger, scope);
   } catch (err) {
-    console.error('[webhook] inputs resolve failed:', err);
+    log.error('inputs resolve failed', { err });
     return NextResponse.json({ error: 'inputs-template-failed' }, { status: 500 });
   }
 

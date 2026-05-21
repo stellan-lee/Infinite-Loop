@@ -1,6 +1,9 @@
 import type { Workflow } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
+import { createLogger } from './logger';
+
+const log = createLogger('trigger-queue');
 
 export interface QueuedRun {
   queueId: string;
@@ -125,7 +128,7 @@ export class TriggerQueue {
           });
           if (this.touchLastFired) {
             try { await this.touchLastFired(head.triggerId); }
-            catch (err) { console.error('[trigger-queue] touchLastFired failed:', err); }
+            catch (err) { log.error('touchLastFired failed', { err }); }
           }
         } catch (err) {
           eventBus.emit({
@@ -134,7 +137,7 @@ export class TriggerQueue {
             triggerId: head.triggerId,
             reason: 'engine-start-failed',
           });
-          console.error('[trigger-queue] engineStart failed:', err);
+          log.error('engineStart failed', { err });
         }
       }
     } finally {

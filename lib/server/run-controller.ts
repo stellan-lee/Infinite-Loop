@@ -29,6 +29,7 @@ import { removeRunMarker, saveRun, writeRunMarker } from './run-store';
 import { resolve as resolveTemplate } from './templating';
 import { RunWorktreesImpl } from './worktree-manager';
 import { releaseRun } from './mcp/output-registry';
+import { createLogger } from './logger';
 import type { DirLockManager, LockWaitObserver } from './dir-lock-manager';
 import type { SlotPool } from './slot-pool';
 import {
@@ -38,6 +39,8 @@ import {
   snapshotScope,
   successHandleFor,
 } from './workflow-engine-helpers';
+
+const log = createLogger('run-controller');
 
 const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   agent: ['prompt', 'cwd', 'worktreeRef'],
@@ -443,7 +446,7 @@ export class RunController {
       await removeRunMarker(args.runId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error('[engine] saveRun failed:', message);
+      log.error('saveRun failed', { err });
       this.emit({
         type: 'error',
         message: `history not saved: ${message}`,

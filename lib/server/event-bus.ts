@@ -1,6 +1,9 @@
 import type { WorkflowEvent } from '../shared/workflow';
+import { createLogger } from './logger';
 
 type Subscriber = (event: WorkflowEvent) => void;
+
+const log = createLogger('event-bus');
 
 class EventBus {
   private subscribers = new Set<Subscriber>();
@@ -17,7 +20,7 @@ class EventBus {
       try {
         sub(event);
       } catch (err) {
-        console.error('event-bus subscriber threw', err);
+        log.error('subscriber threw', { err });
       }
     }
   }

@@ -8,8 +8,11 @@ import { eventBus } from './event-bus';
 // regardless of which entry point (MCP route, webhook, /api/triggers, …)
 // happens to load the queue first.
 import './queue-history';
+import { createLogger } from './logger';
 import type { Workflow } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
+
+const log = createLogger('trigger-queue');
 
 /**
  * Synchronous start: returns the runId immediately. Multi-run safe — there
@@ -32,7 +35,7 @@ export function engineStartAdapter(
   // through events; engine.getRun(runId).snapshot.errorMessage carries any
   // failure detail.
   completion.catch((err) => {
-    console.error('[trigger-queue] run completion rejected:', err);
+    log.error('run completion rejected', { err });
   });
   return Promise.resolve(runId);
 }

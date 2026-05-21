@@ -63,7 +63,7 @@ Restart Infinite Loop. The plugin appears in the trigger form's plugin dropdown.
 
 ## Behavior reference
 
-- Match succeeds → `202 { queued, queueId, position }`. Run is queued in memory.
+- Match succeeds → `202 { queued, queueId, position }`. The run is queued; the queue is persisted to disk, so a restart never drops it.
 - Match fails or plugin event-header mismatches → `204 No Content`.
 - Unknown / disabled trigger id → `404 not-found`.
 - Body > 1 MiB → `413 payload-too-large`.
@@ -77,7 +77,6 @@ The unguessable `triggerId` in the URL is the credential. There's no HMAC verifi
 
 ## Limitations
 
-- Queued runs are lost on process restart (the webhook caller already received `202`; upstream services own retry).
 - No service-specific signature verification (GitHub HMAC, Stripe signing) yet — planned as a follow-up.
 
 ## Storage

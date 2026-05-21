@@ -1,12 +1,19 @@
 # Concurrent runs
 
+> **Status: implemented.** This page is the design that shipped. The engine is
+> now a registry of `RunController`s coordinated by a `DirLockManager` and a
+> `SlotPool` (`lib/server/workflow-engine.ts`, `lib/server/dir-lock-manager.ts`).
+> It is kept as a reference for the concurrency model and its trade-offs. The
+> "Problem" section below describes the **pre-change** single-run engine for
+> context — it no longer reflects current behaviour.
+
 Design for running multiple workflows simultaneously, with a directory-scoped lock to prevent two runs from stomping on the same working tree.
 
 ## Problem
 
-The engine is a process-global singleton with one in-flight run at a time. `start()` throws `"a run is already active"` if status is `running` (`lib/server/workflow-engine.ts:126-128`). The `TriggerQueue` exists solely to serialize fan-in against that singleton — its drain loop catches the busy error and re-prepends the head (`lib/server/trigger-queue.ts:128-131`).
+Before this work the engine was a process-global singleton with one in-flight run at a time: `start()` threw `"a run is already active"` while a run was `running`, and the `TriggerQueue` existed solely to serialize fan-in against that singleton — its drain loop caught the busy error and re-prepended the head.
 
-The real hazard preventing concurrent runs is not CPU — it is that two Agent nodes pointed at the same `cwd` will race on the same filesystem and git state. A coarse "one run at a time" rule is the existing workaround.
+The real hazard preventing concurrent runs is not CPU — it is that two Agent nodes pointed at the same `cwd` will race on the same filesystem and git state. A coarse "one run at a time" rule was the existing workaround.
 
 ## Goals
 

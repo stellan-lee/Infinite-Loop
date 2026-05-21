@@ -80,7 +80,7 @@ describe('engineStartAdapter', () => {
     const engine = new WorkflowEngine({ start: exec });
 
     expect(engine.getState().status).toBe('idle');
-    const runId = await engineStartAdapter(engine, wf, { resolvedInputs: {} });
+    const runId = await engineStartAdapter(engine, wf, { resolvedInputs: {}, correlationId: 'cid-test' });
 
     expect(typeof runId).toBe('string');
     expect(runId.length).toBeGreaterThan(0);
@@ -105,7 +105,7 @@ describe('engineStartAdapter', () => {
 
     // Stage 5: the adapter no longer pre-checks busy. A second start returns
     // a NEW runId synchronously and both runs are alive concurrently.
-    const secondRunId = await engineStartAdapter(engine, wf, { resolvedInputs: {} });
+    const secondRunId = await engineStartAdapter(engine, wf, { resolvedInputs: {}, correlationId: 'cid-test' });
     expect(secondRunId).toBeTruthy();
     expect(secondRunId).not.toBe(firstRunId);
     expect(engine.list().length).toBe(2);
@@ -123,7 +123,12 @@ describe('engineStartAdapter', () => {
 
     let thrown: (Error & { code?: string }) | undefined;
     try {
-      await engineStartAdapter(engine, wf, { resolvedInputs: {} }, budget);
+      await engineStartAdapter(
+        engine,
+        wf,
+        { resolvedInputs: {}, correlationId: 'cid-test' },
+        budget,
+      );
     } catch (err) {
       thrown = err as Error & { code?: string };
     }
@@ -144,7 +149,7 @@ describe('engineStartAdapter', () => {
     const runId = await engineStartAdapter(
       engine,
       wf,
-      { resolvedInputs: {} },
+      { resolvedInputs: {}, correlationId: 'cid-test' },
       budget,
     );
     expect(typeof runId).toBe('string');

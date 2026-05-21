@@ -56,6 +56,7 @@ import { listPersistedQueuedRuns } from './queue-store';
 import type { QueuedRun, QueueRestoreTarget } from './trigger-queue';
 import { createLogger } from './logger';
 import { recordAudit } from './audit-log';
+import { newCorrelationId } from './correlation';
 import { metrics } from './metrics';
 
 const log = createLogger('crash-recovery');
@@ -234,6 +235,9 @@ export async function reconcileInterruptedRuns(): Promise<void> {
         errorMessage:
           'run interrupted: the server stopped or crashed before this run finished',
         events: [],
+        // Carry the trace link onto the synthesized failure record. Absent on
+        // markers written before the correlation-id field existed.
+        correlationId: m.correlationId,
       });
       reconciled++;
       // Fold this crash-interrupted run into the process-lifetime metrics.
@@ -250,6 +254,7 @@ export async function reconcileInterruptedRuns(): Promise<void> {
         outcome: 'failure',
         actor: 'system',
         target: m.runId,
+        correlationId: m.correlationId,
         detail: {
           workflowId: m.workflowId,
           status: 'failed',
@@ -307,6 +312,12 @@ export function reconcileQueuedRuns(queue: QueueRestoreTarget): void {
       workflow: item.workflow,
       resolvedInputs: item.resolvedInputs,
       triggerId: item.triggerId,
+      // Backfill is load-bearing for type soundness: `QueuedRun.correlationId`
+      // is a required `string`, but `isPersistedQueuedRun` does not check it,
+      // so a file written before this field existed reaches here with it
+      // `undefined`. Minting one here keeps the trace alive (a fresh id, since
+      // the original is unrecoverable) and keeps the required type honest.
+      correlationId: item.correlationId ?? newCorrelationId(),
       receivedAt: item.receivedAt,
     });
   }

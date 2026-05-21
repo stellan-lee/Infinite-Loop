@@ -34,6 +34,7 @@ import { resolve as resolveTemplate } from './templating';
 import { RunWorktreesImpl } from './worktree-manager';
 import { releaseRun } from './mcp/output-registry';
 import { createLogger } from './logger';
+import { newCorrelationId } from './correlation';
 import type { DirLockManager, LockWaitObserver } from './dir-lock-manager';
 import type { SlotPool } from './slot-pool';
 import {
@@ -193,6 +194,11 @@ export interface RunControllerDeps {
   workflow: Workflow;
   executors: Record<string, NodeExecutor>;
   loadWorkflow: WorkflowLoader;
+  /** Correlation id of the ingress event that started this run. Threaded onto
+   *  every emitted event, the audit entries, the run marker, and the persisted
+   *  record. Optional: a controller built without one (unit tests, internal
+   *  callers) mints its own so the field is never `undefined`. */
+  correlationId?: string;
   /** Shared lock manager. Optional so unit tests can construct controllers
    *  without one — the lock surface on ctx is then absent and CLI agents
    *  spawn without lock coordination (matching pre-refactor behavior). */
@@ -216,6 +222,9 @@ export interface RunControllerDeps {
 
 export class RunController {
   readonly runId: string;
+  /** Correlation id tying this run back to the ingress event that started it.
+   *  Always set — `deps.correlationId` or a freshly minted one. */
+  readonly correlationId: string;
   readonly workflow: Workflow;
   readonly abort: AbortController;
   snapshot: RunSnapshot;
@@ -255,6 +264,7 @@ export class RunController {
 
   constructor(deps: RunControllerDeps) {
     this.runId = deps.runId;
+    this.correlationId = deps.correlationId ?? newCorrelationId();
     this.workflow = deps.workflow;
     this.executors = deps.executors;
     this.loadWorkflow = deps.loadWorkflow;
@@ -293,13 +303,18 @@ export class RunController {
   }
 
   /**
-   * Emit a run-scoped event. Stamps `runId` so downstream consumers (SSE
-   * filters, the UI) can route by run without each emit site remembering.
-   * Queue-scoped events (trigger_enqueued, trigger_dropped, etc.) bypass
-   * this and go to `eventBus.emit` directly from their own modules.
+   * Emit a run-scoped event. Stamps `runId` and `correlationId` so downstream
+   * consumers (SSE filters, the UI, the persisted event log) can route by run
+   * and join back to the ingress event without each emit site remembering.
+   * Queue-scoped events (trigger_enqueued, trigger_dropped, etc.) bypass this
+   * and go to `eventBus.emit` directly from their own modules.
    */
   emit(event: WorkflowEvent): void {
-    const stamped = { ...(event as unknown as Record<string, unknown>), runId: this.runId } as WorkflowEvent;
+    const stamped = {
+      ...(event as unknown as Record<string, unknown>),
+      runId: this.runId,
+      correlationId: this.correlationId,
+    } as WorkflowEvent;
     eventBus.emit(stamped);
   }
 
@@ -380,6 +395,7 @@ export class RunController {
       workflowName: workflow.name,
       startedAt,
       serverPid: process.pid,
+      correlationId: this.correlationId,
     });
 
     // Reset both buffers at the start of a new run so a refresh doesn't
@@ -434,6 +450,7 @@ export class RunController {
       outcome: 'info',
       actor: 'system',
       target: this.runId,
+      correlationId: this.correlationId,
       detail: { workflowId: workflow.id, workflowName: workflow.name },
     });
 
@@ -588,6 +605,7 @@ export class RunController {
             : 'failure',
       actor: 'system',
       target: args.runId,
+      correlationId: this.correlationId,
       detail: {
         workflowId: args.workflow.id,
         status: args.status,
@@ -611,6 +629,7 @@ export class RunController {
         truncated: args.truncated || undefined,
         nodeCount: args.nodeCount,
         costUsd: args.costUsd,
+        correlationId: this.correlationId,
       });
       // The run is safely in history — drop the crash-recovery marker. If
       // saveRun threw, the marker is deliberately kept so the next boot
@@ -618,7 +637,7 @@ export class RunController {
       await removeRunMarker(args.runId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.error('saveRun failed', { err });
+      log.error('saveRun failed', { err, correlationId: this.correlationId });
       this.emit({
         type: 'error',
         message: `history not saved: ${message}`,

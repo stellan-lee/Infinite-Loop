@@ -8,6 +8,7 @@ import {
   WorkflowInputError,
 } from '@/lib/shared/resolve-run-inputs';
 import { createLogger } from '@/lib/server/logger';
+import { CORRELATION_HEADER, newCorrelationId } from '@/lib/server/correlation';
 
 const log = createLogger('run');
 
@@ -65,31 +66,40 @@ export async function POST(req: Request) {
     throw err;
   }
 
+  // Mint the correlation id at ingress — the earliest point. It threads into
+  // the run and surfaces on its events, audit entries, and history record;
+  // the response carries it back (body + header) so the caller can correlate.
+  const correlationId = newCorrelationId();
+
   let runId: string;
   try {
     // Multi-run safe: returns the runId synchronously regardless of how
     // many runs are already in flight. Folder-touching runs are throttled
     // inside the controller's first lock acquire → slot pool wait.
-    runId = await engineStartAdapter(workflowEngine, workflow, { resolvedInputs });
+    runId = await engineStartAdapter(workflowEngine, workflow, {
+      resolvedInputs,
+      correlationId,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'failed to start';
     // A run refused because the process-wide cost budget is exhausted is not a
     // server fault — answer 503 (try again once the budget is raised/reset),
     // not 500. See lib/server/cost-budget.ts.
     if ((err as { code?: string } | null)?.code === 'COST_BUDGET_EXCEEDED') {
-      log.warn('run refused: process-wide cost budget exceeded');
+      log.warn('run refused: process-wide cost budget exceeded', { correlationId });
       return NextResponse.json({ error: message }, { status: 503 });
     }
-    log.error('engine.start failed', { err });
+    log.error('engine.start failed', { err, correlationId });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 
   return NextResponse.json(
     {
       runId,
+      correlationId,
       state: workflowEngine.getState(),
     },
-    { status: 202 },
+    { status: 202, headers: { [CORRELATION_HEADER]: correlationId } },
   );
 }
 

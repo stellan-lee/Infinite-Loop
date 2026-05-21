@@ -46,6 +46,7 @@ function summarize(r: RunRecord): RunSummary {
     truncated: r.truncated,
     nodeCount: r.nodeCount,
     costUsd: r.costUsd,
+    correlationId: r.correlationId,
   };
 }
 
@@ -246,6 +247,11 @@ export interface RunMarker {
   /** PID of the server running this run. Lets the boot reconciler skip a
    *  marker still owned by a co-running second instance (port fallback). */
   serverPid: number;
+  /** Correlation id of the run, carried so a crash-recovered `failed` record
+   *  keeps the trace link — a crash IS a run failure, the case an operator
+   *  most needs to trace. Optional: absent on markers written before this
+   *  field existed; `isRunMarker` does not require it. */
+  correlationId?: string;
 }
 
 function markerFile(runId: string): string {

@@ -35,6 +35,15 @@ export interface Logger {
   info(msg: string, fields?: Record<string, unknown>): void;
   warn(msg: string, fields?: Record<string, unknown>): void;
   error(msg: string, fields?: Record<string, unknown>): void;
+  /**
+   * Return a logger that merges `boundFields` into every line it emits — the
+   * standard structured-logger child pattern. Used to bind a `correlationId`
+   * (or `runId`) once per ingress/run instead of threading it through every
+   * `log.*` call. Per-call `fields` win over bound fields on a key clash;
+   * reserved keys are dropped from both. Children compose: `a.child(x).child(y)`
+   * carries `x` then `y`.
+   */
+  child(boundFields: Record<string, unknown>): Logger;
 }
 
 function threshold(): number {
@@ -55,6 +64,7 @@ function normalizeField(value: unknown): unknown {
 function emit(
   level: LogLevel,
   scope: string,
+  bound: Record<string, unknown> | undefined,
   msg: string,
   fields?: Record<string, unknown>,
 ): void {
@@ -66,8 +76,11 @@ function emit(
     scope,
     msg,
   };
-  if (fields) {
-    for (const [key, value] of Object.entries(fields)) {
+  // Bound fields first, then per-call fields — so a per-call field wins on a
+  // key clash. Reserved keys are dropped from both.
+  for (const source of [bound, fields]) {
+    if (!source) continue;
+    for (const [key, value] of Object.entries(source)) {
       if (RESERVED_KEYS.has(key)) continue;
       record[key] = normalizeField(value);
     }
@@ -98,12 +111,17 @@ function emit(
 }
 
 /** Create a logger bound to `scope` (e.g. 'trigger-queue'), which is emitted
- *  as the `scope` field on every line. */
-export function createLogger(scope: string): Logger {
+ *  as the `scope` field on every line. `bound` fields (set via `child()`) are
+ *  merged into every line beneath the per-call fields. */
+export function createLogger(
+  scope: string,
+  bound?: Record<string, unknown>,
+): Logger {
   return {
-    debug: (msg, fields) => emit('debug', scope, msg, fields),
-    info: (msg, fields) => emit('info', scope, msg, fields),
-    warn: (msg, fields) => emit('warn', scope, msg, fields),
-    error: (msg, fields) => emit('error', scope, msg, fields),
+    debug: (msg, fields) => emit('debug', scope, bound, msg, fields),
+    info: (msg, fields) => emit('info', scope, bound, msg, fields),
+    warn: (msg, fields) => emit('warn', scope, bound, msg, fields),
+    error: (msg, fields) => emit('error', scope, bound, msg, fields),
+    child: (boundFields) => createLogger(scope, { ...bound, ...boundFields }),
   };
 }

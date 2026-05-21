@@ -8,6 +8,9 @@ export interface QueueHistoryEntry {
   workflowId: string;
   state: QueueEntryState;
   runId?: string;
+  /** Correlation id of the ingress event behind this queue item — keeps the
+   *  live queue view part of the webhook → queue → run trace. */
+  correlationId?: string;
   reason?: string;
   enqueuedAt: number;
   updatedAt: number;
@@ -55,6 +58,7 @@ export function subscribeQueueHistory(
         triggerId: ev.triggerId,
         workflowId: ev.workflowId,
         state: 'queued',
+        correlationId: ev.correlationId,
         enqueuedAt: ev.receivedAt,
         updatedAt: Date.now(),
       });
@@ -66,6 +70,7 @@ export function subscribeQueueHistory(
         workflowId: ev.workflowId,
         state: 'started',
         runId: ev.runId,
+        correlationId: ev.correlationId ?? prev?.correlationId,
         enqueuedAt: prev?.enqueuedAt ?? Date.now(),
         updatedAt: Date.now(),
       });
@@ -77,6 +82,7 @@ export function subscribeQueueHistory(
         workflowId: ev.workflowId,
         state: 'removed',
         reason: ev.reason,
+        correlationId: ev.correlationId ?? prev?.correlationId,
         enqueuedAt: prev?.enqueuedAt ?? Date.now(),
         updatedAt: Date.now(),
       });

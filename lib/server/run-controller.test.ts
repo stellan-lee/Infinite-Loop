@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun
 import type {
   EdgeHandle,
   NodeExecutor,
+  RunRecord,
   Workflow,
   WorkflowEdge,
   WorkflowEvent,
@@ -28,9 +29,14 @@ import type {
  * to the project data dir.
  */
 const realRunStore = { ...(await import('./run-store')) };
+/** Run records the stubbed `saveRun` captured — lets the correlation-id tests
+ *  inspect what RunController would have persisted without touching disk. */
+const savedRecords: RunRecord[] = [];
 mock.module('./run-store', () => ({
   ...realRunStore,
-  saveRun: async () => undefined,
+  saveRun: async (r: RunRecord) => {
+    savedRecords.push(r);
+  },
   writeRunMarker: () => undefined,
   removeRunMarker: async () => undefined,
 }));
@@ -409,5 +415,60 @@ describe('RunController — required (critical) template fields', () => {
         (e as { nodeType: string }).nodeType === 'agent',
     ) as { resolvedConfig: Record<string, unknown> } | undefined;
     expect(started?.resolvedConfig.prompt).toBe('hello world');
+  });
+});
+
+describe('RunController — correlation id', () => {
+  beforeEach(() => {
+    eventBus.clear();
+    savedRecords.length = 0;
+  });
+  afterEach(() => eventBus.clear());
+
+  const trivialWf = wf(
+    [startNode, endNode],
+    [edge('e1', 'start-1', 'next', 'end-1')],
+  );
+  function trivialEngine() {
+    return new WorkflowEngine({
+      start: staticExec('next'),
+      end: staticExec('next'),
+    });
+  }
+
+  it('stamps the supplied correlation id onto every emitted event', async () => {
+    const events = captureEvents();
+    await trivialEngine().startRun(trivialWf, { correlationId: 'cid-supplied' })
+      .completion;
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.correlationId === 'cid-supplied')).toBe(true);
+    expect(events.find((e) => e.type === 'run_started')?.correlationId).toBe(
+      'cid-supplied',
+    );
+    expect(events.find((e) => e.type === 'run_finished')?.correlationId).toBe(
+      'cid-supplied',
+    );
+  });
+
+  it('mints one correlation id for the whole run when none is supplied', async () => {
+    const events = captureEvents();
+    await trivialEngine().startRun(trivialWf).completion;
+
+    const ids = new Set(events.map((e) => e.correlationId));
+    expect(ids.size).toBe(1);
+    expect([...ids][0]).toMatch(/^cid_/);
+  });
+
+  it('threads the correlation id into the persisted run record', async () => {
+    await trivialEngine().startRun(trivialWf, { correlationId: 'cid-record' })
+      .completion;
+    // persistRun is fire-and-forget — poll for the stubbed saveRun to land
+    // rather than racing a fixed-duration timer.
+    for (let i = 0; savedRecords.length === 0 && i < 100; i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    expect(savedRecords.at(-1)?.correlationId).toBe('cid-record');
   });
 });

@@ -39,7 +39,7 @@ const log = createLogger('trigger-queue');
 export function engineStartAdapter(
   engine: WorkflowEngine,
   wf: Workflow,
-  opts: { resolvedInputs: ResolvedInputs },
+  opts: { resolvedInputs: ResolvedInputs; correlationId: string },
   budget: GlobalCostBudget = globalCostBudget,
 ): Promise<string> {
   // Refuse admission once the process-wide cost budget is exhausted — the

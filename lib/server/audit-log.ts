@@ -33,6 +33,11 @@ export interface AuditEntry {
   actor?: string;
   /** Affected resource id (runId / triggerId). */
   target?: string;
+  /** Correlation id tying this entry to the ingress event and the run it
+   *  caused — joins `webhook` and `run` entries across the trace. Optional:
+   *  absent on entries written before this field existed, and on entries for
+   *  events outside any correlated flow. See lib/server/correlation.ts. */
+  correlationId?: string;
   /** Small structured payload. MUST NOT contain secrets. */
   detail?: Record<string, unknown>;
 }

@@ -502,6 +502,7 @@ describe('load + failure injection — batch crash recovery', () => {
         workflow: fakeWorkflow(`load-qwf-${i}`),
         resolvedInputs: {},
         triggerId: 't',
+        correlationId: `cid-load-${i}`,
         receivedAt: i,
         serverPid: process.pid,
       });

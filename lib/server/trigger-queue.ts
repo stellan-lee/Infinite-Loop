@@ -2,6 +2,7 @@ import type { Workflow } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
 import { createLogger } from './logger';
+import { newCorrelationId } from './correlation';
 
 const log = createLogger('trigger-queue');
 
@@ -10,6 +11,10 @@ export interface QueuedRun {
   workflow: Workflow;
   resolvedInputs: ResolvedInputs;
   triggerId: string;
+  /** Correlation id of the ingress event (webhook / MCP) that enqueued this
+   *  run — threaded into the run so its events, audit entries, and history
+   *  record all join back to the trigger. See lib/server/correlation.ts. */
+  correlationId: string;
   receivedAt: number;
 }
 
@@ -35,7 +40,10 @@ export interface QueueRestoreTarget {
 
 export interface TriggerQueueDeps {
   /** Returns the new run's id on success. Throws if the engine is busy. */
-  engineStart: (wf: Workflow, opts: { resolvedInputs: ResolvedInputs }) => Promise<string>;
+  engineStart: (
+    wf: Workflow,
+    opts: { resolvedInputs: ResolvedInputs; correlationId: string },
+  ) => Promise<string>;
   /** Re-fetch the freshest workflow JSON by id. Used to detect deletions. */
   loadWorkflow: (id: string) => Promise<Workflow>;
   /** Called after a successful engine start to record the fire time on the
@@ -91,12 +99,21 @@ export class TriggerQueue {
       queueId: item.queueId,
       triggerId: item.triggerId,
       workflowId: item.workflow.id,
+      correlationId: item.correlationId,
       reason: 'user-cancelled',
     });
     return { removed: true };
   }
 
-  enqueue(item: Omit<QueuedRun, 'queueId'>): { queueId: string; position: number } {
+  /**
+   * Add a run to the queue. The caller may supply a `correlationId` (webhook /
+   * MCP ingress mints one to thread the trace); when omitted — internal
+   * callers, unit tests — a fresh one is minted so every queued run, and the
+   * run it becomes, always carries one.
+   */
+  enqueue(
+    item: Omit<QueuedRun, 'queueId' | 'correlationId'> & { correlationId?: string },
+  ): { queueId: string; position: number; correlationId: string } {
     if (this.q.length >= this.maxQueue) {
       const err = new Error('trigger queue is full');
       (err as Error & { code?: string }).code = 'QUEUE_FULL';
@@ -106,7 +123,8 @@ export class TriggerQueue {
     // boot's clock is past the previous boot's, so a fresh id can never
     // collide with one carried in by restore() even though `nextId` resets.
     const queueId = `q-${Date.now()}-${++this.nextId}`;
-    const full: QueuedRun = { queueId, ...item };
+    const correlationId = item.correlationId ?? newCorrelationId();
+    const full: QueuedRun = { ...item, queueId, correlationId };
     // Persist before the item becomes observable — pushed, emitted, or
     // returned to the caller, which then sends its 202 ack. The durable
     // record must exist before that promise is made.
@@ -118,11 +136,12 @@ export class TriggerQueue {
       queueId,
       triggerId: full.triggerId,
       workflowId: full.workflow.id,
+      correlationId,
       inputs: full.resolvedInputs,
       position,
       receivedAt: full.receivedAt,
     });
-    return { queueId, position };
+    return { queueId, position, correlationId };
   }
 
   /** Pull the head item and try to start it. Once shifted off, an item leaves
@@ -148,6 +167,7 @@ export class TriggerQueue {
               type: 'trigger_dropped',
               queueId: head.queueId,
               triggerId: head.triggerId,
+              correlationId: head.correlationId,
               reason: 'workflow-deleted',
             });
             continue;
@@ -156,6 +176,7 @@ export class TriggerQueue {
           try {
             const runId = await this.engineStart(workflow, {
               resolvedInputs: head.resolvedInputs,
+              correlationId: head.correlationId,
             });
             // engineStart resolved → RunController.start() has synchronously
             // written the run's crash-recovery marker (run-store.ts), so the
@@ -170,6 +191,7 @@ export class TriggerQueue {
               queueId: head.queueId,
               triggerId: head.triggerId,
               workflowId: workflow.id,
+              correlationId: head.correlationId,
               runId,
             });
             if (this.touchLastFired) {
@@ -189,9 +211,13 @@ export class TriggerQueue {
                 type: 'trigger_dropped',
                 queueId: head.queueId,
                 triggerId: head.triggerId,
+                correlationId: head.correlationId,
                 reason: 'engine-start-failed',
               });
-              log.error('engineStart failed', { err });
+              log.error('engineStart failed', {
+                err,
+                correlationId: head.correlationId,
+              });
             }
           }
         } finally {
@@ -249,6 +275,7 @@ export class TriggerQueue {
         queueId: item.queueId,
         triggerId: item.triggerId,
         workflowId: item.workflow.id,
+        correlationId: item.correlationId,
         inputs: item.resolvedInputs,
         position: this.q.length,
         receivedAt: item.receivedAt,

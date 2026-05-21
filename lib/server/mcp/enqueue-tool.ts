@@ -5,6 +5,7 @@ import {
   WorkflowInputError,
 } from '@/lib/shared/resolve-run-inputs';
 import { triggerQueue } from '@/lib/server/trigger-queue-singleton';
+import { newCorrelationId } from '@/lib/server/correlation';
 
 export interface EnqueueToolOptions {
   workflowId: string;
@@ -18,6 +19,9 @@ export type EnqueueToolResult =
       position: number;
       workflowId: string;
       triggerId: string;
+      /** Correlation id threaded into the run — the caller can use it to join
+       *  this enqueue to the run's events, audit entries, and history. */
+      correlationId: string;
     }
   | { status: 'error'; error: string };
 
@@ -60,6 +64,7 @@ export async function enqueueWorkflowTool(
   }
 
   const triggerId = syntheticTriggerId();
+  const correlationId = newCorrelationId();
 
   let result;
   try {
@@ -67,6 +72,7 @@ export async function enqueueWorkflowTool(
       workflow,
       resolvedInputs,
       triggerId,
+      correlationId,
       receivedAt: Date.now(),
     });
   } catch (err) {
@@ -89,5 +95,6 @@ export async function enqueueWorkflowTool(
     position: result.position,
     workflowId: workflow.id,
     triggerId,
+    correlationId,
   };
 }

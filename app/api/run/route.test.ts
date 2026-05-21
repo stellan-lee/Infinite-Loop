@@ -120,11 +120,25 @@ describe('POST /api/run', () => {
     const res = await POST(jsonRequest({ workflowId: 'wf-1' }));
 
     expect(res.status).toBe(202);
-    const body = (await res.json()) as { runId: string; state: RunSnapshot };
+    const body = (await res.json()) as {
+      runId: string;
+      correlationId: string;
+      state: RunSnapshot;
+    };
     expect(body.runId).toBe('mock-run');
+    // A correlation id is minted at ingress, returned in the body, echoed on
+    // the header, and threaded into the run.
+    expect(body.correlationId).toMatch(/^cid_/);
+    expect(res.headers.get('x-correlation-id')).toBe(body.correlationId);
     expect(getWorkflowMock).toHaveBeenCalledWith('wf-1');
     expect(startRunMock).toHaveBeenCalledTimes(1);
-    expect(startRunMock).toHaveBeenCalledWith(sampleWorkflow, { resolvedInputs: {} });
+    expect(startRunMock).toHaveBeenCalledWith(
+      sampleWorkflow,
+      expect.objectContaining({
+        resolvedInputs: {},
+        correlationId: body.correlationId,
+      }),
+    );
   });
 
   it('returns 400 when body is invalid JSON', async () => {

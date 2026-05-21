@@ -42,6 +42,7 @@ function fakeQueuedRun(over: Partial<QueuedRun> = {}): QueuedRun {
     workflow: fakeWorkflow('wf'),
     resolvedInputs: { topic: 'hello' },
     triggerId: 'trigger-abcdef0123456789',
+    correlationId: 'cid_aaaaaaaaaaaaaaaaaaaaaaaa',
     receivedAt: 1_000,
     ...over,
   };

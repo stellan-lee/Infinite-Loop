@@ -115,4 +115,45 @@ describe('createLogger', () => {
     expect(rec._logError).toBe('fields not serializable');
     expect(rec.msg).toBe('circular');
   });
+
+  describe('child', () => {
+    it('merges bound fields into every line', () => {
+      const child = createLogger('demo').child({ correlationId: 'cid_x' });
+      child.info('first');
+      child.warn('second');
+      expect(lastLine(logSpy).correlationId).toBe('cid_x');
+      expect(lastLine(errSpy).correlationId).toBe('cid_x');
+    });
+
+    it('lets a per-call field override a bound field', () => {
+      createLogger('demo')
+        .child({ correlationId: 'cid_bound' })
+        .info('msg', { correlationId: 'cid_call' });
+      expect(lastLine(logSpy).correlationId).toBe('cid_call');
+    });
+
+    it('composes — a child of a child carries both bindings', () => {
+      createLogger('demo')
+        .child({ correlationId: 'cid_x' })
+        .child({ runId: 'run-1' })
+        .info('msg');
+      const rec = lastLine(logSpy);
+      expect(rec.correlationId).toBe('cid_x');
+      expect(rec.runId).toBe('run-1');
+    });
+
+    it('does not let a bound field clobber a reserved key', () => {
+      createLogger('demo').child({ scope: 'evil', level: 'HACKED' }).info('msg');
+      const rec = lastLine(logSpy);
+      expect(rec.scope).toBe('demo');
+      expect(rec.level).toBe('info');
+    });
+
+    it('leaves the parent logger unbound', () => {
+      const parent = createLogger('demo');
+      parent.child({ correlationId: 'cid_x' });
+      parent.info('msg');
+      expect(lastLine(logSpy).correlationId).toBeUndefined();
+    });
+  });
 });

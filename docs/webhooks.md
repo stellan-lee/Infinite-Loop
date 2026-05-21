@@ -1,6 +1,6 @@
 # Webhook guide
 
-Open the **Dispatch** view (top-bar button, next to the workflow menu) to create, edit, and test webhook triggers visually. Each trigger gets a unique URL. When an HTTP POST hits it, Infinite Loop matches the trigger's predicates against the request, queues a workflow run with templated inputs, and returns `202 { queued, queueId, position }`.
+Open the **Dispatch** view (top-bar button, next to the workflow menu) to create, edit, and test webhook triggers visually. Each trigger gets a unique URL. When an HTTP POST hits it, Infinite Loop matches the trigger's predicates against the request, queues a workflow run with templated inputs, and returns `202 { queued, queueId, position, correlationId }`.
 
 ## Creating a trigger
 
@@ -63,7 +63,7 @@ Restart Infinite Loop. The plugin appears in the trigger form's plugin dropdown.
 
 ## Behavior reference
 
-- Match succeeds → `202 { queued, queueId, position }`. The run is queued; the queue is persisted to disk, so a restart never drops it.
+- Match succeeds → `202 { queued, queueId, position, correlationId }`. The run is queued; the queue is persisted to disk, so a restart never drops it. The `correlationId` (`cid_…`, also returned in an `x-correlation-id` header) threads through the run's events, audit entries, and history record — `grep` it to trace a webhook end to end.
 - Match fails or plugin event-header mismatches → `204 No Content`.
 - Unknown / disabled trigger id → `404 not-found`.
 - Body > 1 MiB → `413 payload-too-large`.

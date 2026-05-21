@@ -55,6 +55,24 @@ describe('recordAudit + listAuditEntries', () => {
     expect(entries[0].outcome).toBe('success');
   });
 
+  it('round-trips an optional correlationId', async () => {
+    await recordAudit({
+      category: 'webhook',
+      action: 'accepted',
+      outcome: 'success',
+      target: 'trigger-1',
+      correlationId: 'cid_aaaaaaaaaaaaaaaaaaaaaaaa',
+    });
+    const [entry] = await listAuditEntries();
+    expect(entry.correlationId).toBe('cid_aaaaaaaaaaaaaaaaaaaaaaaa');
+  });
+
+  it('omits correlationId when not supplied', async () => {
+    await recordAudit({ category: 'auth', action: 'login', outcome: 'success' });
+    const [entry] = await listAuditEntries();
+    expect(entry.correlationId).toBeUndefined();
+  });
+
   it('stamps an ISO-8601 ts', async () => {
     await recordAudit({ category: 'run', action: 'started', outcome: 'info' });
     const [entry] = await listAuditEntries();

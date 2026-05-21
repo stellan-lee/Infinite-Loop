@@ -107,7 +107,7 @@ export class WorkflowEngine {
 
   async start(
     workflow: Workflow,
-    opts?: { resolvedInputs?: ResolvedInputs },
+    opts?: { resolvedInputs?: ResolvedInputs; correlationId?: string },
   ): Promise<void> {
     await this.startRun(workflow, opts).completion;
   }
@@ -119,10 +119,16 @@ export class WorkflowEngine {
    * entrypoint: callers that need the runId before settle (the trigger
    * queue, /api/run) use this instead of the TOCTOU `engine.start()` +
    * `getState().runId` dance.
+   *
+   * `opts` carries two values with different destinations: `correlationId`
+   * goes into the controller's constructor deps (its `emit()` and run marker,
+   * both reached inside `start()`, need it set up front), while
+   * `resolvedInputs` flows through `controller.start()`. A missing
+   * `correlationId` is fine — the controller mints its own.
    */
   startRun(
     workflow: Workflow,
-    opts?: { resolvedInputs?: ResolvedInputs },
+    opts?: { resolvedInputs?: ResolvedInputs; correlationId?: string },
   ): { runId: string; completion: Promise<void> } {
     const controller = new RunController({
       runId: crypto.randomUUID(),
@@ -133,13 +139,16 @@ export class WorkflowEngine {
       slotPool: this.slotPool,
       budget: this.runBudget,
       costBudget: this.costBudget,
+      correlationId: opts?.correlationId,
     });
     this.runs.set(controller.runId, controller);
     this.last = controller;
-    const completion = controller.start(opts).finally(() => {
-      this.runs.delete(controller.runId);
-      // `last` deliberately retained for getState() back-compat.
-    });
+    const completion = controller
+      .start({ resolvedInputs: opts?.resolvedInputs })
+      .finally(() => {
+        this.runs.delete(controller.runId);
+        // `last` deliberately retained for getState() back-compat.
+      });
     return { runId: controller.runId, completion };
   }
 
@@ -172,7 +181,7 @@ export class WorkflowEngine {
 // `globalThis.__infiniteLoopWorkflowRegistry` was constructed with the old
 // class definition and behaves the old way for the rest of the dev server's
 // life.
-const ENGINE_VERSION = 16;
+const ENGINE_VERSION = 17;
 
 declare global {
   // eslint-disable-next-line no-var

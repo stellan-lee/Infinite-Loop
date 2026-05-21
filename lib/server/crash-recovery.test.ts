@@ -282,6 +282,7 @@ describe('crash-recovery', () => {
         workflow: fakeWorkflow('wf'),
         resolvedInputs: {},
         triggerId: 'trigger-0123456789abcdef',
+        correlationId: 'cid_aaaaaaaaaaaaaaaaaaaaaaaa',
         receivedAt: 1,
         serverPid: process.pid,
         ...over,
@@ -351,6 +352,28 @@ describe('crash-recovery', () => {
       reconcileQueuedRuns(q.target);
       expect(q.restored).toHaveLength(0);
       expect(q.drainCount()).toBe(0);
+    });
+
+    it('backfills a correlation id for a pre-upgrade queue file', () => {
+      // Simulate a file written before the correlationId field existed by
+      // dropping it from the persisted JSON. The reconciler must mint one so
+      // the restored run still carries a (required) correlation id.
+      const { correlationId: _dropped, ...legacy } = persisted({
+        queueId: 'q-legacy',
+      });
+      mkdirSync(queueDir(), { recursive: true });
+      writeFileSync(
+        path.join(queueDir(), 'q-legacy.json'),
+        JSON.stringify(legacy),
+      );
+      const q = fakeQueue();
+
+      reconcileQueuedRuns(q.target);
+
+      expect(q.restored).toHaveLength(1);
+      const item = q.restored[0][0];
+      expect(item.queueId).toBe('q-legacy');
+      expect(item.correlationId).toMatch(/^cid_/);
     });
   });
 });

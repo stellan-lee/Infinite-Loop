@@ -419,14 +419,18 @@ export interface RunSnapshot {
 
 /* ─── events on the WS bus ────────────────────────────────────────────────── */
 
-// Run-scoped events. `runId` is stamped by `RunController.emit` at emit time
-// — executors and walk methods never set it themselves. The optional shape
-// keeps the legacy single-run consumers compiling; under multi-run, every
-// event reaching SSE consumers carries a runId.
+// Run-scoped events. `runId` and `correlationId` are stamped by
+// `RunController.emit` at emit time — executors and walk methods never set
+// them themselves. The optional shape keeps the legacy single-run consumers
+// compiling and lets the literal at each `emit()` call site omit them; under
+// multi-run, every event reaching SSE consumers carries both. The correlation
+// id ties the run back to the ingress event that started it — see
+// lib/server/correlation.ts.
 
 export interface RunStartedEvent {
   type: 'run_started';
   runId?: string;
+  correlationId?: string;
   workflowId: string;
   workflowName: string;
 }
@@ -434,6 +438,7 @@ export interface RunStartedEvent {
 export interface NodeStartedEvent {
   type: 'node_started';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
   nodeType: NodeType;
   /** The fully template-resolved config the executor is about to receive. */
@@ -445,6 +450,7 @@ export interface NodeStartedEvent {
 export interface NodeFinishedEvent {
   type: 'node_finished';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
   nodeType: NodeType;
   branch: EdgeHandle;
@@ -456,6 +462,7 @@ export interface NodeFinishedEvent {
 export interface StdoutChunkEvent {
   type: 'stdout_chunk';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
   line: string;
   /** Optional loop iteration the chunk belongs to. */
@@ -465,6 +472,7 @@ export interface StdoutChunkEvent {
 export interface ConditionCheckedEvent {
   type: 'condition_checked';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
   met: boolean;
   detail: string;
@@ -473,6 +481,7 @@ export interface ConditionCheckedEvent {
 export interface TemplateWarningEvent {
   type: 'template_warning';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
   field: string;
   missingKey: string;
@@ -484,6 +493,7 @@ export interface TemplateWarningEvent {
 export interface ErrorEvent {
   type: 'error';
   runId?: string;
+  correlationId?: string;
   nodeId?: string;
   message: string;
   stderr?: string;
@@ -492,6 +502,7 @@ export interface ErrorEvent {
 export interface RunFinishedEvent {
   type: 'run_finished';
   runId?: string;
+  correlationId?: string;
   status: Exclude<RunStatus, 'idle' | 'running'>;
   scope: Scope;
 }
@@ -502,6 +513,7 @@ export interface RunFinishedEvent {
 export interface NodeWaitingForLockEvent {
   type: 'node_waiting_for_lock';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
   path: string;
   heldByRunId: string;
@@ -514,6 +526,7 @@ export interface NodeWaitingForLockEvent {
 export interface NodeLockAcquiredEvent {
   type: 'node_lock_acquired';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
   path: string;
 }
@@ -521,20 +534,28 @@ export interface NodeLockAcquiredEvent {
 export interface NodeWaitingForSlotEvent {
   type: 'node_waiting_for_slot';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
 }
 
 export interface NodeSlotAcquiredEvent {
   type: 'node_slot_acquired';
   runId?: string;
+  correlationId?: string;
   nodeId: string;
 }
+
+// Queue-scoped events. Emitted directly from trigger-queue.ts (not via
+// RunController.emit), so each `eventBus.emit` call site sets `correlationId`
+// explicitly from the queued run. Optional on the type for uniformity with the
+// run events above.
 
 export interface TriggerEnqueuedEvent {
   type: 'trigger_enqueued';
   queueId: string;
   triggerId: string;
   workflowId: string;
+  correlationId?: string;
   inputs?: Record<string, string | number | boolean>;
   position: number;
   receivedAt: number;
@@ -545,6 +566,7 @@ export interface TriggerStartedEvent {
   queueId: string;
   triggerId: string;
   workflowId: string;
+  correlationId?: string;
   runId: string;
 }
 
@@ -552,6 +574,7 @@ export interface TriggerDroppedEvent {
   type: 'trigger_dropped';
   queueId: string;
   triggerId: string;
+  correlationId?: string;
   reason: 'workflow-deleted' | 'queue-full' | 'engine-start-failed';
 }
 
@@ -560,6 +583,7 @@ export interface TriggerRemovedEvent {
   queueId: string;
   triggerId: string;
   workflowId: string;
+  correlationId?: string;
   reason: 'user-cancelled';
 }
 
@@ -613,6 +637,11 @@ export interface RunRecord {
    * contribute; `0` for a run that incurred none. Optional: absent on
    * records written before this field existed. */
   costUsd?: number;
+  /** Correlation id of the ingress event that started this run — ties the
+   * record back to the webhook / API / MCP call and its audit entries. See
+   * lib/server/correlation.ts. Optional: absent on records written before
+   * this field existed. */
+  correlationId?: string;
 }
 
 /** Lightweight projection used by list endpoints / UI menus. */
@@ -632,6 +661,8 @@ export interface RunSummary {
   nodeCount?: number;
   /** See `RunRecord.costUsd`. Absent on pre-existing records. */
   costUsd?: number;
+  /** See `RunRecord.correlationId`. Absent on pre-existing records. */
+  correlationId?: string;
 }
 
 /* ─── node executor contract ──────────────────────────────────────────────── */

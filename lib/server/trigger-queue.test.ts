@@ -54,6 +54,59 @@ describe('TriggerQueue', () => {
     expect(a.queueId).not.toBe(b.queueId);
   });
 
+  test('enqueue mints a correlation id when the caller omits one', () => {
+    const r = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    expect(r.correlationId).toMatch(/^cid_/);
+    expect(q.list()[0].correlationId).toBe(r.correlationId);
+  });
+
+  test('enqueue preserves a caller-supplied correlation id', () => {
+    const r = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: {},
+      triggerId: 't', correlationId: 'cid-supplied', receivedAt: 1,
+    });
+    expect(r.correlationId).toBe('cid-supplied');
+    expect(q.list()[0].correlationId).toBe('cid-supplied');
+  });
+
+  test('the correlation id rides queue events through enqueue → start', async () => {
+    const captured: WorkflowEvent[] = [];
+    const unsub = eventBus.subscribe((e) => captured.push(e));
+    try {
+      q.enqueue({
+        workflow: fakeWorkflow('w'), resolvedInputs: {},
+        triggerId: 't', correlationId: 'cid-trace', receivedAt: 1,
+      });
+      await q.drain();
+      const enq = captured.find((e) => e.type === 'trigger_enqueued');
+      const started = captured.find((e) => e.type === 'trigger_started');
+      expect(enq?.correlationId).toBe('cid-trace');
+      expect(started?.correlationId).toBe('cid-trace');
+    } finally {
+      unsub();
+    }
+  });
+
+  test('a dropped run still carries the correlation id', async () => {
+    engineBusy = true;
+    const captured: WorkflowEvent[] = [];
+    const unsub = eventBus.subscribe((e) => captured.push(e));
+    try {
+      q.enqueue({
+        workflow: fakeWorkflow('w'), resolvedInputs: {},
+        triggerId: 't', correlationId: 'cid-drop', receivedAt: 1,
+      });
+      await q.drain();
+      const dropped = captured.find((e) => e.type === 'trigger_dropped');
+      expect(dropped?.correlationId).toBe('cid-drop');
+    } finally {
+      unsub();
+    }
+  });
+
   test('drain pulls and starts when engine is idle', async () => {
     q.enqueue({
       workflow: fakeWorkflow('w'), resolvedInputs: {},
@@ -172,6 +225,7 @@ describe('TriggerQueue', () => {
         queueId: a.queueId,
         triggerId: 't1',
         workflowId: 'w1',
+        correlationId: a.correlationId,
         reason: 'user-cancelled',
       });
     } finally {
@@ -377,8 +431,8 @@ describe('TriggerQueue persistence', () => {
     });
     // Deliberately out of receivedAt order.
     q.restore([
-      { queueId: 'q-b', workflow: fakeWorkflow('w2'), resolvedInputs: {}, triggerId: 't2', receivedAt: 20 },
-      { queueId: 'q-a', workflow: fakeWorkflow('w1'), resolvedInputs: {}, triggerId: 't1', receivedAt: 10 },
+      { queueId: 'q-b', workflow: fakeWorkflow('w2'), resolvedInputs: {}, triggerId: 't2', correlationId: 'cid-b', receivedAt: 20 },
+      { queueId: 'q-a', workflow: fakeWorkflow('w1'), resolvedInputs: {}, triggerId: 't1', correlationId: 'cid-a', receivedAt: 10 },
     ]);
     expect(q.list().map((i) => i.queueId)).toEqual(['q-a', 'q-b']);
     // restore must NOT re-persist — the files already exist on disk.
@@ -394,9 +448,9 @@ describe('TriggerQueue persistence', () => {
       maxQueue: 1,
     });
     q.restore([
-      { queueId: 'q-1', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', receivedAt: 1 },
-      { queueId: 'q-2', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', receivedAt: 2 },
-      { queueId: 'q-3', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', receivedAt: 3 },
+      { queueId: 'q-1', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', correlationId: 'cid-1', receivedAt: 1 },
+      { queueId: 'q-2', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', correlationId: 'cid-2', receivedAt: 2 },
+      { queueId: 'q-3', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', correlationId: 'cid-3', receivedAt: 3 },
     ]);
     expect(q.size()).toBe(3);
     // A new enqueue still honors the cap — restored work sheds new arrivals.
@@ -417,8 +471,8 @@ describe('TriggerQueue persistence', () => {
       persistence: p.impl,
     });
     q.restore([
-      { queueId: 'q-2', workflow: fakeWorkflow('second'), resolvedInputs: {}, triggerId: 't', receivedAt: 2 },
-      { queueId: 'q-1', workflow: fakeWorkflow('first'), resolvedInputs: {}, triggerId: 't', receivedAt: 1 },
+      { queueId: 'q-2', workflow: fakeWorkflow('second'), resolvedInputs: {}, triggerId: 't', correlationId: 'cid-2', receivedAt: 2 },
+      { queueId: 'q-1', workflow: fakeWorkflow('first'), resolvedInputs: {}, triggerId: 't', correlationId: 'cid-1', receivedAt: 1 },
     ]);
     await q.drain();
     expect(started).toEqual(['first', 'second']);

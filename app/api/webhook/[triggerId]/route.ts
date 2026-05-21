@@ -12,6 +12,7 @@ import { recordAudit } from '@/lib/server/audit-log';
 import { webhookRateLimiter } from '@/lib/server/rate-limiter';
 import { metrics, type WebhookOutcome } from '@/lib/server/metrics';
 import { createLogger } from '@/lib/server/logger';
+import { CORRELATION_HEADER, newCorrelationId } from '@/lib/server/correlation';
 import type { TriggerPredicate, WebhookTrigger } from '@/lib/shared/trigger';
 import type { Scope, Workflow } from '@/lib/shared/workflow';
 
@@ -59,19 +60,31 @@ function outcomeFromStatus(status: number): WebhookOutcome {
  * the framework's error handling still applies.
  */
 export async function POST(req: Request, ctx: RouteParams): Promise<Response> {
+  // Mint the correlation id at the ingress edge — before any return point — so
+  // every audit entry, log line, and (on accept) the queued run share one id.
+  // Set on the response header for ALL outcomes, accepted or rejected, so a
+  // rejected webhook is still traceable from its caller's side.
+  const correlationId = newCorrelationId();
   let res: Response;
   try {
-    res = await handleWebhook(req, ctx);
+    res = await handleWebhook(req, ctx, correlationId);
   } catch (err) {
     metrics.recordWebhookRequest('error');
     throw err;
   }
   metrics.recordWebhookRequest(outcomeFromStatus(res.status));
+  res.headers.set(CORRELATION_HEADER, correlationId);
   return res;
 }
 
-async function handleWebhook(req: Request, { params }: RouteParams): Promise<Response> {
+async function handleWebhook(
+  req: Request,
+  { params }: RouteParams,
+  correlationId: string,
+): Promise<Response> {
   const { triggerId } = await params;
+  // Bind the correlation id onto every log line from this request.
+  const clog = log.child({ correlationId });
   // Set when a trigger with `verifyOptional` accepts an unsigned request —
   // recorded on the eventual `webhook/accepted` audit entry.
   let acceptedUnsigned = false;
@@ -94,13 +107,14 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
   // stays bounded by the real trigger count and a flood is rejected cheaply.
   const rl = webhookRateLimiter.check(hit.trigger.id);
   if (!rl.ok) {
-    log.warn('rate limit exceeded', { triggerId: hit.trigger.id });
+    clog.warn('rate limit exceeded', { triggerId: hit.trigger.id });
     await recordAudit({
       category: 'webhook',
       action: 'rejected',
       outcome: 'failure',
       actor: 'webhook',
       target: hit.trigger.id,
+      correlationId,
       detail: { reason: 'rate-limited', retryAfterSeconds: rl.retryAfterSeconds },
     });
     return NextResponse.json(
@@ -138,7 +152,7 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
         headerValue: req.headers.get(plugin.signature.header),
       });
       if (!verdict.ok) {
-        log.error('signature verification failed', {
+        clog.error('signature verification failed', {
           triggerId: hit.trigger.id,
           reason: verdict.reason,
         });
@@ -153,12 +167,12 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
         return NextResponse.json({ error: 'bad-signature' }, { status: 401 });
       }
     } else if (hit.trigger.verifyOptional === true) {
-      log.warn('verifyOptional=true — accepting unsigned request', {
+      clog.warn('verifyOptional=true — accepting unsigned request', {
         triggerId: hit.trigger.id,
       });
       acceptedUnsigned = true;
     } else {
-      log.error(
+      clog.error(
         'trigger requires a secret (plugin declares signing) but has neither secret nor verifyOptional set',
         { triggerId: hit.trigger.id, pluginId: plugin.id },
       );
@@ -168,6 +182,7 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
         outcome: 'failure',
         actor: 'webhook',
         target: hit.trigger.id,
+        correlationId,
         detail: { reason: 'misconfigured' },
       });
       return NextResponse.json({ error: 'trigger-misconfigured' }, { status: 500 });
@@ -195,13 +210,14 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
   try {
     suppliedInputs = resolveTriggerInputs(hit.trigger, scope);
   } catch (err) {
-    log.error('inputs resolve failed', { err });
+    clog.error('inputs resolve failed', { err });
     await recordAudit({
       category: 'webhook',
       action: 'rejected',
       outcome: 'failure',
       actor: 'webhook',
       target: hit.trigger.id,
+      correlationId,
       detail: { reason: 'inputs-template-failed' },
     });
     return NextResponse.json({ error: 'inputs-template-failed' }, { status: 500 });
@@ -218,6 +234,7 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
         outcome: 'failure',
         actor: 'webhook',
         target: hit.trigger.id,
+        correlationId,
         detail: { reason: 'invalid-inputs', field: err.field },
       });
       return NextResponse.json(
@@ -239,6 +256,7 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
       workflow,
       resolvedInputs,
       triggerId,
+      correlationId,
       receivedAt: Date.now(),
     });
     void triggerQueue.drain();
@@ -248,6 +266,7 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
       outcome: 'success',
       actor: 'webhook',
       target: hit.trigger.id,
+      correlationId,
       detail: {
         queueId,
         workflowId: workflow.id,
@@ -255,7 +274,7 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
       },
     });
     return NextResponse.json(
-      { queued: true, queueId, position },
+      { queued: true, queueId, position, correlationId },
       { status: 202 },
     );
   } catch (err) {
@@ -266,6 +285,7 @@ async function handleWebhook(req: Request, { params }: RouteParams): Promise<Res
         outcome: 'failure',
         actor: 'webhook',
         target: hit.trigger.id,
+        correlationId,
         detail: { reason: 'queue-full' },
       });
       return NextResponse.json(

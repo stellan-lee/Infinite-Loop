@@ -327,6 +327,12 @@ coarse actor (`api-token`, `browser-session`, `webhook`, `system`, `open`) but
 never a secret — no tokens, no trigger secrets, no request bodies. Read it
 back through the authenticated `GET /api/audit` endpoint.
 
+Each entry caused by an ingress event — a webhook, an API run, an MCP enqueue
+— also carries a **`correlationId`** (`cid_…`). The same id is stamped on the
+run's events and its history record, so one `grep cid_…` walks the whole
+chain: webhook accept → queued run → run start → run finish. The ingress
+response returns the id in its body and in an `x-correlation-id` header.
+
 The log shares the data directory's trust boundary: it is not tamper-proofed,
 because a local attacker who can rewrite it can already rewrite everything
 else on the machine.

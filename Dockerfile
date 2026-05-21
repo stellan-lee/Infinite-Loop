@@ -73,6 +73,10 @@ COPY --from=builder /app/next.config.js ./next.config.js
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/package.json ./package.json
 
+# Operator CLIs (data-directory backup and restore) — run with
+# `docker compose exec`/`run`. See docs/backup-restore.md.
+COPY --from=builder /app/scripts ./scripts
+
 # Read-mostly inputs resolved from the working directory at runtime: shipped
 # library presets, provider manifests, and webhook plugins.
 COPY --from=builder /app/workflows ./workflows

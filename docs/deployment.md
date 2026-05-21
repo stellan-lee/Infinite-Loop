@@ -117,6 +117,28 @@ thing: they are baked into the image, read-only, and not part of the volume.
 docker compose down -v   # stop AND wipe all state (deletes the volume)
 ```
 
+## Backups
+
+The persistent volume survives restarts and rebuilds — it does **not** survive
+disk loss, a deleted volume, or operator error. Crash recovery, the durable
+queue, and the audit log all protect against a process dying; none protects
+against losing the volume itself.
+
+Take periodic snapshots of the data directory:
+
+```bash
+# Write a snapshot to the volume, then copy it off the host.
+docker compose exec infinite-loop bun run backup --out /data/backup.tar.gz
+docker compose cp infinite-loop:/data/backup.tar.gz ./backup.tar.gz
+docker compose exec infinite-loop rm /data/backup.tar.gz
+```
+
+A backup is safe to take while the server runs. Restoring requires the server
+to be stopped. Store archives off-host, automate them on a schedule, and keep
+enough generations for your recovery window. Full procedure — including
+restore and inspecting an archive — in
+[backup-restore.md](backup-restore.md).
+
 ## Supervision & health
 
 - **`restart: unless-stopped`** restarts the container after any abnormal

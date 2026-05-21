@@ -47,6 +47,7 @@ import {
   saveRun,
 } from './run-store';
 import { createLogger } from './logger';
+import { recordAudit } from './audit-log';
 
 const log = createLogger('crash-recovery');
 
@@ -226,6 +227,20 @@ export async function reconcileInterruptedRuns(): Promise<void> {
         events: [],
       });
       reconciled++;
+      // Record the interrupted run in the audit log too: it left a
+      // `run/started` entry with no `run/finished`, and this closes that gap.
+      void recordAudit({
+        category: 'run',
+        action: 'finished',
+        outcome: 'failure',
+        actor: 'system',
+        target: m.runId,
+        detail: {
+          workflowId: m.workflowId,
+          status: 'failed',
+          reason: 'crash-recovered',
+        },
+      });
     } catch (err) {
       // Keep the marker so the next boot retries.
       log.warn('failed to reconcile run', { runId: m.runId, err });

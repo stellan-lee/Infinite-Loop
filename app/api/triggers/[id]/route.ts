@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/server/auth';
+import { describeActor, requireAuth } from '@/lib/server/auth';
+import { recordAudit } from '@/lib/server/audit-log';
 import { pluginIndex } from '@/lib/server/webhook-plugins/index';
 import { validateTriggerAgainstPlugin } from '@/lib/server/trigger-validation';
 import {
@@ -81,6 +82,18 @@ export async function PUT(req: Request, { params }: RouteParams): Promise<Respon
     }
 
     const saved = await saveTrigger(draft);
+    await recordAudit({
+      category: 'trigger',
+      action: 'updated',
+      outcome: 'success',
+      actor: describeActor(req),
+      target: saved.id,
+      detail: {
+        name: saved.name,
+        workflowId: saved.workflowId,
+        enabled: saved.enabled,
+      },
+    });
     return NextResponse.json({ trigger: saved });
   } catch (err) {
     if (err instanceof TriggerNotFoundError) return notFound();
@@ -97,6 +110,13 @@ export async function DELETE(req: Request, { params }: RouteParams): Promise<Res
   const { id } = await params;
   try {
     await deleteTrigger(id);
+    await recordAudit({
+      category: 'trigger',
+      action: 'deleted',
+      outcome: 'success',
+      actor: describeActor(req),
+      target: id,
+    });
     return new Response(null, { status: 204 });
   } catch (err) {
     if (err instanceof TriggerNotFoundError) return notFound();

@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { GET, POST } from './route';
 import { pluginIndex } from '@/lib/server/webhook-plugins/index';
+import { listAuditEntries } from '@/lib/server/audit-log';
 
 const tmpWfDir = path.join(os.tmpdir(), `infinite-loop-api-tr-wf-${process.pid}`);
 const tmpTrDir = path.join(os.tmpdir(), `infinite-loop-api-tr-tr-${process.pid}`);
@@ -131,6 +132,25 @@ describe('POST /api/triggers', () => {
     expect(json.trigger.id).toMatch(/^[A-Za-z0-9_-]{16,32}$/);
     expect(json.trigger.createdAt).toBeGreaterThan(0);
     expect(json.trigger.updatedAt).toBeGreaterThan(0);
+  });
+
+  test('records a trigger/created audit entry', async () => {
+    const res = await POST(new Request('http://test/api/triggers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'audited', enabled: true, workflowId: 'wf-a',
+        pluginId: 'generic', match: [], inputs: {},
+      }),
+    }));
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()).trigger;
+    const entries = await listAuditEntries({ limit: 10 });
+    expect(
+      entries.some(
+        (e) => e.category === 'trigger' && e.action === 'created' && e.target === id,
+      ),
+    ).toBe(true);
   });
 
   test('400 on invalid body', async () => {

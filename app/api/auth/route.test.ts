@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { SESSION_COOKIE_NAME, sessionCookieValue } from '@/lib/server/auth';
+import { listAuditEntries } from '@/lib/server/audit-log';
 import { DELETE, GET, POST } from './route';
 
 const orig = process.env.INFLOOP_API_TOKEN;
@@ -106,5 +107,41 @@ describe('DELETE /api/auth (logout)', () => {
     const cookie = res.cookies.get(SESSION_COOKIE_NAME);
     expect(cookie?.value).toBe('');
     expect(cookie?.maxAge).toBe(0);
+  });
+});
+
+describe('audit logging', () => {
+  // The route awaits recordAudit before returning, so the entry is on disk by
+  // the time POST/DELETE resolves. Assertions are tolerant of unrelated
+  // entries from other tests sharing the preloaded data dir.
+  it('records a successful login', async () => {
+    process.env.INFLOOP_API_TOKEN = 'secret';
+    await POST(authReq('POST', { body: { token: 'secret' } }));
+    const entries = await listAuditEntries({ limit: 10 });
+    expect(
+      entries.some(
+        (e) => e.category === 'auth' && e.action === 'login' && e.outcome === 'success',
+      ),
+    ).toBe(true);
+  });
+
+  it('records a failed login', async () => {
+    process.env.INFLOOP_API_TOKEN = 'secret';
+    await POST(authReq('POST', { body: { token: 'wrong' } }));
+    const entries = await listAuditEntries({ limit: 10 });
+    expect(
+      entries.some(
+        (e) => e.category === 'auth' && e.action === 'login' && e.outcome === 'failure',
+      ),
+    ).toBe(true);
+  });
+
+  it('records a logout when auth is enabled', async () => {
+    process.env.INFLOOP_API_TOKEN = 'secret';
+    await DELETE(authReq('DELETE'));
+    const entries = await listAuditEntries({ limit: 10 });
+    expect(
+      entries.some((e) => e.category === 'auth' && e.action === 'logout'),
+    ).toBe(true);
   });
 });

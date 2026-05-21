@@ -8,6 +8,7 @@ import { resolve as resolveTemplate } from '@/lib/server/templating';
 import { resolveRunInputs, WorkflowInputError } from '@/lib/shared/resolve-run-inputs';
 import { getWorkflow } from '@/lib/server/workflow-store';
 import { verifySignature } from '@/lib/server/webhook-signature';
+import { recordAudit } from '@/lib/server/audit-log';
 import { createLogger } from '@/lib/server/logger';
 import type { TriggerPredicate, WebhookTrigger } from '@/lib/shared/trigger';
 import type { Scope, Workflow } from '@/lib/shared/workflow';
@@ -30,6 +31,9 @@ function notFound() {
 
 export async function POST(req: Request, { params }: RouteParams): Promise<Response> {
   const { triggerId } = await params;
+  // Set when a trigger with `verifyOptional` accepts an unsigned request —
+  // recorded on the eventual `webhook/accepted` audit entry.
+  let acceptedUnsigned = false;
 
   // Body-size guard via content-length, BEFORE consuming body.
   const lenHeader = req.headers.get('content-length');
@@ -77,17 +81,34 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
           triggerId: hit.trigger.id,
           reason: verdict.reason,
         });
+        await recordAudit({
+          category: 'webhook',
+          action: 'rejected',
+          outcome: 'failure',
+          actor: 'webhook',
+          target: hit.trigger.id,
+          detail: { reason: 'bad-signature', verifyReason: verdict.reason },
+        });
         return NextResponse.json({ error: 'bad-signature' }, { status: 401 });
       }
     } else if (hit.trigger.verifyOptional === true) {
       log.warn('verifyOptional=true — accepting unsigned request', {
         triggerId: hit.trigger.id,
       });
+      acceptedUnsigned = true;
     } else {
       log.error(
         'trigger requires a secret (plugin declares signing) but has neither secret nor verifyOptional set',
         { triggerId: hit.trigger.id, pluginId: plugin.id },
       );
+      await recordAudit({
+        category: 'webhook',
+        action: 'rejected',
+        outcome: 'failure',
+        actor: 'webhook',
+        target: hit.trigger.id,
+        detail: { reason: 'misconfigured' },
+      });
       return NextResponse.json({ error: 'trigger-misconfigured' }, { status: 500 });
     }
   }
@@ -114,6 +135,14 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
     suppliedInputs = resolveTriggerInputs(hit.trigger, scope);
   } catch (err) {
     log.error('inputs resolve failed', { err });
+    await recordAudit({
+      category: 'webhook',
+      action: 'rejected',
+      outcome: 'failure',
+      actor: 'webhook',
+      target: hit.trigger.id,
+      detail: { reason: 'inputs-template-failed' },
+    });
     return NextResponse.json({ error: 'inputs-template-failed' }, { status: 500 });
   }
 
@@ -122,6 +151,14 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
     resolvedInputs = resolveRunInputs(workflow.inputs ?? [], suppliedInputs);
   } catch (err) {
     if (err instanceof WorkflowInputError) {
+      await recordAudit({
+        category: 'webhook',
+        action: 'rejected',
+        outcome: 'failure',
+        actor: 'webhook',
+        target: hit.trigger.id,
+        detail: { reason: 'invalid-inputs', field: err.field },
+      });
       return NextResponse.json(
         {
           error: 'invalid-inputs',
@@ -144,12 +181,32 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
       receivedAt: Date.now(),
     });
     void triggerQueue.drain();
+    await recordAudit({
+      category: 'webhook',
+      action: 'accepted',
+      outcome: 'success',
+      actor: 'webhook',
+      target: hit.trigger.id,
+      detail: {
+        queueId,
+        workflowId: workflow.id,
+        ...(acceptedUnsigned ? { unsigned: true } : {}),
+      },
+    });
     return NextResponse.json(
       { queued: true, queueId, position },
       { status: 202 },
     );
   } catch (err) {
     if ((err as { code?: string }).code === 'QUEUE_FULL') {
+      await recordAudit({
+        category: 'webhook',
+        action: 'rejected',
+        outcome: 'failure',
+        actor: 'webhook',
+        target: hit.trigger.id,
+        detail: { reason: 'queue-full' },
+      });
       return NextResponse.json(
         { error: 'queue-full' },
         { status: 503, headers: { 'Retry-After': '30' } },

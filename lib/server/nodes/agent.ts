@@ -32,7 +32,7 @@ function declaredOutputs(cfg: AgentConfig): AgentOutputDecl[] {
 /**
  * Materialize a per-invocation `mcp.json` referencing the in-process
  * SetOutput route. URL host is hard-coded to 127.0.0.1 (NOT process.env.HOST,
- * which defaults to 0.0.0.0); the child process talks back over loopback.
+ * which may be 0.0.0.0 or a LAN IP); the child process talks back over loopback.
  * Port is read from the runtime module, not env — server.ts may fall through
  * on EADDRINUSE.
  *

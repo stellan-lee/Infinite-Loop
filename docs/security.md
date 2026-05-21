@@ -11,13 +11,23 @@ That power means it should be treated like a local code execution surface, not a
 
 ## Default network posture
 
-Out of the box `server.ts` binds to `0.0.0.0` so the console is reachable from other machines on your LAN. This is convenient on a trusted home/office network, but **anyone who can reach your port can also run your workflows** — including the shell-condition and script nodes.
+Out of the box `server.ts` binds to `127.0.0.1` (loopback), so the console is reachable **only from this machine**. This is the fail-closed default: no token is needed because nothing off-host can connect.
 
-If you don't need LAN access:
+To reach the console from other machines you must bind a network address (`HOST=0.0.0.0` or a specific LAN IP). Because **anyone who can reach the port can also run your workflows** — including the shell-condition and script nodes — the server will **refuse to start** when bound to a network address with no `INFLOOP_API_TOKEN`. You then have two choices:
 
-```bash
-HOST=127.0.0.1 bun run dev
-```
+- **Recommended — require a token** (see [Headless / multi-user posture](#headless--multi-user-posture) below):
+
+  ```bash
+  INFLOOP_API_TOKEN=$(openssl rand -hex 32) HOST=0.0.0.0 bun run start
+  ```
+
+- **Acknowledge the risk** and run unauthenticated on a trusted network:
+
+  ```bash
+  INFLOOP_ALLOW_INSECURE=1 HOST=0.0.0.0 bun run start
+  ```
+
+  This starts the server but prints a loud insecure-mode banner. Anyone on the network can execute arbitrary code on this machine — only do this on a network you fully trust.
 
 ## Headless / multi-user posture
 

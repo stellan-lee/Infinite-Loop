@@ -6,14 +6,31 @@ import {
   killAllChildren,
 } from './lib/server/child-registry';
 import { setBoundPort } from './lib/server/runtime';
+import { evaluatePosture, isLoopbackHost } from './lib/server/network-posture';
 
 const dev = process.env.NODE_ENV !== 'production';
 const startPort = Number(process.env.PORT ?? 3000);
-// Bind to all interfaces by default so the console is reachable from other
-// machines on the LAN. Override with HOST=127.0.0.1 to keep it loopback-only.
-// Heads-up: `/api/run` will execute provider CLIs and (for `command`-kind
-// conditions) shell out, so only do this on a trusted network.
-const host = process.env.HOST ?? '0.0.0.0';
+// Bind to loopback only by default: Infinite Loop executes arbitrary code
+// (Script / Condition-command / Agent nodes), so a network-reachable server
+// is unauthenticated remote code execution. Opt into LAN exposure with
+// HOST=0.0.0.0 — the posture gate below then requires either an API token
+// or an explicit INFLOOP_ALLOW_INSECURE=1 acknowledgement.
+const host = process.env.HOST ?? '127.0.0.1';
+
+// Fail closed before doing any work: refuse to start a network-reachable,
+// unauthenticated server. `authEnabled` mirrors requireAuth() in
+// lib/server/auth.ts, which treats an unset/empty INFLOOP_API_TOKEN as
+// open mode (Boolean('') === false).
+const posture = evaluatePosture({
+  host,
+  authEnabled: Boolean(process.env.INFLOOP_API_TOKEN),
+  allowInsecure: process.env.INFLOOP_ALLOW_INSECURE === '1',
+});
+if (!posture.ok) {
+  console.error(posture.error);
+  process.exit(1);
+}
+
 // If the requested port is taken, walk forward up to this many ports.
 const MAX_PORT_FALLBACK = 20;
 
@@ -35,8 +52,11 @@ console.log(`Infinite Loop ready on http://${host}:${port}`);
 if (port !== startPort) {
   console.log(`  (port ${startPort} was in use; fell through to ${port})`);
 }
-if (host === '0.0.0.0') {
+if (!isLoopbackHost(host)) {
   for (const url of lanUrls(port)) console.log(`  also: ${url}`);
+}
+if (posture.warning) {
+  console.warn(`\n${posture.warning}\n`);
 }
 
 installShutdownHandlers(httpServer);

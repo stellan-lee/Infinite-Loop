@@ -27,3 +27,23 @@ expect.extend(matchers as unknown as Record<string, never>);
 afterEach(() => {
   cleanup();
 });
+
+// Isolate every test from the developer's real data directory. Server code
+// derives runs/, pids/, active-runs/, triggers/, connections/ from `dataDir()`,
+// which honors INFLOOP_DATA_DIR — point it at a throwaway temp dir so a test
+// run never reads or writes `~/.infinite-loop`. A test that needs its own
+// fixtures can still override INFLOOP_DATA_DIR for itself.
+if (!process.env.INFLOOP_DATA_DIR) {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'infloop-test-data-'));
+  process.env.INFLOOP_DATA_DIR = dir;
+  process.on('exit', () => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best effort — the OS reaps its temp dir anyway
+    }
+  });
+}

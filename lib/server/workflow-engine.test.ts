@@ -687,3 +687,190 @@ describe('runId on snapshot', () => {
     expect(second).not.toBe(first);
   });
 });
+
+describe('WorkflowEngine — run-level execution budget', () => {
+  beforeEach(() => {
+    eventBus.clear();
+  });
+
+  afterEach(() => {
+    eventBus.clear();
+  });
+
+  const passthroughExecutors = (): Record<string, NodeExecutor> => ({
+    start: exec(['next']),
+    end: exec(['next']),
+    agent: exec(['next']),
+    condition: exec(['next']),
+    loop: exec(['next']),
+  });
+
+  /** start → loop(infinite, body=[agent]) → end. The agent has no outgoing
+   *  edge, so every iteration falls through to `continue` and the loop spins
+   *  forever — the run only ends when something stops it. */
+  function infiniteLoopWorkflow(id: string): Workflow {
+    const agent: WorkflowNode = {
+      id: 'agent-1',
+      type: 'agent',
+      position: { x: 0, y: 0 },
+      config: { prompt: 'p', cwd: '/tmp', timeoutMs: 1000 },
+    };
+    const loop: WorkflowNode = {
+      id: 'loop-1',
+      type: 'loop',
+      position: { x: 0, y: 0 },
+      config: { maxIterations: 1, mode: 'unbounded', infinite: true },
+      children: [agent],
+    };
+    return {
+      id,
+      name: id,
+      version: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      nodes: [startNode, loop, endNode],
+      edges: [
+        { id: 'e1', source: 'start-1', sourceHandle: 'next', target: 'loop-1' },
+        { id: 'e2', source: 'loop-1', sourceHandle: 'next', target: 'end-1' },
+      ],
+    };
+  }
+
+  /** start → loop(maxIterations=200, body=[agent]) → end. A *finite* loop —
+   *  used to prove the budget catches oversized bounded runs too. */
+  function finiteLoopWorkflow(id: string): Workflow {
+    const agent: WorkflowNode = {
+      id: 'agent-1',
+      type: 'agent',
+      position: { x: 0, y: 0 },
+      config: { prompt: 'p', cwd: '/tmp', timeoutMs: 1000 },
+    };
+    const loop: WorkflowNode = {
+      id: 'loop-1',
+      type: 'loop',
+      position: { x: 0, y: 0 },
+      config: { maxIterations: 200, mode: 'unbounded' },
+      children: [agent],
+    };
+    return {
+      id,
+      name: id,
+      version: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      nodes: [startNode, loop, endNode],
+      edges: [
+        { id: 'e1', source: 'start-1', sourceHandle: 'next', target: 'loop-1' },
+        { id: 'e2', source: 'loop-1', sourceHandle: 'next', target: 'end-1' },
+      ],
+    };
+  }
+
+  it('fails an infinite loop once the node-execution budget is exceeded', async () => {
+    const eng = new WorkflowEngine(passthroughExecutors(), undefined, {
+      runBudget: { maxNodeExecutions: 50 },
+    });
+    const { events } = captureEvents();
+
+    await eng.start(infiniteLoopWorkflow('w-budget-inf'));
+
+    // Reclassified as `failed` — NOT `cancelled`, which would misattribute a
+    // runaway loop to the user pressing stop.
+    expect(eng.getState().status).toBe('failed');
+    expect(eng.getState().errorMessage).toContain('node-execution budget');
+    expect(
+      events.some(
+        (e) =>
+          e.type === 'error' &&
+          (e as { message: string }).message.includes('node-execution budget'),
+      ),
+    ).toBe(true);
+  });
+
+  it('also trips on a finite but oversized run', async () => {
+    const eng = new WorkflowEngine(passthroughExecutors(), undefined, {
+      runBudget: { maxNodeExecutions: 50 },
+    });
+
+    await eng.start(finiteLoopWorkflow('w-budget-finite'));
+
+    // maxIterations=200 would settle on its own, but 200 node steps blow the
+    // 50-step ceiling first.
+    expect(eng.getState().status).toBe('failed');
+    expect(eng.getState().errorMessage).toContain('node-execution budget');
+  });
+
+  it('treats maxNodeExecutions: 0 as disabled', async () => {
+    const eng = new WorkflowEngine(passthroughExecutors(), undefined, {
+      runBudget: { maxNodeExecutions: 0, maxDurationMs: 0 },
+    });
+
+    await eng.start(finiteLoopWorkflow('w-budget-disabled'));
+
+    // The same 200-iteration loop that failed above now runs to completion.
+    expect(eng.getState().status).toBe('succeeded');
+    expect(eng.getState().iterationByLoopId['loop-1']).toBe(200);
+  });
+
+  it('enforces the wall-clock duration ceiling', async () => {
+    const executors = passthroughExecutors();
+    executors.agent = {
+      async execute() {
+        await new Promise((r) => setTimeout(r, 5));
+        return { branch: 'next' as EdgeHandle, outputs: {} };
+      },
+    };
+    const eng = new WorkflowEngine(executors, undefined, {
+      // Node ceiling clears the ~3 steps this run takes before the duration
+      // cap trips, but stays low enough that a duration-check regression
+      // fails fast with a wrong-message assertion instead of spinning.
+      runBudget: { maxNodeExecutions: 500, maxDurationMs: 1 },
+    });
+
+    await eng.start(infiniteLoopWorkflow('w-budget-wallclock'));
+
+    expect(eng.getState().status).toBe('failed');
+    expect(eng.getState().errorMessage).toContain('wall-clock budget');
+  });
+
+  it('allows a run that exactly meets the node budget', async () => {
+    // start → agent → end is exactly 3 node steps.
+    const wf: Workflow = {
+      id: 'w-budget-exact',
+      name: 'budget-exact',
+      version: 1,
+      createdAt: 0,
+      updatedAt: 0,
+      nodes: [
+        startNode,
+        {
+          id: 'agent-1',
+          type: 'agent',
+          position: { x: 0, y: 0 },
+          config: { prompt: 'p', cwd: '/tmp', timeoutMs: 1000 },
+        },
+        endNode,
+      ],
+      edges: [
+        { id: 'e1', source: 'start-1', sourceHandle: 'next', target: 'agent-1' },
+        { id: 'e2', source: 'agent-1', sourceHandle: 'next', target: 'end-1' },
+      ],
+    };
+
+    // Budget == step count: the run must still succeed (the ceiling trips
+    // only when the count goes *over* the limit).
+    const exactEng = new WorkflowEngine(passthroughExecutors(), undefined, {
+      runBudget: { maxNodeExecutions: 3 },
+    });
+    await exactEng.start(wf);
+    expect(exactEng.getState().status).toBe('succeeded');
+
+    // One under: the 3rd step is one too many.
+    const underEng = new WorkflowEngine(passthroughExecutors(), undefined, {
+      runBudget: { maxNodeExecutions: 2 },
+    });
+    await underEng.start(wf);
+    expect(underEng.getState().status).toBe('failed');
+    expect(underEng.getState().errorMessage).toContain('node-execution budget');
+  });
+});

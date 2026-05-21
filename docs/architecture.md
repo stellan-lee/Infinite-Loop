@@ -64,6 +64,8 @@ lib/
     workflow-engine.ts  graph walker + Loop / Parallel / Subworkflow semantics
     workflow-store.ts   filesystem-backed CRUD
     run-store.ts        persists completed runs under runs/
+    crash-recovery.ts   boot-time reaping of crash-orphaned children + runs
+    child-registry.ts   tracks detached child PIDs (in-memory + on-disk)
     trigger-queue.ts    in-memory FIFO queue (cap 100)
     trigger-store.ts    webhook trigger persistence
     event-bus.ts        typed pub/sub
@@ -77,6 +79,8 @@ webhook-plugins/        webhook source manifests (GitHub ships in the box)
 workflows/              the workflow JSON store
   library/              read-only repo-shipped presets (Team, …)
 runs/                   persisted run records, one folder per workflow
+pids/                   live detached-child PID records (crash recovery)
+active-runs/             in-flight run markers (crash recovery)
 triggers/               webhook trigger configs, one file per trigger
 docs/                   user-facing documentation
 ```

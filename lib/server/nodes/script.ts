@@ -153,7 +153,7 @@ function runInterpreter(
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: true,
       });
-      if (child.pid != null) registerChild(child.pid);
+      if (child.pid != null) registerChild(child.pid, { bin });
     } catch (err) {
       resolve({
         stdout: '',

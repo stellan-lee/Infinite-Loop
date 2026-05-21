@@ -93,7 +93,7 @@ export async function listCliAgents(
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
-    if (child.pid != null) registerChild(child.pid);
+    if (child.pid != null) registerChild(child.pid, { bin });
     let stdout = '';
     let stderr = '';
     let settled = false;

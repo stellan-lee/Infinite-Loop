@@ -25,7 +25,11 @@ import type { NodeExecutor, RunSnapshot, Workflow } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { nodeExecutors } from './nodes/index';
 import { getWorkflow } from './workflow-store';
-import { RunController, type WorkflowLoader } from './run-controller';
+import {
+  RunController,
+  type RunBudget,
+  type WorkflowLoader,
+} from './run-controller';
 import { SlotPool } from './slot-pool';
 import { DirLockManager } from './dir-lock-manager';
 
@@ -56,14 +60,19 @@ export class WorkflowEngine {
 
   private executors: Record<string, NodeExecutor>;
   private loadWorkflow: WorkflowLoader;
+  /** Optional run-budget override applied to every controller this engine
+   *  spawns. Unset in production (controllers fall back to env defaults);
+   *  set by tests to exercise the runaway guard cheaply. */
+  private runBudget?: Partial<RunBudget>;
 
   constructor(
     executors: Record<string, NodeExecutor> = nodeExecutors,
     loadWorkflow: WorkflowLoader = getWorkflow,
-    opts?: { maxConcurrentRuns?: number },
+    opts?: { maxConcurrentRuns?: number; runBudget?: Partial<RunBudget> },
   ) {
     this.executors = executors;
     this.loadWorkflow = loadWorkflow;
+    this.runBudget = opts?.runBudget;
     this.slotPool = new SlotPool({
       capacity: opts?.maxConcurrentRuns ?? readMaxConcurrentFromEnv(),
     });
@@ -112,6 +121,7 @@ export class WorkflowEngine {
       loadWorkflow: this.loadWorkflow,
       lockManager: this.lockManager,
       slotPool: this.slotPool,
+      budget: this.runBudget,
     });
     this.runs.set(controller.runId, controller);
     this.last = controller;
@@ -151,7 +161,7 @@ export class WorkflowEngine {
 // `globalThis.__infiniteLoopWorkflowRegistry` was constructed with the old
 // class definition and behaves the old way for the rest of the dev server's
 // life.
-const ENGINE_VERSION = 13;
+const ENGINE_VERSION = 14;
 
 declare global {
   // eslint-disable-next-line no-var

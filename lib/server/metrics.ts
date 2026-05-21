@@ -93,6 +93,10 @@ export interface GaugeSnapshot {
   slotPoolWaiting: number;
   /** Trigger-queue items waiting to start. */
   queueDepth: number;
+  /** Workflow events currently buffered in memory across all live runs. */
+  eventBufferEvents: number;
+  /** Configured aggregate ceiling on in-memory buffered workflow events. */
+  eventBufferLimit: number;
   /** Seconds since this server process started. */
   processUptimeSeconds: number;
 }
@@ -359,6 +363,26 @@ export class MetricsRegistry {
       'Trigger-queue items waiting to start.',
     );
     out.push(`infloop_queue_depth ${formatValue(gauges.queueDepth)}`);
+
+    family(
+      'infloop_event_buffer_events',
+      'gauge',
+      'Workflow events currently buffered in memory across all live runs.',
+    );
+    out.push(
+      `infloop_event_buffer_events ${formatValue(gauges.eventBufferEvents)}`,
+    );
+
+    family(
+      'infloop_event_buffer_limit',
+      'gauge',
+      'Configured aggregate ceiling on in-memory buffered workflow events. ' +
+        'When live runs together approach it, each run\'s buffer is squeezed ' +
+        'to a fair share so the aggregate plateaus instead of risking an OOM.',
+    );
+    out.push(
+      `infloop_event_buffer_limit ${formatValue(gauges.eventBufferLimit)}`,
+    );
 
     family(
       'infloop_process_uptime_seconds',

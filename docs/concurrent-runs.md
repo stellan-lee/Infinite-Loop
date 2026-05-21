@@ -22,7 +22,7 @@ The real hazard preventing concurrent runs is not CPU — it is that two Agent n
 - Distributed locking across multiple server processes. The lock manager is in-process; only this server spawns the agents.
 - Read/write lock distinction. Agents are uncontrolled; default to exclusive.
 - Cross-workflow atomicity guarantees beyond what the directory lock provides.
-- A soft cap that bounds total in-flight runs to protect memory. Documented foot-gun; deferred to a follow-up if it bites.
+- A soft cap on the *number* of in-flight runs. Run count is not bounded; the aggregate *memory* of their event buffers is — see the Memory note under Risks.
 - Streaming `runEventLog` to disk.
 - Per-workflow `concurrency: serial | parallel` flag. The directory lock supersedes it.
 
@@ -331,7 +331,7 @@ The cap applies **only** to runs that have acquired a slot (folder-touching, CLI
 
 ## Risks
 
-- **Memory.** Each in-flight run buffers up to 5k live + 50k persisted events (`workflow-engine.ts:79-86`). A webhook flood admitted via `TriggerQueue` (max 100 admitted at once) can saturate memory before the first run settles. v1 leaves this as a documented foot-gun with a TODO comment at the `recentEvents` declaration pointing at a future soft cap.
+- **Memory.** Each in-flight run buffers events for SSE replay (`recentEvents`, ≤5k) and persistence (`runEventLog`, ≤50k). Those caps are *per run*; they do not bound the **aggregate** across concurrent runs, so a webhook flood (`TriggerQueue` admits up to 100) could once grow memory without bound and OOM-kill the process. **Closed** by `EventMemoryBudget` (`lib/server/event-memory-budget.ts`): a process-wide event ceiling (`INFLOOP_MAX_TOTAL_EVENT_BUFFER`, default 200k events) is divided fairly among the live runs, so each run's buffer is squeezed under load and the aggregate plateaus at the ceiling instead of scaling with the run count. Surfaced as `infloop_event_buffer_events` / `infloop_event_buffer_limit` on `/api/metrics`; covered by the deterministic concurrency test in `run-controller-buffer.test.ts`.
 - **Test migration.** ~1000 lines across `workflow-engine.test.ts`, `trigger-queue.test.ts`, `trigger-queue-singleton.test.ts`, and `dispatch-integration.test.ts` need rewrites. The 1a/1b stage split bounds the rewrite to stage 1b.
 - **Mid-workflow interleaving across runs.** Documented. Mitigation is `useWorktree`.
 - **Script-node cwd not locked.** A Script node that shells into a directory bypasses the lock manager. Same behavior as today; flagged for follow-up. If the user reports a Script-vs-Agent contention bug we know where to add the call.

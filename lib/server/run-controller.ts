@@ -25,6 +25,7 @@ import type {
 } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
+import { eventMemoryBudget, type EventMemoryBudget } from './event-memory-budget';
 import { removeRunMarker, saveRun, writeRunMarker } from './run-store';
 import { recordAudit } from './audit-log';
 import { metrics } from './metrics';
@@ -82,8 +83,18 @@ interface ExecutionScope {
   subworkflowStack?: string[];
 }
 
-const EVENT_HISTORY_CAP = 5000;
-const PERSIST_EVENT_CAP = 50_000;
+/* ─── per-run event-buffer hard caps ─────────────────────────────────────────
+ *
+ * Upper bounds on the two event buffers a single run keeps in memory:
+ * `recentEvents` (SSE replay) and `runEventLog` (the to-be-persisted log). A
+ * lone run is bounded by exactly these. Under concurrency the process-wide
+ * `EventMemoryBudget` (see event-memory-budget.ts) hands each run a smaller
+ * dynamic cap so the AGGREGATE across all live runs cannot OOM the process;
+ * `trimEventBuffers` applies whichever is tighter. Exported so the buffer
+ * tests can assert against the real ceilings rather than magic numbers.
+ */
+export const EVENT_HISTORY_CAP = 5000;
+export const PERSIST_EVENT_CAP = 50_000;
 
 /* ─── run-level execution budget ─────────────────────────────────────────────
  *
@@ -192,6 +203,10 @@ export interface RunControllerDeps {
    *  defaults (`resolveRunBudget`); omitted in production, supplied by tests
    *  to exercise the guard without running thousands of nodes. */
   budget?: Partial<RunBudget>;
+  /** Process-wide event-memory budget. Optional — defaults to the shared
+   *  singleton; tests inject one with a small cap to exercise buffer
+   *  backpressure without buffering hundreds of thousands of events. */
+  eventBudget?: EventMemoryBudget;
 }
 
 export class RunController {
@@ -212,6 +227,13 @@ export class RunController {
 
   /** Resolved run-level budget (env defaults merged with any deps override). */
   private readonly budget: RunBudget;
+  /** Process-wide event-memory budget; bounds the aggregate event buffer
+   *  across all live runs. See `trimEventBuffers`. */
+  private readonly eventBudget: EventMemoryBudget;
+  /** True between `eventBudget.register()` and its paired `unregister()` —
+   *  guards both sides so they stay balanced even under a pathological
+   *  double `start()`. */
+  private eventBudgetRegistered = false;
   /** Node steps taken so far this run — counted against `budget`. */
   private nodeExecutionCount = 0;
   /** Provider-reported cost (USD) accumulated so far this run — counted
@@ -231,6 +253,7 @@ export class RunController {
     this.lockManager = deps.lockManager;
     this.slotPool = deps.slotPool;
     this.budget = { ...resolveRunBudget(), ...deps.budget };
+    this.eventBudget = deps.eventBudget ?? eventMemoryBudget;
     this.abort = new AbortController();
     this.worktrees = new RunWorktreesImpl(this.runId);
     this.snapshot = {
@@ -243,6 +266,16 @@ export class RunController {
 
   getState(): RunSnapshot {
     return { ...this.snapshot, events: this.recentEvents };
+  }
+
+  /**
+   * Events currently held in the persisted-event buffer (`runEventLog`) —
+   * the dominant in-memory cost of a live run (the SSE replay buffer holds a
+   * subset of the very same event objects). `/api/metrics` sums this across
+   * live runs to expose `infloop_event_buffer_events`.
+   */
+  bufferedEventCount(): number {
+    return this.runEventLog.length;
   }
 
   stop(): void {
@@ -348,16 +381,26 @@ export class RunController {
     this.nodeExecutionCount = 0;
     this.runCostUsd = 0;
     this.budgetExceededMessage = undefined;
+    // Join the process-wide event-memory budget for the run's lifetime: this
+    // run now counts toward the live-run divisor, and `trimEventBuffers`
+    // squeezes this run's buffers to its fair share. Unregistered in the
+    // settle `finally` alongside `captureUnsub`. Guarded so a pathological
+    // double `start()` cannot register twice and permanently inflate the
+    // divisor (the unregister side is guarded by the same flag).
+    if (!this.eventBudgetRegistered) {
+      this.eventBudget.register();
+      this.eventBudgetRegistered = true;
+    }
     const captureUnsub = eventBus.subscribe((ev) => {
+      // Buffer only THIS run's events. `emit()` stamps every run-scoped event
+      // with `runId`; queue-scoped events carry none. Without this filter
+      // every controller would buffer every concurrent run's events —
+      // cross-contaminating the persisted history and SSE replay, and
+      // holding each event N times under N-way concurrency.
+      if ((ev as { runId?: string }).runId !== this.runId) return;
       this.recentEvents.push(ev);
-      if (this.recentEvents.length > EVENT_HISTORY_CAP) {
-        this.recentEvents.shift();
-      }
       this.runEventLog.push(ev);
-      if (this.runEventLog.length > PERSIST_EVENT_CAP) {
-        this.runEventLog.shift();
-        this.runEventLogTruncated = true;
-      }
+      this.trimEventBuffers();
     });
 
     // Register the lock-wait observer so the lock manager can stamp
@@ -462,6 +505,13 @@ export class RunController {
       });
     } finally {
       captureUnsub();
+      // Leave the event-memory budget: the run's buffers stop growing here,
+      // so it must stop counting toward every other run's fair-share divisor.
+      // Guarded so a future second code path cannot double-unregister.
+      if (this.eventBudgetRegistered) {
+        this.eventBudgetRegistered = false;
+        this.eventBudget.unregister();
+      }
     }
 
     // Snapshot every value the persist task needs RIGHT NOW. `persistRun` is
@@ -568,6 +618,33 @@ export class RunController {
   }
 
   /* ─── internals ─────────────────────────────────────────────────────────── */
+
+  /**
+   * Cap both event buffers after an append. The persisted log (`runEventLog`)
+   * is bounded by the tighter of its own hard cap (`PERSIST_EVENT_CAP`) and
+   * the event-memory budget's fair share for the current concurrency — so a
+   * burst of concurrent runs cannot grow the aggregate buffer without bound.
+   * The SSE replay buffer (`recentEvents`) is then clamped to never exceed the
+   * persisted log: an event dropped from the log must also drop from replay,
+   * otherwise replay would pin event objects whose memory the log already
+   * "freed". Oldest events are evicted first (`splice` from the front handles
+   * a cap that fell by more than one between appends, e.g. when a new run
+   * just joined); a persisted-log eviction sets the existing `truncated` flag.
+   */
+  private trimEventBuffers(): void {
+    const persistCap = Math.min(
+      PERSIST_EVENT_CAP,
+      this.eventBudget.perRunEventCap(),
+    );
+    const recentCap = Math.min(EVENT_HISTORY_CAP, persistCap);
+    if (this.recentEvents.length > recentCap) {
+      this.recentEvents.splice(0, this.recentEvents.length - recentCap);
+    }
+    if (this.runEventLog.length > persistCap) {
+      this.runEventLog.splice(0, this.runEventLog.length - persistCap);
+      this.runEventLogTruncated = true;
+    }
+  }
 
   private indexEdges(edges: WorkflowEdge[]) {
     this.edgesBySource.clear();

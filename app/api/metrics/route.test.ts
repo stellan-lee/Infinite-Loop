@@ -35,6 +35,9 @@ describe('GET /api/metrics', () => {
     expect(body).toContain('infloop_runs_active ');
     expect(body).toContain('infloop_slot_pool_capacity ');
     expect(body).toContain('infloop_queue_depth ');
+    // Event-memory-budget gauges: aggregate buffered events + the ceiling.
+    expect(body).toContain('infloop_event_buffer_events ');
+    expect(body).toContain('infloop_event_buffer_limit ');
     expect(body.endsWith('\n')).toBe(true);
   });
 

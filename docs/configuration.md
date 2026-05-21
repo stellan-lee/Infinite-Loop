@@ -15,6 +15,7 @@
 | `INFLOOP_MAX_RUN_NODE_EXECUTIONS` | `10000` | Run-level safety ceiling: max node-execution steps per run before it is aborted and marked failed. Bounds runaway loops, including `infinite: true`. `0` disables. |
 | `INFLOOP_MAX_RUN_DURATION_MS` | `86400000` (24h) | Run-level wall-clock cap, in milliseconds, checked at each node-step boundary (a single long-running node is not interrupted mid-flight). A backstop against a genuinely-stuck run, not a tight SLA. `0` disables. |
 | `INFLOOP_MAX_RUN_COST_USD` | `0` (disabled) | Run-level cost ceiling, in US dollars. When set, a run is aborted and marked failed once accumulated provider-reported cost exceeds it. Only providers that report cost are counted (currently the `claude` CLI); HTTP providers report none. `0` disables. |
+| `INFLOOP_MAX_TOTAL_EVENT_BUFFER` | `200000` | Process-wide ceiling, in events, on workflow events buffered in memory across all concurrent runs. Each run's event buffer is dynamically squeezed to a fair share of this ceiling, so a burst of triggers cannot grow memory without bound. A non-numeric, zero or negative value falls back to the default. Exposed live as `infloop_event_buffer_events` / `infloop_event_buffer_limit` on `/api/metrics`. |
 | `INFLOOP_PROVIDERS_DIR` | `<cwd>/providers` | Where provider manifests live |
 | `INFLOOP_PROVIDER_BIN_<ID>` | _(unset)_ | Override the binary for provider `<ID>` (upper-cased), e.g. `INFLOOP_PROVIDER_BIN_CLAUDE=/opt/claude` |
 | `INFLOOP_CLAUDE_BIN` | `claude` | Legacy override for the `claude` provider only — kept for back-compat |

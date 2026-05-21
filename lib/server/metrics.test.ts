@@ -14,6 +14,8 @@ const ZERO_GAUGES: GaugeSnapshot = {
   slotPoolCapacity: 0,
   slotPoolWaiting: 0,
   queueDepth: 0,
+  eventBufferEvents: 0,
+  eventBufferLimit: 0,
   processUptimeSeconds: 0,
 };
 
@@ -57,6 +59,8 @@ describe('MetricsRegistry — zero-seeded series', () => {
     expect(body).toContain('# TYPE infloop_runs_total counter');
     expect(body).toContain('# TYPE infloop_run_duration_seconds histogram');
     expect(body).toContain('# TYPE infloop_runs_active gauge');
+    expect(body).toContain('# TYPE infloop_event_buffer_events gauge');
+    expect(body).toContain('# TYPE infloop_event_buffer_limit gauge');
     // Prometheus requires a trailing newline after the last sample.
     expect(body.endsWith('\n')).toBe(true);
   });
@@ -203,6 +207,8 @@ describe('MetricsRegistry — gauges', () => {
         slotPoolCapacity: 4,
         slotPoolWaiting: 1,
         queueDepth: 7,
+        eventBufferEvents: 8_400,
+        eventBufferLimit: 200_000,
         processUptimeSeconds: 123,
       }),
     );
@@ -211,6 +217,8 @@ describe('MetricsRegistry — gauges', () => {
     expect(s.get('infloop_slot_pool_capacity')).toBe(4);
     expect(s.get('infloop_slot_pool_waiting')).toBe(1);
     expect(s.get('infloop_queue_depth')).toBe(7);
+    expect(s.get('infloop_event_buffer_events')).toBe(8_400);
+    expect(s.get('infloop_event_buffer_limit')).toBe(200_000);
     expect(s.get('infloop_process_uptime_seconds')).toBe(123);
   });
 

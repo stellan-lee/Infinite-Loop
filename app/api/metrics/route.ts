@@ -1,5 +1,6 @@
 import { requireAuth } from '@/lib/server/auth';
 import { metrics } from '@/lib/server/metrics';
+import { eventMemoryBudget } from '@/lib/server/event-memory-budget';
 import { workflowEngine } from '@/lib/server/workflow-engine';
 import { triggerQueue } from '@/lib/server/trigger-queue-singleton';
 
@@ -27,12 +28,18 @@ export async function GET(req: Request): Promise<Response> {
   // Gauges are collected here, not in the registry: the registry must not
   // import the engine (it would close an import cycle — see metrics.ts).
   const slotPool = workflowEngine.slotPool;
+  const liveRuns = workflowEngine.list();
   const body = metrics.render({
-    runsActive: workflowEngine.list().length,
+    runsActive: liveRuns.length,
     slotPoolInUse: slotPool.size(),
     slotPoolCapacity: slotPool.getCapacity(),
     slotPoolWaiting: slotPool.waiterCount(),
     queueDepth: triggerQueue.size(),
+    eventBufferEvents: liveRuns.reduce(
+      (sum, run) => sum + run.bufferedEventCount(),
+      0,
+    ),
+    eventBufferLimit: eventMemoryBudget.totalCap,
     processUptimeSeconds: Math.round(process.uptime()),
   });
 

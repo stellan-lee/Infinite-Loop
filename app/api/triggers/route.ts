@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { requireAuth } from '@/lib/server/auth';
+import { describeActor, requireAuth } from '@/lib/server/auth';
+import { recordAudit } from '@/lib/server/audit-log';
 import { listTriggers, saveTrigger } from '@/lib/server/trigger-store';
 import { randomBytes } from 'node:crypto';
 import type { WebhookTrigger } from '@/lib/shared/trigger';
@@ -63,6 +64,18 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const saved = await saveTrigger(draft);
+    await recordAudit({
+      category: 'trigger',
+      action: 'created',
+      outcome: 'success',
+      actor: describeActor(req),
+      target: saved.id,
+      detail: {
+        name: saved.name,
+        workflowId: saved.workflowId,
+        enabled: saved.enabled,
+      },
+    });
     return NextResponse.json({ trigger: saved }, { status: 201 });
   } catch (err) {
     return NextResponse.json(

@@ -42,3 +42,16 @@ export function pidsDir(): string {
 export function activeRunsDir(): string {
   return path.join(dataDir(), 'active-runs');
 }
+
+/**
+ * Directory holding the append-only audit log — `audit.jsonl` plus its rotated
+ * generations. See audit-log.ts and specs/audit-log.md.
+ *
+ * Derived from `dataDir()` with no separate env var, like `pidsDir()` and
+ * `activeRunsDir()`: the audit log is durable history that belongs with the
+ * data dir, and the standard `INFLOOP_DATA_DIR` test override isolates it for
+ * free.
+ */
+export function auditDir(): string {
+  return path.join(dataDir(), 'audit');
+}

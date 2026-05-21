@@ -26,6 +26,7 @@ import { GET as runGET } from '@/app/api/runs/[workflowId]/[runId]/route';
 import { saveWorkflow } from './workflow-store';
 import { workflowEngine } from './workflow-engine';
 import { eventBus } from './event-bus';
+import { flushAudit, listAuditEntries } from './audit-log';
 import type { Workflow, WorkflowEvent } from '../shared/workflow';
 
 const tmpWfDir = path.join(os.tmpdir(), `infinite-loop-run-lifecycle-wf-${process.pid}`);
@@ -186,5 +187,16 @@ describe('run lifecycle — compose -> run -> stream -> persist -> replay', () =
     const summary = listBody.runs.find((r) => r.runId === runId);
     expect(summary).toBeDefined();
     expect(summary!.status).toBe('succeeded');
+
+    // audit: the run's lifecycle was recorded in the durable audit log. The
+    // run-controller hooks fire-and-forget, so drain the queue before reading.
+    await flushAudit();
+    const runAudit = (await listAuditEntries({ limit: 200 })).filter(
+      (e) => e.category === 'run' && e.target === runId,
+    );
+    expect(runAudit.some((e) => e.action === 'started')).toBe(true);
+    expect(
+      runAudit.some((e) => e.action === 'finished' && e.outcome === 'success'),
+    ).toBe(true);
   });
 });

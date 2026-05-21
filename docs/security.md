@@ -134,6 +134,36 @@ A normal Ctrl+C shutdown reaps children directly and leaves nothing to
 recover. Recovery is also instance-aware: when two servers run at once (port
 fallback), one never reaps the other's live children or runs.
 
+## Audit log
+
+Infinite Loop runs unattended — triggered by webhooks and MCP when nobody is
+watching the console. A proxy in front of the app can supply per-user identity
+and access logs, but it can never see *what the app did*: which workflow ran,
+which trigger was created or deleted, which login attempt failed, which
+webhook was accepted or rejected. Only the app knows that.
+
+So every trust-relevant event is written to a durable, append-only audit log
+at `<data-dir>/audit/audit.jsonl` — one JSON object per line, the moment it
+happens. It covers:
+
+- **run lifecycle** — a run starting and settling, including runs reconciled
+  as failed after a crash;
+- **auth** — login successes and failures, and logout;
+- **triggers** — every create, update, and delete via the API;
+- **webhooks** — each request to a real trigger that is accepted or rejected
+  (bad signature, queue full, misconfigured, invalid inputs).
+
+Unlike run history — capped per workflow and pruned — the audit log is bounded
+only by a generous size-based rotation (`INFLOOP_AUDIT_MAX_BYTES` /
+`INFLOOP_AUDIT_MAX_FILES`), so it retains months of events. Entries record a
+coarse actor (`api-token`, `browser-session`, `webhook`, `system`, `open`) but
+never a secret — no tokens, no trigger secrets, no request bodies. Read it
+back through the authenticated `GET /api/audit` endpoint.
+
+The log shares the data directory's trust boundary: it is not tamper-proofed,
+because a local attacker who can rewrite it can already rewrite everything
+else on the machine.
+
 ## Reporting security issues
 
 Infinite Loop is pre-1.0 and currently has no formal disclosure channel. Open a GitHub issue for non-sensitive concerns; for anything that warrants private disclosure, contact the maintainer directly.

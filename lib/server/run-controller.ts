@@ -26,6 +26,7 @@ import type {
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
 import { removeRunMarker, saveRun, writeRunMarker } from './run-store';
+import { recordAudit } from './audit-log';
 import { resolve as resolveTemplate } from './templating';
 import { RunWorktreesImpl } from './worktree-manager';
 import { releaseRun } from './mcp/output-registry';
@@ -314,6 +315,18 @@ export class RunController {
       workflowName: workflow.name,
     });
 
+    // Audit the run lifecycle. Fire-and-forget: this hook runs inside the
+    // long-lived engine, not a request about to return, and must not be
+    // slowed by a disk write. `recordAudit` never throws.
+    void recordAudit({
+      category: 'run',
+      action: 'started',
+      outcome: 'info',
+      actor: 'system',
+      target: this.runId,
+      detail: { workflowId: workflow.id, workflowName: workflow.name },
+    });
+
     let finalStatus: TerminalRunStatus = 'failed';
     let errorMessage: string | undefined;
 
@@ -426,6 +439,28 @@ export class RunController {
     truncated: boolean;
     scope: Scope;
   }): Promise<void> {
+    // Audit the run's settle independently of the history write below — the
+    // audit record must survive even if `saveRun` fails. `cancelled` is
+    // neither a success nor a failure of the workflow itself.
+    void recordAudit({
+      category: 'run',
+      action: 'finished',
+      outcome:
+        args.status === 'succeeded'
+          ? 'success'
+          : args.status === 'cancelled'
+            ? 'info'
+            : 'failure',
+      actor: 'system',
+      target: args.runId,
+      detail: {
+        workflowId: args.workflow.id,
+        status: args.status,
+        durationMs: args.finishedAt - args.startedAt,
+        ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
+      },
+    });
+
     try {
       await saveRun({
         runId: args.runId,

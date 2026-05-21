@@ -88,6 +88,38 @@ export function requireAuth(req: Request): NextResponse | null {
   return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 }
 
+/** The coarse actor an audited request authenticated as. */
+export type AuditActor = 'api-token' | 'browser-session' | 'open';
+
+/**
+ * Describe the credential a request authenticated with — for the audit log's
+ * `actor` field. Deliberately coarse: this is single-tenant by design, so it
+ * names the credential kind, never a person.
+ *
+ *   'api-token'       — a valid `Authorization: Bearer` token
+ *   'browser-session' — a valid `infloop_session` cookie
+ *   'open'            — no token configured (open mode)
+ *
+ * Mirrors `requireAuth`'s checks: it returns 'open' for any request carrying
+ * no valid credential — including, when a token is configured, an
+ * unauthenticated one. Audit hook sites call it only after `requireAuth` has
+ * already admitted the request, so in those callers 'open' does mean open
+ * mode — but that is a property of the call order, not of this function.
+ */
+export function describeActor(req: Request): AuditActor {
+  const token = process.env.INFLOOP_API_TOKEN;
+  if (!token) return 'open';
+
+  const header = req.headers.get('authorization') ?? '';
+  const m = /^Bearer\s+(.+)$/i.exec(header);
+  if (m && constantTimeEq(m[1].trimEnd(), token)) return 'api-token';
+
+  const cookie = readCookie(req, SESSION_COOKIE_NAME);
+  if (cookie && verifySessionCookie(cookie, token)) return 'browser-session';
+
+  return 'open';
+}
+
 /** Reads a single cookie value from the request's `Cookie` header. */
 function readCookie(req: Request, name: string): string | null {
   const header = req.headers.get('cookie');

@@ -6,6 +6,7 @@ import {
   requireAuth,
   sessionCookieValue,
 } from '@/lib/server/auth';
+import { recordAudit } from '@/lib/server/audit-log';
 
 /**
  * Session endpoint for the browser UI.
@@ -77,6 +78,15 @@ export async function POST(req: Request) {
       ? (body as Record<string, unknown>).token
       : undefined;
   if (typeof token !== 'string' || !isValidToken(token)) {
+    await recordAudit({
+      category: 'auth',
+      action: 'login',
+      outcome: 'failure',
+      actor: 'browser-session',
+      detail: {
+        reason: typeof token !== 'string' ? 'missing-token' : 'invalid-token',
+      },
+    });
     return NextResponse.json({ error: 'invalid token' }, { status: 401 });
   }
 
@@ -85,6 +95,12 @@ export async function POST(req: Request) {
     ...cookieOptions(req),
     maxAge: SESSION_MAX_AGE_S,
   });
+  await recordAudit({
+    category: 'auth',
+    action: 'login',
+    outcome: 'success',
+    actor: 'browser-session',
+  });
   return res;
 }
 
@@ -92,5 +108,15 @@ export async function DELETE(req: Request) {
   const res = NextResponse.json({ ok: true });
   // maxAge 0 expires the cookie immediately.
   res.cookies.set(SESSION_COOKIE_NAME, '', { ...cookieOptions(req), maxAge: 0 });
+  // Only audit logout when auth is enabled — a logout in open mode crosses no
+  // security boundary and would just be noise.
+  if (isAuthEnabled()) {
+    await recordAudit({
+      category: 'auth',
+      action: 'logout',
+      outcome: 'info',
+      actor: 'browser-session',
+    });
+  }
   return res;
 }

@@ -21,6 +21,8 @@
 | `INFLOOP_BUN_BIN` | `bun` | Interpreter for Script nodes with `language: ts` |
 | `INFLOOP_WEBHOOK_PLUGINS_DIR` | `<cwd>/webhook-plugins` | Where webhook plugin manifests live |
 | `INFLOOP_LOG_LEVEL` | `info` | Minimum level for structured server logs (`debug`, `info`, `warn`, `error`) |
+| `INFLOOP_AUDIT_MAX_BYTES` | `5000000` | Size threshold (bytes) at which the audit log rotates to a new file |
+| `INFLOOP_AUDIT_MAX_FILES` | `5` | Rotated audit-log generations to keep, excluding the current file (minimum `1`) |
 
 ## Health & observability
 
@@ -45,6 +47,29 @@ a reconnaissance signal in token-gated network mode.
 Server-side diagnostics are emitted as one JSON object per line (`ts`,
 `level`, `scope`, `msg`, plus call-specific fields) so they pipe cleanly into
 a log aggregator. Raise or lower verbosity with `INFLOOP_LOG_LEVEL`.
+
+## Audit log
+
+Trust- and security-relevant events are recorded in a durable, append-only
+audit log at `<data-dir>/audit/audit.jsonl` — one JSON object per line. Unlike
+run history, it is never pruned to a small window: it rotates by size
+(`INFLOOP_AUDIT_MAX_BYTES`, default 5 MB) and keeps `INFLOOP_AUDIT_MAX_FILES`
+rotated generations (default 5).
+
+It captures what the proxy in front of the app cannot see: run lifecycle
+(`started` / `finished`, including crash-recovered runs), login attempts
+(success and failure), trigger CRUD, and webhook accept/reject decisions. Each
+entry carries a timestamp, category, action, outcome, a coarse actor, the
+affected resource id, and a small detail payload — never a secret.
+
+Read recent entries (newest-first) with the authenticated endpoint:
+
+```bash
+curl -H "Authorization: Bearer $INFLOOP_API_TOKEN" \
+  'http://localhost:3000/api/audit?limit=50'
+```
+
+`?limit=` is clamped to `[1, 2000]` (default 200).
 
 ## Common recipes
 

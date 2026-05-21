@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { GET, PUT, DELETE } from './route';
 import { pluginIndex } from '@/lib/server/webhook-plugins/index';
+import { listAuditEntries } from '@/lib/server/audit-log';
 
 const tmpWfDir = path.join(os.tmpdir(), `infinite-loop-api-tr-id-wf-${process.pid}`);
 const tmpTrDir = path.join(os.tmpdir(), `infinite-loop-api-tr-id-tr-${process.pid}`);
@@ -106,6 +107,28 @@ describe('PUT /api/triggers/[id]', () => {
     expect(json.trigger.updatedAt).toBeGreaterThan(orig.updatedAt);
   });
 
+  test('records a trigger/updated audit entry', async () => {
+    const orig = await seedTrigger('idAAAAAAAAAAAAAAAAAAAA');
+    const res = await PUT(
+      new Request('http://test/api/triggers/idAAAAAAAAAAAAAAAAAAAA', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...orig, name: 'renamed' }),
+      }),
+      { params: Promise.resolve({ id: 'idAAAAAAAAAAAAAAAAAAAA' }) },
+    );
+    expect(res.status).toBe(200);
+    const entries = await listAuditEntries({ limit: 10 });
+    expect(
+      entries.some(
+        (e) =>
+          e.category === 'trigger' &&
+          e.action === 'updated' &&
+          e.target === 'idAAAAAAAAAAAAAAAAAAAA',
+      ),
+    ).toBe(true);
+  });
+
   test('400 when body tries to change the id', async () => {
     await seedTrigger('idAAAAAAAAAAAAAAAAAAAA');
     const res = await PUT(
@@ -203,5 +226,23 @@ describe('DELETE /api/triggers/[id]', () => {
       { params: Promise.resolve({ id: 'absent_id_000000000000' }) },
     );
     expect(res.status).toBe(404);
+  });
+
+  test('records a trigger/deleted audit entry', async () => {
+    await seedTrigger('idAAAAAAAAAAAAAAAAAAAA');
+    const res = await DELETE(
+      new Request('http://test/api/triggers/idAAAAAAAAAAAAAAAAAAAA', { method: 'DELETE' }),
+      { params: Promise.resolve({ id: 'idAAAAAAAAAAAAAAAAAAAA' }) },
+    );
+    expect(res.status).toBe(204);
+    const entries = await listAuditEntries({ limit: 10 });
+    expect(
+      entries.some(
+        (e) =>
+          e.category === 'trigger' &&
+          e.action === 'deleted' &&
+          e.target === 'idAAAAAAAAAAAAAAAAAAAA',
+      ),
+    ).toBe(true);
   });
 });

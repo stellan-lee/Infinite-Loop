@@ -7,6 +7,7 @@ import { triggerIndex } from '@/lib/server/trigger-index';
 import { triggerQueue } from '@/lib/server/trigger-queue-singleton';
 import { saveTrigger } from '@/lib/server/trigger-store';
 import { pluginIndex } from '@/lib/server/webhook-plugins';
+import { listAuditEntries } from '@/lib/server/audit-log';
 
 const tmpWfDir = path.join(os.tmpdir(), `infinite-loop-webhook-wf-${process.pid}`);
 const tmpTrDir = path.join(os.tmpdir(), `infinite-loop-webhook-tr-${process.pid}`);
@@ -299,6 +300,63 @@ describe('POST /api/webhook/[triggerId]', () => {
       { params: Promise.resolve({ triggerId: goodId }) },
     );
     expect(res.status).toBe(202);
+  });
+});
+
+describe('audit logging', () => {
+  test('records a webhook/accepted entry on 202', async () => {
+    await writeWorkflow('wf-a');
+    await saveTrigger({
+      id: goodId, name: 't', enabled: true,
+      workflowId: 'wf-a', pluginId: 'generic', match: [], inputs: {},
+    });
+    const res = await POST(
+      mkReq(goodId, { event: 'push' }),
+      { params: Promise.resolve({ triggerId: goodId }) },
+    );
+    expect(res.status).toBe(202);
+    const entries = await listAuditEntries({ limit: 20 });
+    expect(
+      entries.some(
+        (e) => e.category === 'webhook' && e.action === 'accepted' && e.target === goodId,
+      ),
+    ).toBe(true);
+  });
+
+  test('records a webhook/rejected entry on a bad signature', async () => {
+    await writePlugin('frogo', {
+      id: 'frogo',
+      displayName: 'Frogo',
+      eventHeader: 'x-frogo-event',
+      signature: { header: 'x-frogo-signature', scheme: 'hmac-sha256', format: 'sha256=<hex>' },
+      events: [{ type: 'task.created', displayName: 'Task created', fields: [] }],
+    });
+    pluginIndex.invalidate();
+    await writeWorkflow('wf-frogo');
+    await saveTrigger({
+      id: goodId, name: 't', enabled: true,
+      workflowId: 'wf-frogo', pluginId: 'frogo', eventType: 'task.created',
+      match: [], inputs: {}, secret: 'shhh',
+    });
+    const body = JSON.stringify({ event: 'task.created', taskId: 1 });
+    const res = await POST(
+      mkReq(goodId, body, {
+        'x-frogo-event': 'task.created',
+        'x-frogo-signature': 'sha256=' + 'a'.repeat(64),
+      }),
+      { params: Promise.resolve({ triggerId: goodId }) },
+    );
+    expect(res.status).toBe(401);
+    const entries = await listAuditEntries({ limit: 20 });
+    expect(
+      entries.some(
+        (e) =>
+          e.category === 'webhook' &&
+          e.action === 'rejected' &&
+          e.target === goodId &&
+          (e.detail as { reason?: string } | undefined)?.reason === 'bad-signature',
+      ),
+    ).toBe(true);
   });
 });
 

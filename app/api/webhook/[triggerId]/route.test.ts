@@ -8,6 +8,7 @@ import { triggerQueue } from '@/lib/server/trigger-queue-singleton';
 import { saveTrigger } from '@/lib/server/trigger-store';
 import { pluginIndex } from '@/lib/server/webhook-plugins';
 import { listAuditEntries } from '@/lib/server/audit-log';
+import { webhookRateLimiter } from '@/lib/server/rate-limiter';
 
 const tmpWfDir = path.join(os.tmpdir(), `infinite-loop-webhook-wf-${process.pid}`);
 const tmpTrDir = path.join(os.tmpdir(), `infinite-loop-webhook-tr-${process.pid}`);
@@ -355,6 +356,60 @@ describe('audit logging', () => {
           e.action === 'rejected' &&
           e.target === goodId &&
           (e.detail as { reason?: string } | undefined)?.reason === 'bad-signature',
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('rate limiting', () => {
+  const rlId = 'idRATELIMITaaaaaaaaaaa';
+  const origLimit = process.env.INFLOOP_WEBHOOK_RATE_LIMIT;
+
+  beforeEach(() => {
+    process.env.INFLOOP_WEBHOOK_RATE_LIMIT = '2';
+    webhookRateLimiter.reset();
+  });
+  afterEach(() => {
+    if (origLimit === undefined) delete process.env.INFLOOP_WEBHOOK_RATE_LIMIT;
+    else process.env.INFLOOP_WEBHOOK_RATE_LIMIT = origLimit;
+    webhookRateLimiter.reset();
+  });
+
+  async function seedTrigger() {
+    await writeWorkflow('wf-a');
+    await saveTrigger({
+      id: rlId, name: 't', enabled: true,
+      workflowId: 'wf-a', pluginId: 'generic', match: [], inputs: {},
+    });
+  }
+
+  test('429 with Retry-After once the per-trigger limit is exceeded', async () => {
+    await seedTrigger();
+    const send = () =>
+      POST(mkReq(rlId, { event: 'x' }), { params: Promise.resolve({ triggerId: rlId }) });
+    expect((await send()).status).toBe(202);
+    expect((await send()).status).toBe(202);
+    const limited = await send();
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect(await limited.json()).toEqual({ error: 'rate-limited' });
+  });
+
+  test('records a webhook/rejected rate-limited audit entry', async () => {
+    await seedTrigger();
+    const send = () =>
+      POST(mkReq(rlId, { event: 'x' }), { params: Promise.resolve({ triggerId: rlId }) });
+    await send();
+    await send();
+    await send(); // third request is over the limit
+    const entries = await listAuditEntries({ limit: 30 });
+    expect(
+      entries.some(
+        (e) =>
+          e.category === 'webhook' &&
+          e.action === 'rejected' &&
+          e.target === rlId &&
+          (e.detail as { reason?: string } | undefined)?.reason === 'rate-limited',
       ),
     ).toBe(true);
   });

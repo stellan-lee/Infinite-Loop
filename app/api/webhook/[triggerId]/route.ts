@@ -9,6 +9,7 @@ import { resolveRunInputs, WorkflowInputError } from '@/lib/shared/resolve-run-i
 import { getWorkflow } from '@/lib/server/workflow-store';
 import { verifySignature } from '@/lib/server/webhook-signature';
 import { recordAudit } from '@/lib/server/audit-log';
+import { webhookRateLimiter } from '@/lib/server/rate-limiter';
 import { createLogger } from '@/lib/server/logger';
 import type { TriggerPredicate, WebhookTrigger } from '@/lib/shared/trigger';
 import type { Scope, Workflow } from '@/lib/shared/workflow';
@@ -47,6 +48,26 @@ export async function POST(req: Request, { params }: RouteParams): Promise<Respo
   const hit = await triggerIndex.lookup(triggerId);
   if (!hit) return notFound();
   if (!hit.trigger.enabled) return notFound();
+
+  // Rate-limit per trigger. Checked here — once the trigger is known to exist
+  // and be enabled, before any plugin lookup or body read — so the bucket map
+  // stays bounded by the real trigger count and a flood is rejected cheaply.
+  const rl = webhookRateLimiter.check(hit.trigger.id);
+  if (!rl.ok) {
+    log.warn('rate limit exceeded', { triggerId: hit.trigger.id });
+    await recordAudit({
+      category: 'webhook',
+      action: 'rejected',
+      outcome: 'failure',
+      actor: 'webhook',
+      target: hit.trigger.id,
+      detail: { reason: 'rate-limited', retryAfterSeconds: rl.retryAfterSeconds },
+    });
+    return NextResponse.json(
+      { error: 'rate-limited' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSeconds) } },
+    );
+  }
 
   const plugin = await pluginIndex.lookup(hit.trigger.pluginId);
   if (!plugin) return notFound();

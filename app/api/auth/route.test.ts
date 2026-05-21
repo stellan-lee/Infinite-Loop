@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { SESSION_COOKIE_NAME, sessionCookieValue } from '@/lib/server/auth';
 import { listAuditEntries } from '@/lib/server/audit-log';
+import { loginRateLimiter } from '@/lib/server/rate-limiter';
 import { DELETE, GET, POST } from './route';
 
 const orig = process.env.INFLOOP_API_TOKEN;
@@ -107,6 +108,60 @@ describe('DELETE /api/auth (logout)', () => {
     const cookie = res.cookies.get(SESSION_COOKIE_NAME);
     expect(cookie?.value).toBe('');
     expect(cookie?.maxAge).toBe(0);
+  });
+});
+
+describe('login rate limiting', () => {
+  const origLimit = process.env.INFLOOP_LOGIN_RATE_LIMIT;
+
+  beforeEach(() => {
+    process.env.INFLOOP_LOGIN_RATE_LIMIT = '3';
+    loginRateLimiter.reset();
+  });
+  afterEach(() => {
+    if (origLimit === undefined) delete process.env.INFLOOP_LOGIN_RATE_LIMIT;
+    else process.env.INFLOOP_LOGIN_RATE_LIMIT = origLimit;
+    loginRateLimiter.reset();
+  });
+
+  it('429s with Retry-After once the attempt limit is exceeded', async () => {
+    process.env.INFLOOP_API_TOKEN = 'secret';
+    const attempt = () => POST(authReq('POST', { body: { token: 'wrong' } }));
+    expect((await attempt()).status).toBe(401);
+    expect((await attempt()).status).toBe(401);
+    expect((await attempt()).status).toBe(401);
+    const limited = await attempt();
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect(await limited.json()).toEqual({ error: 'rate-limited' });
+  });
+
+  it('records a rate-limited login audit entry', async () => {
+    process.env.INFLOOP_API_TOKEN = 'secret';
+    const attempt = () => POST(authReq('POST', { body: { token: 'wrong' } }));
+    await attempt();
+    await attempt();
+    await attempt();
+    await attempt(); // fourth attempt is over the limit
+    const entries = await listAuditEntries({ limit: 30 });
+    expect(
+      entries.some(
+        (e) =>
+          e.category === 'auth' &&
+          e.action === 'login' &&
+          e.outcome === 'failure' &&
+          (e.detail as { reason?: string } | undefined)?.reason === 'rate-limited',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not rate-limit in open mode', async () => {
+    delete process.env.INFLOOP_API_TOKEN;
+    // well past the limit — open mode returns before the limiter is consulted
+    for (let i = 0; i < 6; i++) {
+      const res = await POST(authReq('POST', { body: { token: 'x' } }));
+      expect(res.status).toBe(200);
+    }
   });
 });
 

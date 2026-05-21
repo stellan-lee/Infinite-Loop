@@ -7,6 +7,7 @@ import {
   sessionCookieValue,
 } from '@/lib/server/auth';
 import { recordAudit } from '@/lib/server/audit-log';
+import { loginRateLimiter, LOGIN_RATE_KEY } from '@/lib/server/rate-limiter';
 
 /**
  * Session endpoint for the browser UI.
@@ -64,6 +65,24 @@ export async function POST(req: Request) {
     // Open mode — nothing to log into. Report success so the login page can
     // simply send the user on to the app.
     return NextResponse.json({ ok: true });
+  }
+
+  // Throttle login attempts (a single global bucket — see rate-limiter.ts).
+  // Brute-forcing a 256-bit token is already infeasible; this caps the audit,
+  // log, and CPU churn a login flood can cause. Checked before the body parse.
+  const rl = loginRateLimiter.check(LOGIN_RATE_KEY);
+  if (!rl.ok) {
+    await recordAudit({
+      category: 'auth',
+      action: 'login',
+      outcome: 'failure',
+      actor: 'browser-session',
+      detail: { reason: 'rate-limited', retryAfterSeconds: rl.retryAfterSeconds },
+    });
+    return NextResponse.json(
+      { error: 'rate-limited' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSeconds) } },
+    );
   }
 
   let body: unknown;

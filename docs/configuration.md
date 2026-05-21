@@ -23,6 +23,8 @@
 | `INFLOOP_LOG_LEVEL` | `info` | Minimum level for structured server logs (`debug`, `info`, `warn`, `error`) |
 | `INFLOOP_AUDIT_MAX_BYTES` | `5000000` | Size threshold (bytes) at which the audit log rotates to a new file |
 | `INFLOOP_AUDIT_MAX_FILES` | `5` | Rotated audit-log generations to keep, excluding the current file (minimum `1`) |
+| `INFLOOP_WEBHOOK_RATE_LIMIT` | `120` | Max webhook deliveries accepted per minute, per trigger, before further requests get `429` |
+| `INFLOOP_LOGIN_RATE_LIMIT` | `20` | Max browser-login attempts accepted per minute (one global bucket) before further attempts get `429` |
 
 ## Health & observability
 
@@ -70,6 +72,23 @@ curl -H "Authorization: Bearer $INFLOOP_API_TOKEN" \
 ```
 
 `?limit=` is clamped to `[1, 2000]` (default 200).
+
+## Rate limiting
+
+The two ingress surfaces that `INFLOOP_API_TOKEN` does not gate are
+rate-limited in-process:
+
+- **Webhook ingress** (`POST /api/webhook/<triggerId>`) — up to
+  `INFLOOP_WEBHOOK_RATE_LIMIT` deliveries per minute *per trigger*. Caps how
+  hard a leaked trigger URL can be hammered.
+- **Browser login** (`POST /api/auth`) — up to `INFLOOP_LOGIN_RATE_LIMIT`
+  attempts per minute, counted in a single global bucket.
+
+Over the limit, the request is rejected with `429 Too Many Requests` and a
+`Retry-After` header; a webhook rejection is also recorded in the audit log.
+Each limit is a per-minute token bucket, so a whole minute's budget may arrive
+as a burst. State is in-memory and per-process — a restart clears it. See
+[security.md](./security.md#rate-limiting).
 
 ## Common recipes
 

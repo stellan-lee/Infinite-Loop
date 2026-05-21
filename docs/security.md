@@ -71,9 +71,33 @@ The unguessable `triggerId` in a webhook URL is the base credential.
 
 When a webhook plugin declares a signing scheme (e.g. GitHub's HMAC-SHA256), a trigger built on it is **signature-verified**: Infinite Loop recomputes the HMAC over the raw request body with the trigger's shared `secret` and rejects a missing or mismatched signature with `401`. Set the secret in the Dispatch form when you create the trigger. A trigger on a signing-capable plugin must either carry a secret or explicitly opt out with `verifyOptional: true` (accepts unsigned requests, logs a warning) — with neither set, the request is refused as misconfigured rather than silently trusted.
 
+## Rate limiting
+
+`INFLOOP_API_TOKEN` does not gate the two surfaces that most need it: webhook
+ingress (external senders cannot carry a bearer header) and the browser login
+form (it is what *issues* the credential). Both are rate-limited in-process as
+a defense-in-depth control:
+
+- **Webhook ingress** is limited per trigger (`INFLOOP_WEBHOOK_RATE_LIMIT`,
+  default 120/min), so a leaked trigger URL cannot be hammered without limit.
+  The bucket is keyed on the triggerId alone, so a flood also throttles that
+  trigger's legitimate traffic — the real remedy for a leaked URL is to rotate
+  it.
+- **Browser login** is limited by a single global bucket
+  (`INFLOOP_LOGIN_RATE_LIMIT`, default 20/min). Brute-forcing a 256-bit token
+  is already infeasible; this caps the log, audit, and CPU churn a login flood
+  can cause. A sustained flood can `429` the login form — the operator can
+  still authenticate API/MCP calls with `Authorization: Bearer`, which is not
+  behind this limiter.
+
+Over the limit the response is `429` with a `Retry-After` header. The limiter
+is in-memory and per-process: it resets on restart and a port-fallback second
+instance keeps its own. It is a backstop, not a substitute for the proxy
+below.
+
 ## Don't expose to the public internet
 
-There is no rate limiting, no per-user auth, and no audit log. If you need a publicly reachable trigger surface, put Infinite Loop behind one of:
+Infinite Loop has **no per-user auth** — one shared token, no accounts. Webhook ingress and browser login are rate-limited (see above) and trust-relevant events are recorded in an [audit log](#audit-log), but for a publicly reachable trigger surface you should still put Infinite Loop behind one of:
 
 - A Cloudflare Tunnel with **Access policies** that gate inbound traffic.
 - A Tailscale ACL-restricted host.

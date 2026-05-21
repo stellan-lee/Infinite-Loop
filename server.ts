@@ -22,6 +22,11 @@ const startPort = Number(process.env.PORT ?? 3000);
 // or an explicit INFLOOP_ALLOW_INSECURE=1 acknowledgement.
 const host = process.env.HOST ?? '127.0.0.1';
 
+// Install last-resort failure handlers before anything else, so a fault during
+// boot — including in the posture gate below — or in any fire-and-forget async
+// path later fails visibly and never leaves agent CLIs orphaned.
+installCrashHandlers();
+
 // Fail closed before doing any work: refuse to start a network-reachable,
 // unauthenticated server. `authEnabled` mirrors requireAuth() in
 // lib/server/auth.ts, which treats an unset/empty INFLOOP_API_TOKEN as
@@ -38,11 +43,6 @@ if (!posture.ok) {
 
 // If the requested port is taken, walk forward up to this many ports.
 const MAX_PORT_FALLBACK = 20;
-
-// Install last-resort failure handlers before anything else, so a fault during
-// boot — or in any fire-and-forget async path later — fails visibly and never
-// leaves agent CLIs orphaned.
-installCrashHandlers();
 
 // Crash recovery: a previous server may have died hard, leaving detached
 // provider CLIs running (and spending API credits) and runs that never

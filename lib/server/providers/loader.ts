@@ -10,6 +10,9 @@ import type {
   ProviderManifest,
   ProviderTransport,
 } from './types';
+import { createLogger } from '../logger';
+
+const log = createLogger('providers');
 
 function providersDir(): string {
   return (
@@ -252,7 +255,7 @@ function expandHermesLocalFile(
   file: string,
 ): HttpProviderManifest[] {
   if (!parsed || typeof parsed !== 'object') {
-    console.warn(`[providers] ${file} is not a JSON object`);
+    log.warn('file is not a JSON object', { file });
     return [];
   }
   const p = parsed as Record<string, unknown>;
@@ -260,9 +263,7 @@ function expandHermesLocalFile(
   const host = isNonEmptyString(p.host) ? p.host : null;
   const token = isNonEmptyString(p.token) ? p.token : null;
   if (!label || !host || !token) {
-    console.warn(
-      `[providers] ${file}: missing required field(s) (label, host, token)`,
-    );
+    log.warn('missing required field(s): label, host, token', { file });
     return [];
   }
   const portsRaw = Array.isArray(p.ports) ? p.ports : [];
@@ -279,11 +280,11 @@ function expandHermesLocalFile(
       port < 1 ||
       port > 65535
     ) {
-      console.warn(`[providers] ${file}: ports[${i}].port is not a valid port`);
+      log.warn('port entry is not a valid port', { file, index: i });
       continue;
     }
     if (typeof profile !== 'string' || profile.length === 0) {
-      console.warn(`[providers] ${file}: ports[${i}].profile is empty`);
+      log.warn('port entry profile is empty', { file, index: i });
       continue;
     }
     const profileSlug = slugForId(profile);
@@ -336,14 +337,14 @@ async function readJsonDir(dir: string): Promise<{ entry: string; file: string; 
     try {
       raw = await fs.readFile(file, 'utf8');
     } catch (err) {
-      console.warn(`[providers] could not read ${file}: ${(err as Error).message}`);
+      log.warn('could not read file', { file, err });
       continue;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      console.warn(`[providers] ${file} is not valid JSON: ${(err as Error).message}`);
+      log.warn('file is not valid JSON', { file, err });
       continue;
     }
     results.push({ entry, file, parsed });
@@ -358,7 +359,7 @@ async function readJsonDir(dir: string): Promise<{ entry: string; file: string; 
  *
  * Cached for the process lifetime — restart or call `_resetProviderCache()`
  * to pick up new files. Malformed JSON, invalid manifests, and id collisions
- * are logged with `console.warn` and skipped. First-wins on duplicate ids.
+ * are logged and skipped. First-wins on duplicate ids.
  */
 export async function loadProviders(): Promise<ProviderManifest[]> {
   const builtinDir = providersDir();
@@ -377,13 +378,11 @@ export async function loadProviders(): Promise<ProviderManifest[]> {
     try {
       manifest = validateManifest(parsed, entry);
     } catch (err) {
-      console.warn(`[providers] ${(err as Error).message}`);
+      log.warn('invalid manifest', { file: entry, err });
       continue;
     }
     if (byId.has(manifest.id)) {
-      console.warn(
-        `[providers] id collision: "${manifest.id}" already loaded; ignoring ${entry}`,
-      );
+      log.warn('id collision; ignoring file', { id: manifest.id, file: entry });
       continue;
     }
     byId.set(manifest.id, manifest);
@@ -397,9 +396,10 @@ export async function loadProviders(): Promise<ProviderManifest[]> {
     const expanded = expandHermesLocalFile(parsed, hermesLocalId, entry);
     for (const manifest of expanded) {
       if (byId.has(manifest.id)) {
-        console.warn(
-          `[providers] id collision: "${manifest.id}" already loaded; ignoring entry from ${entry}`,
-        );
+        log.warn('id collision; ignoring entry from file', {
+          id: manifest.id,
+          file: entry,
+        });
         continue;
       }
       byId.set(manifest.id, manifest);

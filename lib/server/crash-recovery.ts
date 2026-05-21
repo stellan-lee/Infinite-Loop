@@ -46,6 +46,9 @@ import {
   runExists,
   saveRun,
 } from './run-store';
+import { createLogger } from './logger';
+
+const log = createLogger('crash-recovery');
 
 /**
  * Tolerance when matching a live process's start time against a PID record's
@@ -103,9 +106,7 @@ function probePid(pid: number): PidProbe {
     if (e.code === 'ENOENT') {
       // `ps` binary itself is missing — can't verify identity here.
       if (!psUnavailableLogged) {
-        console.warn(
-          '[crash-recovery] `ps` unavailable; orphan PID-reuse protection disabled',
-        );
+        log.warn('`ps` unavailable; orphan PID-reuse protection disabled');
         psUnavailableLogged = true;
       }
       return { state: 'unknown' };
@@ -183,9 +184,9 @@ export function reapOrphanProcesses(): void {
   }
 
   if (killed > 0) {
-    console.log(
-      `[crash-recovery] reaped ${killed} orphaned process group(s) from a previous server`,
-    );
+    log.info('reaped orphaned process group(s) from a previous server', {
+      count: killed,
+    });
   }
 }
 
@@ -227,15 +228,13 @@ export async function reconcileInterruptedRuns(): Promise<void> {
       reconciled++;
     } catch (err) {
       // Keep the marker so the next boot retries.
-      console.warn('[crash-recovery] failed to reconcile run', m.runId, err);
+      log.warn('failed to reconcile run', { runId: m.runId, err });
       continue;
     }
     await removeRunMarker(m.runId);
   }
 
   if (reconciled > 0) {
-    console.log(
-      `[crash-recovery] marked ${reconciled} interrupted run(s) as failed`,
-    );
+    log.info('marked interrupted run(s) as failed', { count: reconciled });
   }
 }

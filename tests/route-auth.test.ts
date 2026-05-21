@@ -33,6 +33,13 @@ const EXEMPT = new Map<string, string>([
     'the login/logout/status endpoint itself — POST validates the token, ' +
       'DELETE clears the cookie; neither can require a prior session',
   ],
+  [
+    'health/route.ts',
+    'unauthenticated liveness/readiness probe — it must answer without ' +
+      'credentials, and its payload (status, version, uptime, timestamp) ' +
+      'exposes nothing sensitive; the matching middleware.ts exemption is ' +
+      'covered by middleware.test.ts',
+  ],
 ]);
 
 /** Exported HTTP method handlers, e.g. `export async function GET(...)`. */

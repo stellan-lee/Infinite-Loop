@@ -3,6 +3,9 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { RunRecord, RunSummary } from '../shared/workflow';
 import { activeRunsDir, dataDir } from './paths';
+import { createLogger } from './logger';
+
+const log = createLogger('run-store');
 
 /* ─── env / paths ─────────────────────────────────────────────────────────── */
 
@@ -273,7 +276,7 @@ export function writeRunMarker(marker: RunMarker): void {
     writeFileSync(tmp, JSON.stringify(marker, null, 2), 'utf8');
     renameSync(tmp, target);
   } catch (err) {
-    console.warn('[run-store] failed to write run marker:', err);
+    log.warn('failed to write run marker', { err });
   }
 }
 

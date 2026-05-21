@@ -12,11 +12,14 @@ import type {
   WorkflowSummary,
 } from '../shared/workflow';
 import { validateAgentOutputs } from '../shared/workflow';
+import { createLogger } from './logger';
 import type { WebhookTrigger } from '../shared/trigger';
 import {
   collectWorkflowNodeIds,
   walkWorkflowNodes,
 } from '../shared/workflow-graph';
+
+const log = createLogger('workflow-store');
 
 /**
  * v5→v6 migration: rewrite `type: "claude"` nodes to `type: "agent"` with
@@ -374,7 +377,7 @@ async function migrateLegacyTriggers(wf: Workflow & { triggers?: unknown }): Pro
       await fs.writeFile(tmp, JSON.stringify(trigger, null, 2), 'utf8');
       await fs.rename(tmp, target);
     } catch (err) {
-      console.error(`[workflow-store] migration: failed to save trigger ${id}:`, err);
+      log.error('migration: failed to save trigger', { triggerId: id, err });
     }
   }
 

@@ -6,6 +6,9 @@ import { getWorkflow } from './workflow-store';
 import { pluginIndex } from './webhook-plugins';
 import { triggerIndex } from './trigger-index';
 import { triggersDir } from './paths';
+import { createLogger } from './logger';
+
+const log = createLogger('trigger-store');
 
 const TRIGGER_ID_RE = /^[A-Za-z0-9_-]{16,32}$/;
 const ALLOWED_OPS = new Set(['==', '!=', 'contains', 'matches']);
@@ -102,7 +105,7 @@ export async function listTriggers(): Promise<WebhookTrigger[]> {
       const parsed = JSON.parse(raw) as WebhookTrigger;
       out.push(parsed);
     } catch (err) {
-      console.error(`[trigger-store] failed to read ${file}:`, err);
+      log.error('failed to read trigger file', { file, err });
     }
   }
   return out;
@@ -203,7 +206,7 @@ export async function touchLastFired(id: string, ts: number = Date.now()): Promi
     // risk of masking a real bug in exchange for a quiet hot path.
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR' || code === 'EINVAL') {
-      console.warn(`[trigger-store] touchLastFired(${id}) skipped: ${code}`);
+      log.warn('touchLastFired skipped', { triggerId: id, code });
       return;
     }
     throw err;

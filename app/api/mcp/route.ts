@@ -37,7 +37,10 @@ import {
   workflowToTool,
   type McpToolSpec,
 } from '@/lib/server/mcp/workflow-to-tool';
+import { createLogger } from '@/lib/server/logger';
 import type { Workflow } from '@/lib/shared/workflow';
+
+const log = createLogger('mcp');
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 
@@ -141,9 +144,7 @@ async function discoverWorkflowTools(): Promise<RegisteredWorkflowTool[]> {
   try {
     summaries = await listWorkflows();
   } catch (err) {
-    console.error(
-      `[mcp] workflow discovery failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    log.error('workflow discovery failed', { err });
     return [];
   }
 

@@ -7,6 +7,9 @@ import {
   resolveRunInputs,
   WorkflowInputError,
 } from '@/lib/shared/resolve-run-inputs';
+import { createLogger } from '@/lib/server/logger';
+
+const log = createLogger('run');
 
 export async function POST(req: Request) {
   const unauth = requireAuth(req);
@@ -70,7 +73,7 @@ export async function POST(req: Request) {
     runId = await engineStartAdapter(workflowEngine, workflow, { resolvedInputs });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'failed to start';
-    console.error('[api/run] engine.start failed:', err);
+    log.error('engine.start failed', { err });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 

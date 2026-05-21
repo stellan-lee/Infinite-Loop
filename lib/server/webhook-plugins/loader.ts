@@ -7,6 +7,9 @@ import type {
   PluginSignature,
   WebhookPlugin,
 } from '../../shared/trigger';
+import { createLogger } from '../logger';
+
+const log = createLogger('webhook-plugins');
 
 const FIELD_TYPES: PluginFieldType[] = [
   'string', 'number', 'boolean', 'array', 'object',
@@ -121,7 +124,7 @@ function validatePlugin(raw: unknown, file: string): WebhookPlugin {
 }
 
 /** Scan `dir` for `*.json` plugin files; combine with the built-in Generic
- *  plugin. Invalid files are skipped with a console error. The built-in
+ *  plugin. Invalid files are skipped with a logged error. The built-in
  *  Generic plugin always wins over a user file with the same id. */
 export async function loadPlugins(dir: string): Promise<WebhookPlugin[]> {
   const out: WebhookPlugin[] = [BUILTIN_GENERIC];
@@ -143,13 +146,13 @@ export async function loadPlugins(dir: string): Promise<WebhookPlugin[]> {
       const parsed = JSON.parse(raw);
       const plugin = validatePlugin(parsed, entry);
       if (seenIds.has(plugin.id)) {
-        console.error(`[webhook-plugins] skipping ${entry}: id "${plugin.id}" already loaded`);
+        log.error('skipping plugin: id already loaded', { file: entry, id: plugin.id });
         continue;
       }
       seenIds.add(plugin.id);
       out.push(plugin);
     } catch (err) {
-      console.error(`[webhook-plugins] failed to load ${entry}:`, err);
+      log.error('failed to load plugin', { file: entry, err });
     }
   }
   return out;

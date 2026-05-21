@@ -92,3 +92,13 @@ bun run start
 
 The node ceiling is the deterministic guard against unbounded loops; the
 wall-clock cap is an optional hard stop. See [docs/security.md](./security.md#runaway-protection).
+
+**Containerized deployment:**
+
+```bash
+docker compose up -d --build
+```
+
+Runs Infinite Loop as a supervised container — auto-restart on crash, a
+`/api/health` healthcheck, and a persistent `/data` volume. Requires
+`INFLOOP_API_TOKEN`. Full guide: [deployment.md](./deployment.md).

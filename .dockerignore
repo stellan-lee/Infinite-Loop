@@ -1,0 +1,38 @@
+# Build-context exclusions — keep the image build fast and reproducible.
+# Anything excluded here is invisible to `COPY . .` in the builder stage.
+
+# Reinstalled / rebuilt inside the image.
+node_modules
+.next
+
+# Version control and CI metadata.
+.git
+.github
+
+# Local tooling and OS cruft.
+.DS_Store
+*.log
+*.tsbuildinfo
+coverage
+.vscode
+.idea
+.integration-screenshots
+
+# Tests are needed neither to build nor to run the image.
+tests
+**/*.test.ts
+**/*.test.tsx
+
+# Docs and specs are not part of the runtime image.
+docs
+specs
+
+# Never let local secrets enter the build context.
+.env
+.env.local
+.env.*.local
+
+# The deployment artifacts themselves.
+Dockerfile
+docker-compose.yml
+.dockerignore

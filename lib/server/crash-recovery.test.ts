@@ -22,8 +22,9 @@ import {
   parseEtime,
   reapOrphanProcesses,
   reconcileInterruptedRuns,
+  reconcileQueuedRuns,
 } from './crash-recovery';
-import { activeRunsDir, pidsDir } from './paths';
+import { activeRunsDir, pidsDir, queueDir } from './paths';
 import {
   getRun,
   listRunMarkers,
@@ -33,6 +34,9 @@ import {
   type RunMarker,
 } from './run-store';
 import type { ChildPidRecord } from './child-registry';
+import type { PersistedQueuedRun } from './queue-store';
+import type { QueuedRun, QueueRestoreTarget } from './trigger-queue';
+import type { Workflow } from '../shared/workflow';
 
 /* ─── parseEtime (pure) ──────────────────────────────────────────────────── */
 
@@ -78,7 +82,7 @@ describe('crash-recovery', () => {
   });
 
   beforeEach(() => {
-    for (const sub of ['pids', 'active-runs', 'runs']) {
+    for (const sub of ['pids', 'active-runs', 'runs', 'queue']) {
       rmSync(path.join(tmp, sub), { recursive: true, force: true });
     }
   });
@@ -256,6 +260,97 @@ describe('crash-recovery', () => {
     it('is a no-op when there are no markers', async () => {
       await reconcileInterruptedRuns();
       expect(await listRunMarkers()).toHaveLength(0);
+    });
+  });
+
+  describe('reconcileQueuedRuns', () => {
+    function fakeWorkflow(id: string): Workflow {
+      return {
+        id,
+        name: id,
+        version: 1,
+        createdAt: 0,
+        updatedAt: 0,
+        nodes: [{ id: 's', type: 'start', position: { x: 0, y: 0 }, config: {} }],
+        edges: [],
+      };
+    }
+
+    function persisted(over: Partial<PersistedQueuedRun>): PersistedQueuedRun {
+      return {
+        queueId: 'q-1',
+        workflow: fakeWorkflow('wf'),
+        resolvedInputs: {},
+        triggerId: 'trigger-0123456789abcdef',
+        receivedAt: 1,
+        serverPid: process.pid,
+        ...over,
+      };
+    }
+
+    function writeQueueFile(rec: PersistedQueuedRun): void {
+      mkdirSync(queueDir(), { recursive: true });
+      writeFileSync(
+        path.join(queueDir(), `${rec.queueId}.json`),
+        JSON.stringify(rec),
+      );
+    }
+
+    /** A QueueRestoreTarget that records what it was asked to restore/drain. */
+    function fakeQueue() {
+      const restored: QueuedRun[][] = [];
+      let drainCount = 0;
+      const target: QueueRestoreTarget = {
+        restore: (items) => { restored.push(items); },
+        drain: async () => { drainCount += 1; },
+      };
+      return { target, restored, drainCount: () => drainCount };
+    }
+
+    it('re-enqueues a persisted queued run and kicks the drain', () => {
+      writeQueueFile(persisted({ queueId: 'q-restore-1' }));
+      const q = fakeQueue();
+
+      reconcileQueuedRuns(q.target);
+
+      expect(q.restored).toHaveLength(1);
+      expect(q.restored[0].map((i) => i.queueId)).toEqual(['q-restore-1']);
+      expect(q.drainCount()).toBe(1);
+    });
+
+    it('skips a queued run still owned by a live second instance', () => {
+      const otherServer = spawnSleep();
+      writeQueueFile(
+        persisted({ queueId: 'q-other', serverPid: otherServer.pid! }),
+      );
+      const q = fakeQueue();
+
+      reconcileQueuedRuns(q.target);
+
+      expect(q.restored).toHaveLength(0);
+      expect(q.drainCount()).toBe(0);
+      // Left in place for the owning instance to drain.
+      expect(existsSync(path.join(queueDir(), 'q-other.json'))).toBe(true);
+    });
+
+    it('re-enqueues a queued run whose owning server is gone', async () => {
+      const dead = spawnSleep();
+      const deadPid = dead.pid!;
+      process.kill(deadPid, 'SIGKILL');
+      await once(dead, 'exit');
+      writeQueueFile(persisted({ queueId: 'q-dead', serverPid: deadPid }));
+      const q = fakeQueue();
+
+      reconcileQueuedRuns(q.target);
+
+      expect(q.restored[0]?.map((i) => i.queueId)).toEqual(['q-dead']);
+    });
+
+    it('is a no-op when there are no persisted queued runs', () => {
+      const q = fakeQueue();
+      reconcileQueuedRuns(q.target);
+      expect(q.restored).toHaveLength(0);
+      expect(q.drainCount()).toBe(0);
     });
   });
 });

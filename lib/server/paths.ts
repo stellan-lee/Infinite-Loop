@@ -55,3 +55,18 @@ export function activeRunsDir(): string {
 export function auditDir(): string {
   return path.join(dataDir(), 'audit');
 }
+
+/**
+ * Directory holding one JSON file per queued-but-not-yet-started run. The
+ * trigger queue is in-memory; a restart between a trigger's 202 ack and the
+ * drain would otherwise lose the queued run silently. The file lets the next
+ * boot re-enqueue the survivor. See queue-store.ts and crash-recovery.ts.
+ *
+ * Derived from `dataDir()` with no separate env var, like `pidsDir()` and
+ * `activeRunsDir()`: it is transient operational state that belongs with the
+ * data dir, and the standard `INFLOOP_DATA_DIR` test override isolates it for
+ * free.
+ */
+export function queueDir(): string {
+  return path.join(dataDir(), 'queue');
+}

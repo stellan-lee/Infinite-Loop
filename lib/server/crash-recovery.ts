@@ -17,11 +17,17 @@
  *      by the crash leaves no trace. Only its on-disk marker survives
  *      (run-store.ts).
  *
- * Both functions run once at the very start of boot — before Next.js prepares
- * and long before the HTTP server listens, so no child of the new server can
- * yet exist to be confused with a stale PID file. They reap the orphan
- * process groups and convert leftover run markers into `failed` history
- * records.
+ *   3. Lost queued runs. A run accepted by a trigger (HTTP 202) but not yet
+ *      started lives only in the in-memory trigger queue. This one is not
+ *      crash-specific — even a graceful restart (a `docker compose` redeploy)
+ *      drops it, since nothing drains the queue at shutdown. queue-store.ts
+ *      mirrors each queued run to disk so the survivors can be re-enqueued.
+ *
+ * All three functions run once at the very start of boot — before Next.js
+ * prepares and long before the HTTP server listens, so no child of the new
+ * server can yet exist to be confused with a stale PID file. They reap the
+ * orphan process groups, convert leftover run markers into `failed` history
+ * records, and re-enqueue persisted queued runs.
  *
  * Multi-instance: port fallback (server.ts) lets two servers run at once. Both
  * artifacts carry the `serverPid` that wrote them; recovery skips anything
@@ -46,6 +52,8 @@ import {
   runExists,
   saveRun,
 } from './run-store';
+import { listPersistedQueuedRuns } from './queue-store';
+import type { QueuedRun, QueueRestoreTarget } from './trigger-queue';
 import { createLogger } from './logger';
 import { recordAudit } from './audit-log';
 
@@ -252,4 +260,55 @@ export async function reconcileInterruptedRuns(): Promise<void> {
   if (reconciled > 0) {
     log.info('marked interrupted run(s) as failed', { count: reconciled });
   }
+}
+
+/**
+ * Re-enqueue queued runs left behind by a previous server, so a trigger that
+ * was acknowledged (HTTP 202) before a restart still runs. A queued run lives
+ * only in memory until the drain starts it; queue-store.ts mirrors each to
+ * disk, and this turns the survivors back into live queue entries.
+ *
+ * The queue is passed in rather than imported so this module stays free of the
+ * trigger queue's construction graph (engine, executors); server.ts owns that
+ * wiring and supplies the singleton.
+ *
+ * PRECONDITION: run after `reapOrphanProcesses()`. This kicks the drain, which
+ * may spawn provider children; the reaper must have already finished so it
+ * cannot mistake one of those fresh children for a stale orphan.
+ *
+ * Best-effort; call once at boot. A run re-enqueued here that had in fact
+ * already started before the crash (the queue file outlived its removal by a
+ * sub-millisecond window) would run a second time — a bounded, visible
+ * duplicate, and the deliberate trade for never silently losing one.
+ *
+ * Multi-instance: the `serverPid` skip below means a second instance (port
+ * fallback) never *steals* an item still genuinely queued under a live peer.
+ * It can still hit the same bounded-duplication window above — booting in the
+ * instant between the peer's `engineStart` and its queue-file removal — which
+ * is the identical, accepted trade, not a new failure mode.
+ */
+export function reconcileQueuedRuns(queue: QueueRestoreTarget): void {
+  const survivors: QueuedRun[] = [];
+  for (const item of listPersistedQueuedRuns()) {
+    // Still owned by a different, live (port-fallback second-instance) server —
+    // leave it for that instance's own queue and drain to handle.
+    if (item.serverPid !== process.pid && isProcessAlive(item.serverPid)) {
+      continue;
+    }
+    survivors.push({
+      queueId: item.queueId,
+      workflow: item.workflow,
+      resolvedInputs: item.resolvedInputs,
+      triggerId: item.triggerId,
+      receivedAt: item.receivedAt,
+    });
+  }
+
+  if (survivors.length === 0) return;
+
+  queue.restore(survivors);
+  void queue.drain();
+  log.info('re-enqueued queued run(s) from a previous server', {
+    count: survivors.length,
+  });
 }

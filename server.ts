@@ -9,7 +9,9 @@ import {
 import {
   reapOrphanProcesses,
   reconcileInterruptedRuns,
+  reconcileQueuedRuns,
 } from './lib/server/crash-recovery';
+import { triggerQueue } from './lib/server/trigger-queue-singleton';
 import { setBoundPort } from './lib/server/runtime';
 import { evaluatePosture, isLoopbackHost } from './lib/server/network-posture';
 
@@ -46,13 +48,16 @@ const MAX_PORT_FALLBACK = 20;
 
 // Crash recovery: a previous server may have died hard, leaving detached
 // provider CLIs running (and spending API credits) and runs that never
-// reached history. Run this FIRST — before Next.js prepares and long before
-// the HTTP server listens — so it finishes before any code path that could
-// spawn a child, and no stale PID file can be mistaken for a live one.
-// Best-effort: a recovery failure must not block startup.
+// reached history; and any restart drops queued-but-not-started runs. Run
+// this FIRST — before Next.js prepares and long before the HTTP server
+// listens. Order matters: `reapOrphanProcesses` must complete before anything
+// spawns a child, so no stale PID file can be mistaken for a live one — and
+// `reconcileQueuedRuns` kicks a drain that itself spawns children, so it runs
+// last. Best-effort: a recovery failure must not block startup.
 try {
   reapOrphanProcesses();
   await reconcileInterruptedRuns();
+  reconcileQueuedRuns(triggerQueue);
 } catch (err) {
   console.warn('crash recovery failed (continuing startup):', err);
 }

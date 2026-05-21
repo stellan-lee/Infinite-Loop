@@ -2,6 +2,7 @@ import { TriggerQueue } from './trigger-queue';
 import { workflowEngine, type WorkflowEngine } from './workflow-engine';
 import { getWorkflow } from './workflow-store';
 import { touchLastFired } from './trigger-store';
+import { persistQueuedRun, removeQueuedRun } from './queue-store';
 import { eventBus } from './event-bus';
 // Side-effect: register the queueHistory event-bus subscription at the same
 // point the queue itself is wired, so history mirrors every queue event
@@ -45,6 +46,10 @@ function createSingleton(): TriggerQueue {
     engineStart: (wf, opts) => engineStartAdapter(workflowEngine, wf, opts),
     loadWorkflow: getWorkflow,
     touchLastFired: (id) => touchLastFired(id),
+    // Mirror queued runs to disk so a restart between a trigger's 202 ack and
+    // the drain does not lose them silently. crash-recovery.reconcileQueuedRuns
+    // re-enqueues the survivors on the next boot.
+    persistence: { add: persistQueuedRun, remove: removeQueuedRun },
     maxQueue: 100,
   });
 

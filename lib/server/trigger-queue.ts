@@ -13,6 +13,26 @@ export interface QueuedRun {
   receivedAt: number;
 }
 
+/**
+ * Disk persistence for the queue. Optional: when absent the queue is purely
+ * in-memory (the historical behavior, kept for unit tests). The singleton
+ * wires the disk-backed implementation from queue-store.ts. `add` runs inside
+ * the synchronous `enqueue()`, so it must be synchronous and best-effort —
+ * see queue-store.persistQueuedRun.
+ */
+export interface QueuePersistence {
+  add(item: QueuedRun): void;
+  remove(queueId: string): void;
+}
+
+/** The slice of TriggerQueue that crash recovery needs to re-admit and kick
+ *  off persisted survivors. Declared here so crash-recovery.ts can depend on
+ *  the contract without importing the queue's whole construction graph. */
+export interface QueueRestoreTarget {
+  restore(items: QueuedRun[]): void;
+  drain(): Promise<void>;
+}
+
 export interface TriggerQueueDeps {
   /** Returns the new run's id on success. Throws if the engine is busy. */
   engineStart: (wf: Workflow, opts: { resolvedInputs: ResolvedInputs }) => Promise<string>;
@@ -21,6 +41,9 @@ export interface TriggerQueueDeps {
   /** Called after a successful engine start to record the fire time on the
    *  persisted trigger. Optional for tests that don't care. */
   touchLastFired?: (triggerId: string) => Promise<void>;
+  /** Mirror queued runs to disk so a restart does not lose them. Optional:
+   *  unit tests run the queue in-memory only. */
+  persistence?: QueuePersistence;
   maxQueue?: number;
 }
 
@@ -39,12 +62,14 @@ export class TriggerQueue {
   private engineStart: TriggerQueueDeps['engineStart'];
   private loadWorkflow: TriggerQueueDeps['loadWorkflow'];
   private touchLastFired?: TriggerQueueDeps['touchLastFired'];
+  private persistence?: QueuePersistence;
   private maxQueue: number;
 
   constructor(deps: TriggerQueueDeps) {
     this.engineStart = deps.engineStart;
     this.loadWorkflow = deps.loadWorkflow;
     this.touchLastFired = deps.touchLastFired;
+    this.persistence = deps.persistence;
     this.maxQueue = deps.maxQueue ?? 100;
   }
 
@@ -60,6 +85,7 @@ export class TriggerQueue {
     const idx = this.q.findIndex((item) => item.queueId === queueId);
     if (idx === -1) return { removed: false };
     const [item] = this.q.splice(idx, 1);
+    this.persistence?.remove(item.queueId);
     eventBus.emit({
       type: 'trigger_removed',
       queueId: item.queueId,
@@ -76,8 +102,15 @@ export class TriggerQueue {
       (err as Error & { code?: string }).code = 'QUEUE_FULL';
       throw err;
     }
+    // The `Date.now()` prefix makes the id restart-safe by construction: a
+    // boot's clock is past the previous boot's, so a fresh id can never
+    // collide with one carried in by restore() even though `nextId` resets.
     const queueId = `q-${Date.now()}-${++this.nextId}`;
     const full: QueuedRun = { queueId, ...item };
+    // Persist before the item becomes observable — pushed, emitted, or
+    // returned to the caller, which then sends its 202 ack. The durable
+    // record must exist before that promise is made.
+    this.persistence?.add(full);
     this.q.push(full);
     const position = this.q.length;
     eventBus.emit({
@@ -92,8 +125,10 @@ export class TriggerQueue {
     return { queueId, position };
   }
 
-  /** Pull the head item and try to start it. If the engine is busy, re-prepend
-   *  and bail. Continues until the queue is empty or the engine refuses. */
+  /** Pull the head item and try to start it. Once shifted off, an item leaves
+   *  the queue for good — started, dropped, or its workflow gone — so the
+   *  per-item `finally` drops its persisted file in every case. Continues
+   *  until the queue is empty. */
   async drain(): Promise<void> {
     if (this.draining) return;
     if (this.q.length === 0) return;
@@ -101,43 +136,57 @@ export class TriggerQueue {
     try {
       while (this.q.length > 0) {
         const head = this.q.shift()!;
-
-        let workflow: Workflow;
         try {
-          workflow = await this.loadWorkflow(head.workflow.id);
-        } catch {
-          eventBus.emit({
-            type: 'trigger_dropped',
-            queueId: head.queueId,
-            triggerId: head.triggerId,
-            reason: 'workflow-deleted',
-          });
-          continue;
-        }
-
-        try {
-          const runId = await this.engineStart(workflow, {
-            resolvedInputs: head.resolvedInputs,
-          });
-          eventBus.emit({
-            type: 'trigger_started',
-            queueId: head.queueId,
-            triggerId: head.triggerId,
-            workflowId: workflow.id,
-            runId,
-          });
-          if (this.touchLastFired) {
-            try { await this.touchLastFired(head.triggerId); }
-            catch (err) { log.error('touchLastFired failed', { err }); }
+          let workflow: Workflow;
+          try {
+            workflow = await this.loadWorkflow(head.workflow.id);
+          } catch {
+            eventBus.emit({
+              type: 'trigger_dropped',
+              queueId: head.queueId,
+              triggerId: head.triggerId,
+              reason: 'workflow-deleted',
+            });
+            continue;
           }
-        } catch (err) {
-          eventBus.emit({
-            type: 'trigger_dropped',
-            queueId: head.queueId,
-            triggerId: head.triggerId,
-            reason: 'engine-start-failed',
-          });
-          log.error('engineStart failed', { err });
+
+          try {
+            const runId = await this.engineStart(workflow, {
+              resolvedInputs: head.resolvedInputs,
+            });
+            // engineStart resolved → RunController.start() has synchronously
+            // written the run's crash-recovery marker (run-store.ts), so the
+            // run is now durably tracked. Drop the queue file right here —
+            // before touchLastFired's I/O — so a crash mid-hand-off can at
+            // worst re-run this item (the marker also survives), never lose
+            // it. The `finally` below is the catch-all; this is the early,
+            // narrow point that keeps that re-run window sub-millisecond.
+            this.persistence?.remove(head.queueId);
+            eventBus.emit({
+              type: 'trigger_started',
+              queueId: head.queueId,
+              triggerId: head.triggerId,
+              workflowId: workflow.id,
+              runId,
+            });
+            if (this.touchLastFired) {
+              try { await this.touchLastFired(head.triggerId); }
+              catch (err) { log.error('touchLastFired failed', { err }); }
+            }
+          } catch (err) {
+            eventBus.emit({
+              type: 'trigger_dropped',
+              queueId: head.queueId,
+              triggerId: head.triggerId,
+              reason: 'engine-start-failed',
+            });
+            log.error('engineStart failed', { err });
+          }
+        } finally {
+          // The item is out of the in-memory queue and processed to a terminal
+          // outcome. Drop its persisted file. Idempotent: the success path
+          // above already removed it, and a missing file is a no-op.
+          this.persistence?.remove(head.queueId);
         }
       }
     } finally {
@@ -145,7 +194,47 @@ export class TriggerQueue {
     }
   }
 
+  /**
+   * Re-admit queued runs recovered from disk after a restart. Unlike
+   * `enqueue()`, this preserves each item's original `queueId` (the persisted
+   * file is named by it, and a fresh id would orphan that file), does NOT
+   * re-persist (the file already exists), and does NOT enforce `maxQueue` —
+   * these runs were accepted before the restart, so dropping them would
+   * re-introduce the very loss this persistence layer closes. A consequence:
+   * a restored queue can sit above `maxQueue`, and new `enqueue()` calls then
+   * shed with QUEUE_FULL until the drain brings it back under cap — restored
+   * work is deliberately prioritized over new arrivals.
+   *
+   * Items are ordered by `receivedAt` so the post-restart drain stays FIFO at
+   * millisecond granularity (same-millisecond arrivals may reorder relative
+   * to each other — an acceptable bound). Re-emits `trigger_enqueued` so the
+   * in-memory queue history, which does not survive a restart, is repopulated.
+   *
+   * Intended as a boot-time, empty-queue operation (crash-recovery calls it
+   * once, before the server accepts requests). It pushes items as-is and does
+   * not dedupe against `queueId`s already present, so calling it on a live,
+   * non-empty queue could admit duplicates.
+   */
+  restore(items: QueuedRun[]): void {
+    const ordered = [...items].sort(
+      (a, b) => a.receivedAt - b.receivedAt || a.queueId.localeCompare(b.queueId),
+    );
+    for (const item of ordered) {
+      this.q.push(item);
+      eventBus.emit({
+        type: 'trigger_enqueued',
+        queueId: item.queueId,
+        triggerId: item.triggerId,
+        workflowId: item.workflow.id,
+        inputs: item.resolvedInputs,
+        position: this.q.length,
+        receivedAt: item.receivedAt,
+      });
+    }
+  }
+
   clear(): void {
+    for (const item of this.q) this.persistence?.remove(item.queueId);
     this.q = [];
     this.draining = false;
   }

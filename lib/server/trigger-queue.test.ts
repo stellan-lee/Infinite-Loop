@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { TriggerQueue } from './trigger-queue';
+import { TriggerQueue, type QueuedRun } from './trigger-queue';
 import type { Workflow } from '../shared/workflow';
 import { eventBus } from './event-bus';
 import type { WorkflowEvent } from '../shared/workflow';
@@ -203,5 +203,178 @@ describe('TriggerQueue', () => {
     // mutating the returned array must not affect internal state
     items.pop();
     expect(q.size()).toBe(2);
+  });
+});
+
+/* ─── persistence + restore (crash recovery) ─────────────────────────────── */
+
+describe('TriggerQueue persistence', () => {
+  function fakePersistence() {
+    const added: QueuedRun[] = [];
+    const removed: string[] = [];
+    return {
+      added,
+      removed,
+      impl: {
+        add: (item: QueuedRun) => { added.push(item); },
+        remove: (queueId: string) => { removed.push(queueId); },
+      },
+    };
+  }
+
+  test('enqueue persists the full item before returning', () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => 'run-1',
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    const { queueId } = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: { a: '1' },
+      triggerId: 't', receivedAt: 5,
+    });
+    expect(p.added).toHaveLength(1);
+    expect(p.added[0].queueId).toBe(queueId);
+    expect(p.added[0].triggerId).toBe('t');
+    expect(p.added[0].resolvedInputs).toEqual({ a: '1' });
+  });
+
+  test('drain removes the persisted file after a successful start', async () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => 'run-1',
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    const { queueId } = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    await q.drain();
+    expect(p.removed).toContain(queueId);
+  });
+
+  test('drain removes the persisted file when engineStart fails', async () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => { throw new Error('boom'); },
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    const { queueId } = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    await q.drain();
+    expect(p.removed).toContain(queueId);
+  });
+
+  test('drain removes the persisted file when the workflow was deleted', async () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => 'run-1',
+      loadWorkflow: async () => { throw new Error('not found'); },
+      persistence: p.impl,
+    });
+    const { queueId } = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    await q.drain();
+    expect(p.removed).toContain(queueId);
+  });
+
+  test('removeByQueueId removes the persisted file', () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => 'run-1',
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    const { queueId } = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    q.removeByQueueId(queueId);
+    expect(p.removed).toEqual([queueId]);
+  });
+
+  test('clear removes the persisted file for every queued item', () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => 'run-1',
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    const a = q.enqueue({
+      workflow: fakeWorkflow('w1'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    const b = q.enqueue({
+      workflow: fakeWorkflow('w2'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 2,
+    });
+    q.clear();
+    expect(p.removed.sort()).toEqual([a.queueId, b.queueId].sort());
+  });
+
+  test('restore re-admits items preserving queueId, in receivedAt order', () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => 'run-1',
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    // Deliberately out of receivedAt order.
+    q.restore([
+      { queueId: 'q-b', workflow: fakeWorkflow('w2'), resolvedInputs: {}, triggerId: 't2', receivedAt: 20 },
+      { queueId: 'q-a', workflow: fakeWorkflow('w1'), resolvedInputs: {}, triggerId: 't1', receivedAt: 10 },
+    ]);
+    expect(q.list().map((i) => i.queueId)).toEqual(['q-a', 'q-b']);
+    // restore must NOT re-persist — the files already exist on disk.
+    expect(p.added).toHaveLength(0);
+  });
+
+  test('restore ignores the maxQueue cap', () => {
+    const p = fakePersistence();
+    const q = new TriggerQueue({
+      engineStart: async () => 'run-1',
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+      maxQueue: 1,
+    });
+    q.restore([
+      { queueId: 'q-1', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', receivedAt: 1 },
+      { queueId: 'q-2', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', receivedAt: 2 },
+      { queueId: 'q-3', workflow: fakeWorkflow('w'), resolvedInputs: {}, triggerId: 't', receivedAt: 3 },
+    ]);
+    expect(q.size()).toBe(3);
+    // A new enqueue still honors the cap — restored work sheds new arrivals.
+    expect(() =>
+      q.enqueue({
+        workflow: fakeWorkflow('w'), resolvedInputs: {},
+        triggerId: 't', receivedAt: 4,
+      }),
+    ).toThrow(/queue.*full/i);
+  });
+
+  test('restored items drain and start in order', async () => {
+    const p = fakePersistence();
+    const started: string[] = [];
+    const q = new TriggerQueue({
+      engineStart: async (wf) => { started.push(wf.id); return `run-${wf.id}`; },
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    q.restore([
+      { queueId: 'q-2', workflow: fakeWorkflow('second'), resolvedInputs: {}, triggerId: 't', receivedAt: 2 },
+      { queueId: 'q-1', workflow: fakeWorkflow('first'), resolvedInputs: {}, triggerId: 't', receivedAt: 1 },
+    ]);
+    await q.drain();
+    expect(started).toEqual(['first', 'second']);
+    // Both files are dropped. drain() removes a started item twice — once
+    // early (right after engineStart) and once in the per-item finally — and
+    // that is fine: removal is idempotent. Assert the set, not the count.
+    expect([...new Set(p.removed)].sort()).toEqual(['q-1', 'q-2']);
   });
 });

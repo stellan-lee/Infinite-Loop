@@ -1,0 +1,172 @@
+# Prometheus alerting rules for Infinite Loop.
+#
+# Infinite Loop runs workflows unattended — webhooks and triggers spawn agent
+# CLIs that execute code and spend API credits with nobody watching. The
+# `/api/metrics` endpoint exposes the operational surface; these rules turn it
+# into the detection half of "deploy it and walk away". Prevention (container
+# resource limits, the per-run and process-wide cost ceilings) bounds the blast
+# radius; these alerts tell a human when a bound is being approached or hit.
+#
+# ── Wiring it up ────────────────────────────────────────────────────────────
+#
+#   1. Mount this file into Prometheus and reference it under `rule_files:`:
+#
+#        rule_files:
+#          - /etc/prometheus/infinite-loop-alerts.yml
+#
+#   2. Scrape `/api/metrics`. It is AUTHENTICATED (unlike /api/health) — the
+#      scrape config MUST carry the bearer token, or every scrape gets 401,
+#      `up` is permanently 0, and `InfiniteLoopInstanceDown` fires forever:
+#
+#        scrape_configs:
+#          - job_name: infinite-loop
+#            metrics_path: /api/metrics
+#            authorization:
+#              credentials: <INFLOOP_API_TOKEN>
+#            static_configs:
+#              - targets: ['infinite-loop:3000']
+#
+#      The `job` label must be `infinite-loop` for `InfiniteLoopInstanceDown`
+#      below; adjust the alert if you name the job differently.
+#
+# Thresholds are starting points sized for a small single-node deployment.
+# Tune them to your workload — especially the queue-depth and failure-rate
+# alerts. See docs/configuration.md#metrics.
+
+groups:
+  - name: infinite-loop
+    rules:
+      # ── Liveness ──────────────────────────────────────────────────────────
+      - alert: InfiniteLoopInstanceDown
+        expr: up{job="infinite-loop"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Infinite Loop instance is not responding to scrapes"
+          description: >
+            Prometheus has failed to scrape /api/metrics for over 2 minutes.
+            The process may be down, crash-looping, or the scrape token may be
+            wrong (an unauthenticated scrape gets 401 and reads as down).
+
+      # ── Run health ────────────────────────────────────────────────────────
+      - alert: InfiniteLoopHighRunFailureRate
+        expr: |
+          sum(increase(infloop_runs_total{status="failed"}[1h])) > 5
+          and
+          sum(increase(infloop_runs_total{status="failed"}[1h]))
+            / clamp_min(sum(increase(infloop_runs_total[1h])), 1)
+            > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than half of Infinite Loop runs are failing"
+          description: >
+            Over the last hour more than 5 runs failed and failures are over
+            50% of all settled runs. Check run history and server logs — a
+            provider outage, a bad workflow, or expired credentials are the
+            usual causes.
+
+      # ── Trigger queue ─────────────────────────────────────────────────────
+      - alert: InfiniteLoopTriggerQueueDropping
+        expr: sum by (reason) (increase(infloop_queue_dropped_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Infinite Loop is dropping queued trigger runs ({{ $labels.reason }})"
+          description: >
+            Queued runs have been dropped before starting in the last 15
+            minutes (reason: {{ $labels.reason }}). `queue-full` means inbound
+            triggers outpace execution; `workflow-deleted` means the workflow
+            was removed while the run sat queued; `engine-start-failed` is an
+            unexpected engine error worth checking the logs for.
+
+      - alert: InfiniteLoopTriggerQueueBacklog
+        expr: infloop_queue_depth > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Infinite Loop trigger queue is backing up"
+          description: >
+            More than 50 runs have been waiting in the trigger queue for over
+            10 minutes (current depth {{ $value }}). The queue caps at 100,
+            after which new triggers are dropped. Raise concurrency or slow the
+            trigger source.
+
+      - alert: InfiniteLoopSlotPoolSaturated
+        expr: infloop_slot_pool_waiting > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Infinite Loop runs are starved for execution slots"
+          description: >
+            Runs have been parked waiting for a folder-touching slot for over
+            15 minutes ({{ $value }} waiting). Consider raising
+            maxConcurrentRuns if the host has the headroom.
+
+      # ── Memory pressure ───────────────────────────────────────────────────
+      - alert: InfiniteLoopEventBufferNearLimit
+        expr: infloop_event_buffer_events / infloop_event_buffer_limit > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Infinite Loop in-memory event buffer is near its ceiling"
+          description: >
+            Buffered workflow events have been above 80% of the aggregate
+            ceiling (INFLOOP_MAX_TOTAL_EVENT_BUFFER) for 10 minutes. The buffer
+            is fair-shared so it cannot OOM the process, but sustained pressure
+            means per-run event history is being truncated.
+
+      # ── Cost ──────────────────────────────────────────────────────────────
+      - alert: InfiniteLoopCostBudgetNearLimit
+        expr: |
+          (infloop_cost_budget_spent_usd / infloop_cost_budget_limit_usd > 0.8)
+          and (infloop_cost_budget_limit_usd > 0)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Infinite Loop has spent over 80% of its cost budget"
+          description: >
+            Cumulative provider cost since startup ({{ $value | printf "%.2f" }}
+            of the budget ratio) is above 80% of INFLOOP_MAX_TOTAL_COST_USD.
+            Once it hits 100%, new runs are refused and in-flight runs abort.
+
+      - alert: InfiniteLoopCostBudgetExhausted
+        # `>` (not `>=`) matches the strict comparison the server enforces with.
+        expr: |
+          (infloop_cost_budget_spent_usd > infloop_cost_budget_limit_usd)
+          and (infloop_cost_budget_limit_usd > 0)
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Infinite Loop cost budget is exhausted — runs are being refused"
+          description: >
+            Cumulative provider cost has passed INFLOOP_MAX_TOTAL_COST_USD.
+            New runs are refused with HTTP 503 and in-flight runs abort at
+            their next costed node; queued trigger runs are held intact and
+            resume after a restart. Raise INFLOOP_MAX_TOTAL_COST_USD, or
+            restart the process to reset the (in-memory, process-lifetime)
+            total.
+
+      # ── Webhooks ──────────────────────────────────────────────────────────
+      - alert: InfiniteLoopWebhookErrorRate
+        expr: |
+          sum(rate(infloop_webhook_requests_total{outcome=~"error|rejected"}[15m]))
+            / clamp_min(sum(rate(infloop_webhook_requests_total[15m])), 0.001)
+            > 0.3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Infinite Loop is rejecting or erroring on many webhooks"
+          description: >
+            Over 30% of webhook deliveries in the last 15 minutes ended in
+            `error` or `rejected`. Check for a bad signature secret, a
+            misconfigured plugin, or a caller hitting the rate limit.

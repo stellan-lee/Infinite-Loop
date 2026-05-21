@@ -103,6 +103,10 @@ export interface GaugeSnapshot {
   eventBufferEvents: number;
   /** Configured aggregate ceiling on in-memory buffered workflow events. */
   eventBufferLimit: number;
+  /** Cumulative provider-reported cost across all runs since process start. */
+  costBudgetSpentUsd: number;
+  /** Configured process-wide cost ceiling in USD (0 = no ceiling enforced). */
+  costBudgetLimitUsd: number;
   /** Seconds since this server process started. */
   processUptimeSeconds: number;
 }
@@ -404,6 +408,29 @@ export class MetricsRegistry {
     );
     out.push(
       `infloop_event_buffer_limit ${formatValue(gauges.eventBufferLimit)}`,
+    );
+
+    family(
+      'infloop_cost_budget_spent_usd',
+      'gauge',
+      'Cumulative provider-reported run cost since process start, in USD — ' +
+        'the live figure the process-wide cost budget is checked against. ' +
+        'Unlike infloop_run_cost_usd_total (folded once per run at settle), ' +
+        'this includes the cost of runs still in flight.',
+    );
+    out.push(
+      `infloop_cost_budget_spent_usd ${formatValue(gauges.costBudgetSpentUsd)}`,
+    );
+
+    family(
+      'infloop_cost_budget_limit_usd',
+      'gauge',
+      'Configured process-wide cost ceiling in USD ' +
+        '(INFLOOP_MAX_TOTAL_COST_USD). 0 means no ceiling is enforced — new ' +
+        'runs are refused and in-flight runs aborted once spend passes it.',
+    );
+    out.push(
+      `infloop_cost_budget_limit_usd ${formatValue(gauges.costBudgetLimitUsd)}`,
     );
 
     family(

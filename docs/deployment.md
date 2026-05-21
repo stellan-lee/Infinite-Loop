@@ -189,13 +189,21 @@ What it exposes (all metrics are prefixed `infloop_`):
 | `webhook_requests_total{outcome}` | counter | Webhook ingress, by coarse outcome. |
 | `runs_active`, `queue_depth` | gauge | Live load — alert before `queue_depth` nears the cap of 100. |
 | `slot_pool_in_use` / `slot_pool_capacity` / `slot_pool_waiting` | gauge | Concurrency saturation. |
+| `event_buffer_events` / `event_buffer_limit` | gauge | In-memory event-buffer pressure — OOM headroom. |
+| `cost_budget_spent_usd` / `cost_budget_limit_usd` | gauge | Live cumulative spend vs. the process-wide cost ceiling. |
 | `process_uptime_seconds` | gauge | Catches restarts. |
 
-Counters are process-lifetime and reset to 0 on restart. One known gap: a run
-killed by a hard process crash is reconstructed as `failed` at the next boot
-*without* passing through the run settle path, so it is **not** counted by
-`runs_total` / `run_duration_seconds` — alert on `process_uptime_seconds`
-resets to catch crashes.
+Counters are process-lifetime and reset to 0 on restart. A run killed by a
+hard process crash is reconstructed as `failed` at the next boot: it **is**
+folded into `runs_total{status="failed"}` so the failure series stays honest
+about crashes, but **not** into the `run_duration_seconds` histogram — a hard
+crash leaves the wall-clock duration unknowable. The histogram's `_count` can
+therefore legitimately trail `runs_total`; alert on `process_uptime_seconds`
+resets to catch the restarts themselves.
+
+A ready-to-load set of alerting rules covering these metrics ships at
+[`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml) — see
+[configuration.md](configuration.md#metrics).
 
 ## Known limitation — agent providers are not in the image
 

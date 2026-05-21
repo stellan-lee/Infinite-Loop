@@ -26,6 +26,7 @@ mock.module('./run-store', () => ({
 
 const { engineStartAdapter, triggerQueue } = await import('./trigger-queue-singleton');
 const { WorkflowEngine } = await import('./workflow-engine');
+const { GlobalCostBudget } = await import('./cost-budget');
 
 afterAll(() => {
   mock.module('./templating', () => realTemplating);
@@ -108,6 +109,46 @@ describe('engineStartAdapter', () => {
     expect(secondRunId).toBeTruthy();
     expect(secondRunId).not.toBe(firstRunId);
     expect(engine.list().length).toBe(2);
+
+    release();
+    await new Promise((r) => setTimeout(r, 5));
+  });
+
+  test('refuses to start a run when the process-wide cost budget is exhausted', async () => {
+    const { exec } = hangingExecutor();
+    const engine = new WorkflowEngine({ start: exec });
+    const budget = new GlobalCostBudget({ ceilingUsd: 1 });
+    budget.add(2); // $2 spent against a $1 ceiling — exhausted.
+    expect(budget.exceeded()).toBe(true);
+
+    let thrown: (Error & { code?: string }) | undefined;
+    try {
+      await engineStartAdapter(engine, wf, { resolvedInputs: {} }, budget);
+    } catch (err) {
+      thrown = err as Error & { code?: string };
+    }
+
+    expect(thrown?.code).toBe('COST_BUDGET_EXCEEDED');
+    // The refusal runs BEFORE engine.startRun — no controller is registered
+    // and no run is left half-started.
+    expect(engine.list().length).toBe(0);
+    expect(engine.getState().status).toBe('idle');
+  });
+
+  test('admits a run when the cost budget is set but not yet exhausted', async () => {
+    const { exec, release } = hangingExecutor();
+    const engine = new WorkflowEngine({ start: exec });
+    const budget = new GlobalCostBudget({ ceilingUsd: 100 });
+    budget.add(10); // well under the ceiling — admission proceeds normally.
+
+    const runId = await engineStartAdapter(
+      engine,
+      wf,
+      { resolvedInputs: {} },
+      budget,
+    );
+    expect(typeof runId).toBe('string');
+    expect(engine.list().length).toBe(1);
 
     release();
     await new Promise((r) => setTimeout(r, 5));

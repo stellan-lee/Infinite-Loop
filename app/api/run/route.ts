@@ -73,6 +73,13 @@ export async function POST(req: Request) {
     runId = await engineStartAdapter(workflowEngine, workflow, { resolvedInputs });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'failed to start';
+    // A run refused because the process-wide cost budget is exhausted is not a
+    // server fault — answer 503 (try again once the budget is raised/reset),
+    // not 500. See lib/server/cost-budget.ts.
+    if ((err as { code?: string } | null)?.code === 'COST_BUDGET_EXCEEDED') {
+      log.warn('run refused: process-wide cost budget exceeded');
+      return NextResponse.json({ error: message }, { status: 503 });
+    }
     log.error('engine.start failed', { err });
     return NextResponse.json({ error: message }, { status: 500 });
   }

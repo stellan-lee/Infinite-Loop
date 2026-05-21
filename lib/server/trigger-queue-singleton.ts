@@ -10,6 +10,7 @@ import { eventBus } from './event-bus';
 // happens to load the queue first.
 import './queue-history';
 import { createLogger } from './logger';
+import { globalCostBudget, type GlobalCostBudget } from './cost-budget';
 import type { Workflow } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 
@@ -24,12 +25,40 @@ const log = createLogger('trigger-queue');
  * Kept exported so existing imports continue to work and so /api/run can
  * call it directly. The old engineStartAdapter has been retired as part of
  * stage 5 (concurrent-runs refactor).
+ *
+ * This is the single production choke point for starting a run — /api/run, the
+ * trigger-queue drain, and (via the queue) the MCP enqueue tool all route
+ * through here — so it is also where the process-wide cost budget refuses
+ * admission. `engine.startRun` itself stays unguarded by design: any new
+ * caller must go through this adapter to inherit the budget gate.
+ *
+ * `budget` defaults to the shared singleton; tests pass an exhausted instance
+ * to exercise the refusal — the same injection pattern RunController uses for
+ * its budgets.
  */
 export function engineStartAdapter(
   engine: WorkflowEngine,
   wf: Workflow,
   opts: { resolvedInputs: ResolvedInputs },
+  budget: GlobalCostBudget = globalCostBudget,
 ): Promise<string> {
+  // Refuse admission once the process-wide cost budget is exhausted — the
+  // clean answer to a webhook storm or a runaway trigger. This MUST run before
+  // `engine.startRun`, which synchronously registers the controller, writes
+  // the crash-recovery marker and kicks off the run: a check after it could
+  // not refuse anything, only leak a half-started run. The `code` lets
+  // /api/run answer 503; the trigger queue's drain catches the throw and
+  // emits `trigger_dropped`.
+  if (budget.exceeded()) {
+    const err: Error & { code?: string } = new Error(
+      'run refused: process-wide cost budget exceeded ' +
+        `($${budget.ceilingUsd}). Cumulative provider cost across all runs ` +
+        `since startup reached $${budget.spent.toFixed(4)}. Raise or disable ` +
+        'INFLOOP_MAX_TOTAL_COST_USD.',
+    );
+    err.code = 'COST_BUDGET_EXCEEDED';
+    throw err;
+  }
   const { runId, completion } = engine.startRun(wf, opts);
   // Swallow the completion rejection here so callers reading the synchronous
   // runId don't get an unhandled rejection. The run's terminal status flows

@@ -251,15 +251,32 @@ credits) until a human notices. Every run is therefore capped by a
   opt-in because no single dollar figure is safe for every user; set it to
   your real per-run budget.
 
+A per-run cost cap does not bound a **webhook storm or a misconfigured
+trigger** — each run can stay under its own cap while the fleet of them spends
+without limit. The process-wide cost budget closes that:
+
+- `INFLOOP_MAX_TOTAL_COST_USD` (default `0`, disabled) — a cumulative cost
+  ceiling, in US dollars, across **every run since the process started**. Once
+  cumulative provider-reported cost passes it, new runs are refused at
+  admission (`POST /api/run` answers `503`) and any in-flight run is aborted at
+  its next costed node. Queued trigger runs are **held, not dropped** — the
+  queue drain pauses, leaving them on disk to resume after a restart (which
+  also resets the in-memory total); a queued run was already acknowledged to
+  its caller, so it is not silently discarded. Like the per-run cap it is
+  opt-in — set it to your real budget. It is process-lifetime and in-memory: a
+  restart resets the total to zero. For a windowed (e.g. daily) view, alert on
+  the `infloop_run_cost_usd_total` metric instead — see
+  [configuration.md](./configuration.md#metrics).
+
 The node and wall-clock ceilings bound **every** run. The node ceiling is the
 deterministic guard: an unbounded loop will always hit it. Raise the limit if
 you have a legitimately large workflow — but treat a budget failure as a
 prompt to add an explicit `maxIterations` cap, not just to raise the ceiling.
 
-**Cost-cap coverage.** `INFLOOP_MAX_RUN_COST_USD` only counts cost from
-providers that report it — currently the `claude` CLI (via its `total_cost_usd`
-result frame). HTTP providers report no cost, so a workflow built entirely on
-HTTP providers is **not** bounded by the cost cap; the node and wall-clock
+**Cost-cap coverage.** Both cost caps only count cost from providers that
+report it — currently the `claude` CLI (via its `total_cost_usd` result
+frame). HTTP providers report no cost, so a workflow built entirely on HTTP
+providers is **not** bounded by either cost cap; the node and wall-clock
 ceilings remain its backstop. The cost is also surfaced per agent node as the
 `costUsd` output (usable in `{{ ... }}` templates).
 

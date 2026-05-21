@@ -15,6 +15,7 @@
 | `INFLOOP_MAX_RUN_NODE_EXECUTIONS` | `10000` | Run-level safety ceiling: max node-execution steps per run before it is aborted and marked failed. Bounds runaway loops, including `infinite: true`. `0` disables. |
 | `INFLOOP_MAX_RUN_DURATION_MS` | `86400000` (24h) | Run-level wall-clock cap, in milliseconds, checked at each node-step boundary (a single long-running node is not interrupted mid-flight). A backstop against a genuinely-stuck run, not a tight SLA. `0` disables. |
 | `INFLOOP_MAX_RUN_COST_USD` | `0` (disabled) | Run-level cost ceiling, in US dollars. When set, a run is aborted and marked failed once accumulated provider-reported cost exceeds it. Only providers that report cost are counted (currently the `claude` CLI); HTTP providers report none. `0` disables. |
+| `INFLOOP_MAX_TOTAL_COST_USD` | `0` (disabled) | Process-wide cost ceiling, in US dollars, summed across **all** runs since startup. Once cumulative provider-reported cost exceeds it, new runs are refused (`POST /api/run` → `503`), in-flight runs abort at their next costed node, and the trigger-queue drain pauses — queued runs are held on disk to resume after a restart. Process-lifetime and in-memory — a restart resets the total. `0` disables. Exposed live as `infloop_cost_budget_spent_usd` / `infloop_cost_budget_limit_usd` on `/api/metrics`. |
 | `INFLOOP_MAX_TOTAL_EVENT_BUFFER` | `200000` | Process-wide ceiling, in events, on workflow events buffered in memory across all concurrent runs. Each run's event buffer is dynamically squeezed to a fair share of this ceiling, so a burst of triggers cannot grow memory without bound. A non-numeric, zero or negative value falls back to the default. Exposed live as `infloop_event_buffer_events` / `infloop_event_buffer_limit` on `/api/metrics`. |
 | `INFLOOP_PROVIDERS_DIR` | `<cwd>/providers` | Where provider manifests live |
 | `INFLOOP_PROVIDER_BIN_<ID>` | _(unset)_ | Override the binary for provider `<ID>` (upper-cased), e.g. `INFLOOP_PROVIDER_BIN_CLAUDE=/opt/claude` |
@@ -53,6 +54,42 @@ a reconnaissance signal in token-gated network mode.
 Server-side diagnostics are emitted as one JSON object per line (`ts`,
 `level`, `scope`, `msg`, plus call-specific fields) so they pipe cleanly into
 a log aggregator. Raise or lower verbosity with `INFLOOP_LOG_LEVEL`.
+
+### Metrics
+
+`GET /api/metrics` renders process-lifetime operational counters and live
+gauges in Prometheus text exposition format. Unlike `/api/health` it is
+**authenticated** — run counts, cost, and queue depth are operational detail
+and a reconnaissance signal, so the scrape must carry the token:
+
+```yaml
+scrape_configs:
+  - job_name: infinite-loop
+    metrics_path: /api/metrics
+    authorization:
+      credentials: <INFLOOP_API_TOKEN>
+    static_configs:
+      - targets: ['localhost:3000']
+```
+
+Without the token every scrape gets `401`, so Prometheus reports the target as
+down — a common first-time misconfiguration.
+
+The surface covers run outcomes and duration (`infloop_runs_total`,
+`infloop_run_duration_seconds`), cost (`infloop_run_cost_usd_total` settled,
+`infloop_cost_budget_spent_usd` / `infloop_cost_budget_limit_usd` live),
+trigger-queue flow (`infloop_queue_*`), slot-pool saturation
+(`infloop_slot_pool_*`), in-memory event-buffer pressure
+(`infloop_event_buffer_*`), and webhook outcomes
+(`infloop_webhook_requests_total`). Every series carries a `# HELP` line.
+
+A ready-to-load set of alerting rules wired to these metrics ships at
+[`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml) — instance
+down, high run-failure rate, queue drops and backlog, slot saturation,
+event-buffer and cost-budget pressure, and webhook error rate. For a windowed
+(e.g. daily) cost view, alert on `increase(infloop_run_cost_usd_total[24h])`;
+`infloop_cost_budget_spent_usd` itself is process-lifetime and resets on
+restart.
 
 ## Audit log
 
@@ -94,6 +131,31 @@ Each limit is a per-minute token bucket, so a whole minute's budget may arrive
 as a burst. State is in-memory and per-process — a restart clears it. See
 [security.md](./security.md#rate-limiting).
 
+## Container resource limits
+
+`docker-compose.yml` caps the container's memory and CPU. The orchestrator's
+own heap is bounded (`INFLOOP_MAX_TOTAL_EVENT_BUFFER`), but the agent CLIs a
+run spawns are not — a ballooning provider child, or a loop spawning agents,
+can otherwise consume the whole host. With a cgroup limit a runaway run is
+OOM-killed inside the container; `restart: unless-stopped` plus boot-time
+crash recovery then reconciles, and the host stays up.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `INFLOOP_MEM_LIMIT` | `4g` | Container memory ceiling (`mem_limit`). The compose file pins `memswap_limit` to the same value, so the container gets **no swap** — the limit is hard. |
+| `INFLOOP_CPUS` | `2.0` | Container CPU ceiling (`cpus`). |
+
+These are read by `docker compose`, not the app — set them in `.env`. Two
+caveats when tuning `INFLOOP_MEM_LIMIT`:
+
+- The `tmpfs` mounts in `docker-compose.yml` (`/tmp` and the Next.js cache,
+  ~768 MB combined) count against `mem_limit`, so the app effectively has
+  `INFLOOP_MEM_LIMIT` minus ~768 MB. Size with that headroom and with
+  `INFLOOP_MAX_CONCURRENT_RUNS` agent subprocess trees in mind.
+- The no-swap guarantee depends on the **host kernel** having memory-swap
+  accounting enabled. Where it is not, Docker logs a warning at container
+  start and `memswap_limit` is silently ignored.
+
 ## Common recipes
 
 **Loopback-only dev server (the default):**
@@ -132,16 +194,19 @@ bun run start
 **Tightening the runaway guard:**
 
 ```bash
-# Abort any run over 2000 node steps, 30 minutes of wall-clock, or $5 of cost.
+# Abort any run over 2000 node steps, 30 minutes of wall-clock, or $5 of cost,
+# and refuse new runs once cumulative spend since startup passes $100.
 INFLOOP_MAX_RUN_NODE_EXECUTIONS=2000 \
 INFLOOP_MAX_RUN_DURATION_MS=1800000 \
 INFLOOP_MAX_RUN_COST_USD=5 \
+INFLOOP_MAX_TOTAL_COST_USD=100 \
 bun run start
 ```
 
 The node and wall-clock ceilings are on by default (10000 steps / 24h) and
-bound every run; the cost ceiling is opt-in — set it to your real per-run
-budget. **Behavior note:** the 24h wall-clock cap is a default — a run that
+bound every run; the two cost ceilings are opt-in — `INFLOOP_MAX_RUN_COST_USD`
+to your real per-run budget, `INFLOOP_MAX_TOTAL_COST_USD` to the most a
+process should ever spend before a human checks in. **Behavior note:** the 24h wall-clock cap is a default — a run that
 legitimately needs to exceed it must set `INFLOOP_MAX_RUN_DURATION_MS` higher
 or to `0`. See [docs/security.md](./security.md#runaway-protection).
 

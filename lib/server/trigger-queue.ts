@@ -136,6 +136,9 @@ export class TriggerQueue {
     try {
       while (this.q.length > 0) {
         const head = this.q.shift()!;
+        // Set when the head is refused because the process-wide cost budget is
+        // exhausted — its persisted file is then kept and it is re-queued.
+        let budgetPaused = false;
         try {
           let workflow: Workflow;
           try {
@@ -174,19 +177,39 @@ export class TriggerQueue {
               catch (err) { log.error('touchLastFired failed', { err }); }
             }
           } catch (err) {
-            eventBus.emit({
-              type: 'trigger_dropped',
-              queueId: head.queueId,
-              triggerId: head.triggerId,
-              reason: 'engine-start-failed',
-            });
-            log.error('engineStart failed', { err });
+            // A run refused because the process-wide cost budget is exhausted
+            // is not this item's fault — every queued run would be refused the
+            // same way. Pause the drain with the item still queued rather than
+            // dropping it: the webhook that enqueued it was already given a
+            // 202 ack, so a silent drop would break that promise.
+            if ((err as { code?: string }).code === 'COST_BUDGET_EXCEEDED') {
+              budgetPaused = true;
+            } else {
+              eventBus.emit({
+                type: 'trigger_dropped',
+                queueId: head.queueId,
+                triggerId: head.triggerId,
+                reason: 'engine-start-failed',
+              });
+              log.error('engineStart failed', { err });
+            }
           }
         } finally {
           // The item is out of the in-memory queue and processed to a terminal
           // outcome. Drop its persisted file. Idempotent: the success path
-          // above already removed it, and a missing file is a no-op.
-          this.persistence?.remove(head.queueId);
+          // above already removed it, and a missing file is a no-op. A
+          // budget-paused item is the exception — it goes back on the queue,
+          // so its disk mirror must survive to be re-drained later.
+          if (!budgetPaused) this.persistence?.remove(head.queueId);
+        }
+        if (budgetPaused) {
+          // Put the head back and stop draining. The process-wide cost budget
+          // only un-exhausts on a restart, so a later drain would just pause
+          // here again; leave the whole queue — and its disk mirror — intact
+          // for that restart to resume.
+          this.q.unshift(head);
+          log.warn('drain paused: process-wide cost budget exhausted');
+          break;
         }
       }
     } finally {

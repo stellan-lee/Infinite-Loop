@@ -394,6 +394,8 @@ const ZERO_GAUGES: GaugeSnapshot = {
   queueDepth: 0,
   eventBufferEvents: 0,
   eventBufferLimit: 0,
+  costBudgetSpentUsd: 0,
+  costBudgetLimitUsd: 0,
   processUptimeSeconds: 0,
 };
 

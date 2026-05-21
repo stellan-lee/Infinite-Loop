@@ -52,6 +52,22 @@ services:
     # Generous: the orchestrator plus several parallel agent subprocess trees.
     pids_limit: 4096
 
+    # Cap memory and CPU. The orchestrator's own heap is bounded
+    # (INFLOOP_MAX_TOTAL_EVENT_BUFFER), but the agent CLIs it spawns are not —
+    # a ballooning provider child, or a loop spawning agents, can otherwise
+    # consume the whole host. With a cgroup limit a runaway run is OOM-killed
+    # inside this container instead of dragging the host into swap or letting
+    # the host kernel's OOM-killer pick an unrelated victim; `restart:
+    # unless-stopped` plus boot-time crash recovery then reconciles. Setting
+    # memswap_limit equal to mem_limit denies the container swap, so mem_limit
+    # is a hard ceiling. Tune both to the host and INFLOOP_MAX_CONCURRENT_RUNS.
+    # Caveats: the tmpfs mounts below (~768m) also count against mem_limit, and
+    # the no-swap guarantee needs host-kernel swap accounting. See
+    # docs/configuration.md#container-resource-limits.
+    mem_limit: ${INFLOOP_MEM_LIMIT:-4g}
+    memswap_limit: ${INFLOOP_MEM_LIMIT:-4g}
+    cpus: ${INFLOOP_CPUS:-2.0}
+
     # Writable scratch on the otherwise read-only root filesystem. The app
     # writes only here and to the named volumes below: script wrappers and
     # per-run mcp.json land in the system temp dir; Next.js may write an
@@ -74,6 +90,11 @@ services:
       # children (comma-separated names or PREFIX_* wildcards). The child env
       # is otherwise scrubbed to a non-secret allowlist. See docs/security.md.
       INFLOOP_CHILD_ENV_PASSTHROUGH: ${INFLOOP_CHILD_ENV_PASSTHROUGH:-}
+      # Optional: process-wide cost ceiling in USD. Once cumulative provider-
+      # reported cost since startup exceeds it, new runs are refused and any
+      # in-flight run is aborted at its next costed node. `0` (default)
+      # disables it. See docs/configuration.md.
+      INFLOOP_MAX_TOTAL_COST_USD: ${INFLOOP_MAX_TOTAL_COST_USD:-0}
 
     volumes:
       # All persistent state (run history, saved workflows, triggers,

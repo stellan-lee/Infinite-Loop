@@ -65,9 +65,10 @@ describe('TriggerQueue', () => {
   });
 
   test('drain emits trigger_dropped on engineStart failure', async () => {
-    // Stage 5 removed the busy-error special-case from drain(). Any
-    // engineStart rejection now drops the queued item with
-    // reason 'engine-start-failed'.
+    // Stage 5 removed the busy-error special-case from drain(). A generic
+    // engineStart rejection now drops the queued item with reason
+    // 'engine-start-failed' — the COST_BUDGET_EXCEEDED rejection is the one
+    // exception (see the budget-pause test above).
     engineBusy = true;
     q.enqueue({
       workflow: fakeWorkflow('w'), resolvedInputs: {},
@@ -76,6 +77,32 @@ describe('TriggerQueue', () => {
     await q.drain();
     expect(started).toHaveLength(0);
     expect(q.size()).toBe(0); // dropped, not re-prepended
+  });
+
+  test('drain pauses and re-queues the head when the cost budget is exhausted', async () => {
+    // engineStart throws the COST_BUDGET_EXCEEDED code that engineStartAdapter
+    // raises once the process-wide cost budget is spent.
+    const budgetErr: Error & { code?: string } = new Error('budget exhausted');
+    budgetErr.code = 'COST_BUDGET_EXCEEDED';
+    const paused = new TriggerQueue({
+      engineStart: async () => {
+        throw budgetErr;
+      },
+      loadWorkflow: async (id) => fakeWorkflow(id),
+    });
+    paused.enqueue({
+      workflow: fakeWorkflow('a'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    paused.enqueue({
+      workflow: fakeWorkflow('b'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 2,
+    });
+    await paused.drain();
+    // Nothing started, and BOTH items are still queued in their original
+    // order — a budget refusal pauses the drain, it does not drop the queue.
+    expect(paused.list().map((i) => i.workflow.id)).toEqual(['a', 'b']);
+    paused.clear();
   });
 
   test('enqueue throws when at cap', () => {
@@ -282,6 +309,29 @@ describe('TriggerQueue persistence', () => {
     });
     await q.drain();
     expect(p.removed).toContain(queueId);
+  });
+
+  test('drain keeps the persisted file when the cost budget is exhausted', async () => {
+    const p = fakePersistence();
+    const budgetErr: Error & { code?: string } = new Error('budget exhausted');
+    budgetErr.code = 'COST_BUDGET_EXCEEDED';
+    const q = new TriggerQueue({
+      engineStart: async () => {
+        throw budgetErr;
+      },
+      loadWorkflow: async (id) => fakeWorkflow(id),
+      persistence: p.impl,
+    });
+    const { queueId } = q.enqueue({
+      workflow: fakeWorkflow('w'), resolvedInputs: {},
+      triggerId: 't', receivedAt: 1,
+    });
+    await q.drain();
+    // The item is re-queued, not dropped, so its disk mirror MUST survive —
+    // a restart (which resets the budget) re-drains it.
+    expect(p.removed).not.toContain(queueId);
+    expect(q.size()).toBe(1);
+    q.clear();
   });
 
   test('removeByQueueId removes the persisted file', () => {

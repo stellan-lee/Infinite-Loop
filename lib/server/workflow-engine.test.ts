@@ -32,6 +32,7 @@ mock.module('./run-store', () => ({
 
 const { WorkflowEngine } = await import('./workflow-engine');
 const { eventBus } = await import('./event-bus');
+const { GlobalCostBudget } = await import('./cost-budget');
 
 afterAll(() => {
   // Restore the real modules so other test files in the same Bun process see
@@ -869,6 +870,49 @@ describe('WorkflowEngine — run-level execution budget', () => {
 
     // With the cost cap disabled, a $100/agent run is bounded only by the
     // node ceiling — proving the cost cap did not abort it earlier.
+    expect(eng.getState().status).toBe('failed');
+    expect(eng.getState().errorMessage).toContain('node-execution budget');
+  });
+
+  it('aborts a run that exceeds the process-wide cost budget', async () => {
+    const executors = passthroughExecutors();
+    executors.agent = {
+      async execute() {
+        // Each agent reports $0.50 of provider cost via its outputs.
+        return { branch: 'next' as EdgeHandle, outputs: { costUsd: 0.5 } };
+      },
+    };
+    const eng = new WorkflowEngine(executors, undefined, {
+      // Per-run cost cap, node and duration ceilings all stay clear — only the
+      // $1 process-wide ceiling can trip this run.
+      runBudget: { maxNodeExecutions: 5000, maxDurationMs: 0, maxCostUsd: 0 },
+      costBudget: new GlobalCostBudget({ ceilingUsd: 1 }),
+    });
+
+    await eng.start(infiniteLoopWorkflow('w-total-budget-cost'));
+
+    // Cumulative cost crosses $1 on the third agent — reclassified as
+    // `failed`, NOT `cancelled` (a runaway is not a user stop).
+    expect(eng.getState().status).toBe('failed');
+    expect(eng.getState().errorMessage).toContain('process-wide cost budget');
+  });
+
+  it('treats a process-wide cost budget of 0 as disabled', async () => {
+    const executors = passthroughExecutors();
+    executors.agent = {
+      async execute() {
+        return { branch: 'next' as EdgeHandle, outputs: { costUsd: 100 } };
+      },
+    };
+    const eng = new WorkflowEngine(executors, undefined, {
+      runBudget: { maxNodeExecutions: 50, maxDurationMs: 0, maxCostUsd: 0 },
+      costBudget: new GlobalCostBudget({ ceilingUsd: 0 }),
+    });
+
+    await eng.start(infiniteLoopWorkflow('w-total-budget-off'));
+
+    // $100/agent with the process-wide cap disabled — bounded only by the
+    // node ceiling, proving the cost budget did not abort it earlier.
     expect(eng.getState().status).toBe('failed');
     expect(eng.getState().errorMessage).toContain('node-execution budget');
   });

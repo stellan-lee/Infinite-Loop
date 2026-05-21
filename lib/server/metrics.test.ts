@@ -16,6 +16,8 @@ const ZERO_GAUGES: GaugeSnapshot = {
   queueDepth: 0,
   eventBufferEvents: 0,
   eventBufferLimit: 0,
+  costBudgetSpentUsd: 0,
+  costBudgetLimitUsd: 0,
   processUptimeSeconds: 0,
 };
 
@@ -61,6 +63,8 @@ describe('MetricsRegistry — zero-seeded series', () => {
     expect(body).toContain('# TYPE infloop_runs_active gauge');
     expect(body).toContain('# TYPE infloop_event_buffer_events gauge');
     expect(body).toContain('# TYPE infloop_event_buffer_limit gauge');
+    expect(body).toContain('# TYPE infloop_cost_budget_spent_usd gauge');
+    expect(body).toContain('# TYPE infloop_cost_budget_limit_usd gauge');
     // Prometheus requires a trailing newline after the last sample.
     expect(body.endsWith('\n')).toBe(true);
   });
@@ -234,6 +238,8 @@ describe('MetricsRegistry — gauges', () => {
         queueDepth: 7,
         eventBufferEvents: 8_400,
         eventBufferLimit: 200_000,
+        costBudgetSpentUsd: 12.5,
+        costBudgetLimitUsd: 100,
         processUptimeSeconds: 123,
       }),
     );
@@ -244,6 +250,8 @@ describe('MetricsRegistry — gauges', () => {
     expect(s.get('infloop_queue_depth')).toBe(7);
     expect(s.get('infloop_event_buffer_events')).toBe(8_400);
     expect(s.get('infloop_event_buffer_limit')).toBe(200_000);
+    expect(s.get('infloop_cost_budget_spent_usd')).toBe(12.5);
+    expect(s.get('infloop_cost_budget_limit_usd')).toBe(100);
     expect(s.get('infloop_process_uptime_seconds')).toBe(123);
   });
 

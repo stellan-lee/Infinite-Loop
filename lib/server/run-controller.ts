@@ -26,6 +26,7 @@ import type {
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
 import { eventMemoryBudget, type EventMemoryBudget } from './event-memory-budget';
+import { globalCostBudget, type GlobalCostBudget } from './cost-budget';
 import { removeRunMarker, saveRun, writeRunMarker } from './run-store';
 import { recordAudit } from './audit-log';
 import { metrics } from './metrics';
@@ -207,6 +208,10 @@ export interface RunControllerDeps {
    *  singleton; tests inject one with a small cap to exercise buffer
    *  backpressure without buffering hundreds of thousands of events. */
   eventBudget?: EventMemoryBudget;
+  /** Process-wide cost budget. Optional — defaults to the shared singleton;
+   *  tests inject one with a small ceiling to exercise the aggregate cost
+   *  trip without pushing real dollars through the engine. */
+  costBudget?: GlobalCostBudget;
 }
 
 export class RunController {
@@ -230,6 +235,9 @@ export class RunController {
   /** Process-wide event-memory budget; bounds the aggregate event buffer
    *  across all live runs. See `trimEventBuffers`. */
   private readonly eventBudget: EventMemoryBudget;
+  /** Process-wide cost budget; bounds cumulative provider-reported cost across
+   *  all runs. Fed per costed node from `recordCost`. */
+  private readonly costBudget: GlobalCostBudget;
   /** True between `eventBudget.register()` and its paired `unregister()` —
    *  guards both sides so they stay balanced even under a pathological
    *  double `start()`. */
@@ -254,6 +262,7 @@ export class RunController {
     this.slotPool = deps.slotPool;
     this.budget = { ...resolveRunBudget(), ...deps.budget };
     this.eventBudget = deps.eventBudget ?? eventMemoryBudget;
+    this.costBudget = deps.costBudget ?? globalCostBudget;
     this.abort = new AbortController();
     this.worktrees = new RunWorktreesImpl(this.runId);
     this.snapshot = {
@@ -711,14 +720,16 @@ export class RunController {
   }
 
   /**
-   * Accumulate a settled node's provider-reported cost against the run-level
-   * cost ceiling, and trip the run when it is breached. Called once per node
-   * from `executeNode` with the raw `costUsd` off the node's outputs (only
-   * Agent nodes backed by a cost-reporting provider supply one).
+   * Accumulate a settled node's provider-reported cost against both the
+   * run-level cost ceiling and the process-wide cost budget, and trip the run
+   * when either is breached. Called once per node from `executeNode` with the
+   * raw `costUsd` off the node's outputs (only Agent nodes backed by a
+   * cost-reporting provider supply one).
    *
    * MUST stay fully synchronous — no `await`. Parallel branches call this
    * concurrently; on Node's single thread an await-free read-modify-write of
-   * `runCostUsd` cannot interleave, so the accumulation is race-free.
+   * `runCostUsd` (and of `GlobalCostBudget.spentUsd`) cannot interleave, so
+   * the accumulation is race-free.
    *
    * Non-numeric / non-finite / negative values are ignored so a malformed
    * cost cannot poison the accumulator (a `NaN` would make every later
@@ -726,6 +737,12 @@ export class RunController {
    * legitimate `0` is skipped too — it contributes nothing, so the guard
    * uses `<= 0` purely as a harmless fast path; upstream hops keep their
    * `>= 0` filter since `0` is a valid cost to surface as an output.
+   *
+   * The cost is reported to the process-wide budget BEFORE the per-run check:
+   * the dollar was spent regardless of which ceiling ends up tripping the run,
+   * so it must always count toward the aggregate the next run is admitted
+   * against. The per-run breach is reported in preference to the global one
+   * when both trip on the same node — it names the tighter, run-local cause.
    */
   private recordCost(costUsd: unknown): void {
     if (this.budgetExceededMessage) return;
@@ -737,6 +754,7 @@ export class RunController {
       return;
     }
     this.runCostUsd += costUsd;
+    this.costBudget.add(costUsd);
     const { maxCostUsd } = this.budget;
     if (maxCostUsd > 0 && this.runCostUsd > maxCostUsd) {
       this.tripBudget(
@@ -744,6 +762,15 @@ export class RunController {
           `Accumulated provider cost reached $${this.runCostUsd.toFixed(4)} ` +
           'after the last node completed. Raise or disable ' +
           'INFLOOP_MAX_RUN_COST_USD.',
+      );
+      return;
+    }
+    if (this.costBudget.exceeded()) {
+      this.tripBudget(
+        'run aborted: process-wide cost budget exceeded ' +
+          `($${this.costBudget.ceilingUsd}). Cumulative provider cost across ` +
+          `all runs since startup reached $${this.costBudget.spent.toFixed(4)}` +
+          '. Raise or disable INFLOOP_MAX_TOTAL_COST_USD.',
       );
     }
   }

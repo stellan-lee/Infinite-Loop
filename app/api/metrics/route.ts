@@ -1,6 +1,7 @@
 import { requireAuth } from '@/lib/server/auth';
 import { metrics } from '@/lib/server/metrics';
 import { eventMemoryBudget } from '@/lib/server/event-memory-budget';
+import { globalCostBudget } from '@/lib/server/cost-budget';
 import { workflowEngine } from '@/lib/server/workflow-engine';
 import { triggerQueue } from '@/lib/server/trigger-queue-singleton';
 
@@ -40,6 +41,8 @@ export async function GET(req: Request): Promise<Response> {
       0,
     ),
     eventBufferLimit: eventMemoryBudget.totalCap,
+    costBudgetSpentUsd: globalCostBudget.spent,
+    costBudgetLimitUsd: globalCostBudget.ceilingUsd,
     processUptimeSeconds: Math.round(process.uptime()),
   });
 

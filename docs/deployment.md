@@ -203,7 +203,8 @@ resets to catch the restarts themselves.
 
 A ready-to-load set of alerting rules covering these metrics ships at
 [`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml) — see
-[configuration.md](configuration.md#metrics).
+[configuration.md](configuration.md#metrics). When one of those alerts
+fires, [runbook.md](runbook.md) has a per-alert operator response.
 
 ## Known limitation — agent providers are not in the image
 
@@ -250,6 +251,15 @@ described in
 
 When the proxy terminates TLS, make sure it forwards `X-Forwarded-Proto:
 https` — Infinite Loop reads it to mark the session cookie `Secure`.
+
+## Verifying the deployment
+
+A green test suite proves the components; it does not prove the deployment
+works as an operated whole — that a `kill -9` is reconciled on the real
+image, that the shipped alerts actually fire, that a backup actually
+restores. Before relying on a new or reshaped deployment, run the
+[burn-in](burn-in.md): a destructive, staging-only dress rehearsal that
+injects every failure mode and confirms both the behaviour and the alert.
 
 ## Updating
 

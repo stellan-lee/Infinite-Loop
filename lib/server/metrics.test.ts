@@ -19,6 +19,8 @@ const ZERO_GAUGES: GaugeSnapshot = {
   costBudgetSpentUsd: 0,
   costBudgetLimitUsd: 0,
   processUptimeSeconds: 0,
+  // A freshly started healthy process has a writable data directory.
+  dataDirWritable: true,
 };
 
 /** Parse the `name{labels} value` sample lines of an exposition body into a
@@ -65,6 +67,7 @@ describe('MetricsRegistry — zero-seeded series', () => {
     expect(body).toContain('# TYPE infloop_event_buffer_limit gauge');
     expect(body).toContain('# TYPE infloop_cost_budget_spent_usd gauge');
     expect(body).toContain('# TYPE infloop_cost_budget_limit_usd gauge');
+    expect(body).toContain('# TYPE infloop_data_dir_writable gauge');
     // Prometheus requires a trailing newline after the last sample.
     expect(body.endsWith('\n')).toBe(true);
   });
@@ -241,6 +244,7 @@ describe('MetricsRegistry — gauges', () => {
         costBudgetSpentUsd: 12.5,
         costBudgetLimitUsd: 100,
         processUptimeSeconds: 123,
+        dataDirWritable: true,
       }),
     );
     expect(s.get('infloop_runs_active')).toBe(2);
@@ -253,6 +257,20 @@ describe('MetricsRegistry — gauges', () => {
     expect(s.get('infloop_cost_budget_spent_usd')).toBe(12.5);
     expect(s.get('infloop_cost_budget_limit_usd')).toBe(100);
     expect(s.get('infloop_process_uptime_seconds')).toBe(123);
+    expect(s.get('infloop_data_dir_writable')).toBe(1);
+  });
+
+  it('renders the data-dir readiness gauge as 1 when writable, 0 when not', () => {
+    // The gauge InfiniteLoopDataDirNotWritable alerts on: a boolean probe
+    // result rendered as Prometheus 1/0, like `up`.
+    const writable = samples(
+      new MetricsRegistry().render({ ...ZERO_GAUGES, dataDirWritable: true }),
+    );
+    expect(writable.get('infloop_data_dir_writable')).toBe(1);
+    const unwritable = samples(
+      new MetricsRegistry().render({ ...ZERO_GAUGES, dataDirWritable: false }),
+    );
+    expect(unwritable.get('infloop_data_dir_writable')).toBe(0);
   });
 
   it('collapses a non-finite gauge to 0 rather than emitting invalid text', () => {

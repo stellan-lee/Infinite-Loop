@@ -2,8 +2,7 @@
 
 What to do when something goes wrong with a deployed Infinite Loop. There is
 one entry per alert rule in
-[`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml), plus the
-one failure mode Prometheus cannot see.
+[`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml).
 
 Infinite Loop runs workflows unattended — webhooks and triggers spawn agent
 CLIs that execute code and spend API credits with nobody watching. These
@@ -56,6 +55,25 @@ process is down, crash-looping, or the scrape token is wrong.
   resource limits in [configuration.md](configuration.md#container-resource-limits).
 - Clean exit then restart → boot crash recovery has already reconciled any
   interrupted runs to `failed`. Confirm in run history and move on.
+
+## InfiniteLoopDataDirNotWritable — critical
+
+**Means.** The data-directory writability probe (`infloop_data_dir_writable`)
+has read `0` for over 2 minutes. The process is up and `/api/metrics` still
+scrapes `200`, but it cannot persist runs, triggers, or the audit log —
+`/api/health` returns `503 {status:"degraded"}` and `docker compose ps` shows
+the container `unhealthy`.
+
+**Diagnose.** Inside the container, the data directory is `/data`. Check:
+- Disk full on the volume (`df -h`).
+- Permissions on the volume mount — the container runs as a non-root user.
+- The volume failing to mount at all.
+
+**Resolve.** Free space, fix the mount permissions, or replace the volume and
+restore from backup ([backup-restore.md](backup-restore.md)). The server
+recovers on its own once the directory is writable again — `/api/health`
+returns to `200`, `infloop_data_dir_writable` returns to `1`, and the alert
+clears. No restart is needed, though one does no harm.
 
 ## InfiniteLoopHighRunFailureRate — warning
 
@@ -181,29 +199,6 @@ plugin, or a caller hitting the per-trigger rate limit
   `INFLOOP_WEBHOOK_RATE_LIMIT`; if not, the limit is doing its job — the
   leaked or abused URL should be rotated by recreating the trigger.
 - Plugin error → check the plugin manifest and the logs.
-
----
-
-## Data directory not writable (no Prometheus alert)
-
-**Means.** `/api/health` returns `503 {status:"degraded"}` and
-`docker compose ps` shows the container `unhealthy`. The process is alive but
-cannot persist runs, triggers, or the audit log.
-
-This failure has **no Prometheus alert** — `/api/metrics` may still scrape
-`200` while the data directory is unwritable. It is caught only by the Docker
-healthcheck. Wire the `unhealthy` state to your orchestrator or an external
-uptime check if you need to be paged on it.
-
-**Diagnose.** Inside the container, the data directory is `/data`. Check:
-- Disk full on the volume (`df -h`).
-- Permissions on the volume mount — the container runs as a non-root user.
-- The volume failing to mount at all.
-
-**Resolve.** Free space, fix the mount permissions, or replace the volume and
-restore from backup ([backup-restore.md](backup-restore.md)). The server
-recovers on its own once the directory is writable again — no restart needed,
-though a restart does no harm.
 
 ---
 

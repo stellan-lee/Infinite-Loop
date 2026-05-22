@@ -84,7 +84,7 @@ The observability overlay brought up in Phase 0 already does the wiring:
 1. Open Prometheus at `http://localhost:9090`. Under **Status → Targets**,
    confirm the `infinite-loop` target is **`up`** — a scrape that returns
    `401` (wrong or missing token) reads as down, not as an error.
-2. On the **Alerts** page, confirm all nine rules from
+2. On the **Alerts** page, confirm all ten rules from
    `prometheus-alerts.yml` are listed in the `inactive` state.
 3. Confirm `infloop_*` series are queryable and `up{job="infinite-loop"}` is
    `1`. If the job label differs from `infinite-loop`, the scrape config and
@@ -121,7 +121,7 @@ observed wording so [`runbook.md`](runbook.md) can quote it.
 | 3.2 | Flood a webhook trigger past the 100-run queue cap (drive deliveries faster than runs drain) | New triggers are dropped once the queue is full; `infloop_queue_dropped_total{reason="queue-full"}` climbs. | `InfiniteLoopTriggerQueueDropping` (immediate); `InfiniteLoopTriggerQueueBacklog` once depth holds above 50 for 10m. |
 | 3.3 | Set `INFLOOP_MAX_TOTAL_COST_USD` low; run costed (`claude`) workflows past it | `POST /api/run` → `503`; in-flight runs abort at the next costed node; the queue drain pauses and holds queued runs on disk. | `InfiniteLoopCostBudgetNearLimit` at 80%; `InfiniteLoopCostBudgetExhausted` (critical) once exceeded. |
 | 3.4 | Hammer one trigger past `INFLOOP_WEBHOOK_RATE_LIMIT` (default 120/min) | Over-limit deliveries get `429` + `Retry-After`; each rejection is recorded in the audit log; `infloop_webhook_requests_total{outcome="rejected"}` climbs. | `InfiniteLoopWebhookErrorRate` once rejections exceed 30% of webhook traffic for 15m. |
-| 3.5 | Make the data directory unwritable (`chmod` the volume, or fill the disk) | `/api/health` returns `503 {status:"degraded"}`; `docker compose ps` shows `unhealthy`. | **No Prometheus alert** — `/api/metrics` may still scrape `200`. Detection is the Docker healthcheck. Note this gap in the runbook. |
+| 3.5 | Make the data directory unwritable (`chmod` the volume, or fill the disk) | `/api/health` returns `503 {status:"degraded"}`; `docker compose ps` shows `unhealthy`; `infloop_data_dir_writable` flips to `0`. | `InfiniteLoopDataDirNotWritable` (critical) after 2m. `/api/metrics` keeps scraping `200`, so the alert is driven by the `infloop_data_dir_writable` gauge, not a failed scrape; the Docker healthcheck flips `unhealthy` in parallel. |
 | 3.6 | Lower `maxConcurrentRuns`, then push more concurrent runs than slots | Excess runs park waiting for an execution slot; `infloop_slot_pool_waiting > 0`. | `InfiniteLoopSlotPoolSaturated` after 15m of waiting. |
 | 3.7 | Set `INFLOOP_MAX_TOTAL_EVENT_BUFFER` low; run event-heavy workflows | Per-run event buffers are squeezed to a fair share — memory stays bounded, per-run history truncates. | `InfiniteLoopEventBufferNearLimit` once the ratio holds above 0.8 for 10m. |
 | 3.8 | Force runs to fail repeatedly (point a provider at a missing binary, or run a known-bad workflow) — more than 5, over 50% of settled runs | Runs land in history as `failed`; `infloop_runs_total{status="failed"}` climbs. | `InfiniteLoopHighRunFailureRate` after 15m. |
@@ -167,14 +167,14 @@ The one behaviour class with no automated coverage: slow drift over time.
 The burn-in passes when every box is ticked:
 
 - [ ] Phase 0 — deployed; `(healthy)`; provider CLI present.
-- [ ] Phase 1 — all nine alert rules loaded; target `up`.
+- [ ] Phase 1 — all ten alert rules loaded; target `up`.
 - [ ] Phase 2 — UI, webhook, and MCP each ran end to end with an audit trail.
 - [ ] Phase 3 — every fault produced the expected behaviour; every expected
       alert was observed firing (or its `for:` window understood).
 - [ ] Phase 4 — backup taken, volume destroyed, restore verified intact.
 - [ ] Phase 5 — 24–72h soak with flat memory and no unexplained restart.
 - [ ] [`runbook.md`](runbook.md) has an operator-tested entry for every
-      alert and for the unwritable-data-dir case.
+      alert.
 
 Only then is the deployment *verified* production-ready, rather than expected
 to be.

@@ -62,6 +62,7 @@ function collectEmittedMetrics(): EmittedMetrics {
     costBudgetSpentUsd: 0,
     costBudgetLimitUsd: 0,
     processUptimeSeconds: 0,
+    dataDirWritable: true,
   };
   const exposition = new MetricsRegistry().render(zeroGauges);
 
@@ -215,8 +216,8 @@ describe('burn-in pre-flight: prometheus-alerts.yml ↔ /api/metrics', () => {
   it('parses the shipped alert rules into a non-vacuous set', () => {
     // Guards the parser itself: a YAML reformat that broke extraction would
     // otherwise make every downstream check pass trivially. burn-in.md
-    // Phase 1 expects nine rules, so treat that as the floor.
-    expect(alertRules.length).toBeGreaterThanOrEqual(9);
+    // Phase 1 expects ten rules, so treat that as the floor.
+    expect(alertRules.length).toBeGreaterThanOrEqual(10);
     for (const rule of alertRules) {
       expect(rule.name).toMatch(/^InfiniteLoop\w+$/);
       expect(rule.expr.trim().length).toBeGreaterThan(0);
@@ -305,9 +306,10 @@ describe('burn-in pre-flight: prometheus-alerts.yml ↔ docs/runbook.md', () => 
 });
 
 describe('burn-in pre-flight: deployment artifacts', () => {
-  it('health-probes /api/health — the only signal for burn-in Phase 3.5', () => {
-    // An unwritable data dir has no Prometheus alert; the Docker healthcheck
-    // is its sole detector (runbook: "Data directory not writable").
+  it('health-probes /api/health so an unwritable data dir is caught', () => {
+    // burn-in.md Phase 3.5: an unwritable data dir is detected two ways — the
+    // Docker healthcheck (this probe → 503 degraded → container unhealthy)
+    // and the InfiniteLoopDataDirNotWritable alert on infloop_data_dir_writable.
     const dockerfile = readRepoFile('Dockerfile');
     expect(dockerfile).toContain('HEALTHCHECK');
     expect(dockerfile).toContain('/api/health');
@@ -360,7 +362,7 @@ describe('burn-in pre-flight: observability overlay', () => {
   it('loads prometheus rules from the path the overlay mounts them to', () => {
     // The overlay bind-mounts the shipped alert rules to a container path;
     // prometheus.yml must reference that exact path under `rule_files:`, or
-    // the nine alerts silently never load.
+    // the ten alerts silently never load.
     const mount = compose.match(/prometheus-alerts\.yml:(\/\S+?):ro/);
     expect(mount).not.toBeNull();
     const rulePath = mount![1];

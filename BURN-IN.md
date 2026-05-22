@@ -128,7 +128,9 @@ Verified live against the running app:
       scraping `http://infinite-loop:3000/api/metrics`.
 - [x] `up{job="infinite-loop"}` evaluates to `1`.
 - [x] All **nine** alert rules from `deploy/prometheus-alerts.yml` are loaded
-      in one `infinite-loop` group, state `inactive`.
+      in one `infinite-loop` group, state `inactive`. (A tenth rule,
+      `InfiniteLoopDataDirNotWritable`, was added after Run 1 closing item 4
+      under *Outstanding* below — Run 2 verifies all ten.)
 - [x] 19 `infloop_*` series are queryable.
 
 This upgrades the previous run's `static-pass` to a live `pass`.
@@ -205,11 +207,14 @@ watch that the gauges return to baseline between runs, RSS stays flat, and
    credentialed provider and a tight `INFLOOP_MAX_TOTAL_COST_USD`.
 3. **`InfiniteLoopTriggerQueueBacklog`** was not reproduced locally (see
    Phase 3) — exercise it under a real load generator or a cost-budget pause.
-4. **Phase 3.5 monitoring gap.** Confirmed real: an unwritable data directory
-   has no Prometheus alert — only the Docker healthcheck detects it. Decide
-   consciously whether healthcheck-only detection is acceptable, or wire the
-   container `unhealthy` state to an external uptime check / add a
-   health-derived alert.
+4. **Phase 3.5 monitoring gap — resolved.** Run 1 confirmed an unwritable
+   data directory had no Prometheus alert. Rather than rely on
+   healthcheck-only detection, the gap was closed in-repo: `/api/metrics` now
+   exposes an `infloop_data_dir_writable` gauge (1/0), probed live at scrape
+   time from the same check `/api/health` uses, and
+   `InfiniteLoopDataDirNotWritable` (critical, `for: 2m`) alerts on it. The
+   alert set is now ten rules. Re-verify in Run 2 that the alert actually
+   transitions to `firing` when the data directory is made unwritable.
 5. **Runbook operator-testing.** Detection is validated for every alert that
    fired; the operator *response* procedures in `docs/runbook.md` were
    reviewed against observed behaviour but not separately executed. Walk each

@@ -397,6 +397,7 @@ const ZERO_GAUGES: GaugeSnapshot = {
   costBudgetSpentUsd: 0,
   costBudgetLimitUsd: 0,
   processUptimeSeconds: 0,
+  dataDirWritable: true,
 };
 
 /** The current value of `infloop_runs_total{status="failed"}` on the process

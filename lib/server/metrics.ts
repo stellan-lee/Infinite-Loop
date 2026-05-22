@@ -109,6 +109,13 @@ export interface GaugeSnapshot {
   costBudgetLimitUsd: number;
   /** Seconds since this server process started. */
   processUptimeSeconds: number;
+  /**
+   * Whether the data directory passed its writability probe at scrape time.
+   * Renders as the `infloop_data_dir_writable` gauge (1 = writable, 0 = not) —
+   * the Prometheus-visible half of the readiness check `/api/health` performs,
+   * and the only signal that surfaces an unwritable data dir to alerting.
+   */
+  dataDirWritable: boolean;
 }
 
 /**
@@ -440,6 +447,18 @@ export class MetricsRegistry {
     );
     out.push(
       `infloop_process_uptime_seconds ${formatValue(gauges.processUptimeSeconds)}`,
+    );
+
+    family(
+      'infloop_data_dir_writable',
+      'gauge',
+      '1 if the data directory passed its writability probe at scrape time, ' +
+        '0 if not. A 0 means the process is up and still scraping but cannot ' +
+        'persist runs, triggers, or the audit log — the same condition ' +
+        '/api/health reports as 503 degraded.',
+    );
+    out.push(
+      `infloop_data_dir_writable ${formatValue(gauges.dataDirWritable ? 1 : 0)}`,
     );
 
     // Prometheus requires a trailing newline after the final sample.

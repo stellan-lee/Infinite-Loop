@@ -4,6 +4,7 @@ import { eventMemoryBudget } from '@/lib/server/event-memory-budget';
 import { globalCostBudget } from '@/lib/server/cost-budget';
 import { workflowEngine } from '@/lib/server/workflow-engine';
 import { triggerQueue } from '@/lib/server/trigger-queue-singleton';
+import { dataDirWritable } from '@/lib/server/data-dir-health';
 
 /**
  * GET /api/metrics — authenticated Prometheus metrics surface.
@@ -44,6 +45,11 @@ export async function GET(req: Request): Promise<Response> {
     costBudgetSpentUsd: globalCostBudget.spent,
     costBudgetLimitUsd: globalCostBudget.ceilingUsd,
     processUptimeSeconds: Math.round(process.uptime()),
+    // Probed live at scrape time (see lib/server/data-dir-health.ts): this is
+    // what makes an unwritable data dir visible to Prometheus. /api/metrics
+    // itself keeps returning 200, so a failed scrape is not the signal —
+    // InfiniteLoopDataDirNotWritable alerts on this gauge instead.
+    dataDirWritable: await dataDirWritable(),
   });
 
   return new Response(body, {

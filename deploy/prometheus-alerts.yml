@@ -36,7 +36,7 @@
 groups:
   - name: infinite-loop
     rules:
-      # ── Liveness ──────────────────────────────────────────────────────────
+      # ── Liveness & readiness ──────────────────────────────────────────────
       - alert: InfiniteLoopInstanceDown
         expr: up{job="infinite-loop"} == 0
         for: 2m
@@ -48,6 +48,21 @@ groups:
             Prometheus has failed to scrape /api/metrics for over 2 minutes.
             The process may be down, crash-looping, or the scrape token may be
             wrong (an unauthenticated scrape gets 401 and reads as down).
+
+      - alert: InfiniteLoopDataDirNotWritable
+        expr: infloop_data_dir_writable == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Infinite Loop cannot write to its data directory"
+          description: >
+            The data-directory writability probe has failed for over 2
+            minutes. The process is up and /api/metrics still scrapes 200,
+            but it cannot persist runs, triggers, or the audit log —
+            /api/health reports 503 degraded and the container is marked
+            unhealthy. A full disk or a permissions change on the data
+            volume is the usual cause.
 
       # ── Run health ────────────────────────────────────────────────────────
       - alert: InfiniteLoopHighRunFailureRate

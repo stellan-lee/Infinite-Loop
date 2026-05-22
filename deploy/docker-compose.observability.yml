@@ -17,8 +17,9 @@
 # What it adds:
 #   * prometheus   — scrapes the authenticated /api/metrics endpoint and loads
 #                    deploy/prometheus-alerts.yml. Unblocks burn-in Phase 1.
-#   * alertmanager — receives the alerts Prometheus fires (null receiver; see
-#                    deploy/alertmanager.yml to wire a real notifier).
+#   * alertmanager — receives the alerts Prometheus fires. Defaults to a null
+#                    receiver; set INFLOOP_ALERT_SLACK_WEBHOOK_URL in .env to
+#                    deliver them to Slack (see the alertmanager service below).
 #   * proxy        — an nginx reverse-proxy hop in front of the app, so the
 #                    last Phase 0 box ("UI loads behind the proxy") is local.
 #
@@ -90,8 +91,51 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.27.0
     restart: unless-stopped
+
+    # Alertmanager has no env-var substitution in its config file, and a Slack
+    # incoming-webhook URL is a secret that must not be baked into the repo.
+    # When INFLOOP_ALERT_SLACK_WEBHOOK_URL is set, the entrypoint below
+    # materializes it into a tmpfs file that alertmanager.slack.yml reads via
+    # `api_url_file`, and loads that config so alerts deliver to Slack. When it
+    # is unset (the default), the entrypoint loads alertmanager.yml — the null
+    # receiver — so the local burn-in behaviour is unchanged. This mirrors the
+    # prometheus service's scrape-token handling above; .env stays the single
+    # source of the secret.
+    environment:
+      INFLOOP_ALERT_SLACK_WEBHOOK_URL: ${INFLOOP_ALERT_SLACK_WEBHOOK_URL:-}
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        # `$$` escapes Compose interpolation so the shell reads the container
+        # env var. An unset URL arrives here as empty (the `:-` default on the
+        # environment line above), so `-n` selects between delivering to Slack
+        # and keeping the null receiver.
+        if [ -n "$$INFLOOP_ALERT_SLACK_WEBHOOK_URL" ]; then
+          # The webhook URL is a secret — printf writes it with no trailing
+          # newline to the tmpfs mount below, never persisted at rest.
+          printf '%s' "$$INFLOOP_ALERT_SLACK_WEBHOOK_URL" > /run/alertmanager/slack-url
+          CONFIG=/etc/alertmanager/alertmanager.slack.yml
+        else
+          CONFIG=/etc/alertmanager/alertmanager.yml
+        fi
+        exec /bin/alertmanager \
+          --config.file="$$CONFIG" \
+          --storage.path=/alertmanager
+    # Compose does not clear the image's inherited CMD when `entrypoint` is
+    # overridden; without this, the image's default args get appended to the
+    # shell entrypoint above. The entrypoint is self-contained, so clear it.
+    command: []
+
+    # In-memory scratch for the materialized Slack webhook URL — a secret that
+    # must not outlive the container. mode=1777 so the unprivileged `nobody`
+    # alertmanager user can write it.
+    tmpfs:
+      - /run/alertmanager:mode=1777
+
     volumes:
       - ./deploy/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./deploy/alertmanager.slack.yml:/etc/alertmanager/alertmanager.slack.yml:ro
       - alertmanager-data:/alertmanager
     ports:
       - "127.0.0.1:9093:9093"

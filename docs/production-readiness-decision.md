@@ -99,18 +99,37 @@ before — Infinite Loop may be declared production-ready.
 
 ## Go-live checklist (after Run 2 passes)
 
-Run 2 validates the system; it does not, by itself, finish the deployment. One
-operator step is deliberately **not** a Run 2 blocker but **must** be done
-before real production traffic — recorded here so it is not lost in the gap
-between "Run 2 passed" and "live":
+Run 2 validates the system, and a passing Run 2 is now the whole gate. An
+earlier revision of this decision deferred one item to a post-Run-2
+"~5-minute change" — wiring a real Alertmanager notifier. That deferral has
+been **withdrawn**: the item is folded into Run 2 itself, for the reason
+recorded below.
 
-- **Wire a real Alertmanager notifier.** [`deploy/alertmanager.yml`](../deploy/alertmanager.yml)
-  routes to a `null` receiver: firing alerts collect on the Alertmanager and
-  Prometheus UIs and go nowhere else. That is correct for the burn-in — Phase 3
-  only needs to *see* alerts route and group — and it is correctly an operator
-  config decision rather than an in-repo gap, since a Slack/PagerDuty/webhook
-  secret cannot be baked into the repo. But until the `null` receiver is
-  replaced with a real notifier (`slack_configs:` / `email_configs:` /
-  `webhook_configs:` — the file's header has the pointer), all 11 Prometheus
-  alert rules page nobody. It is a ~5-minute change; the only risk is that it
-  is overlooked.
+## Amendment — alert delivery is validated by Run 2
+
+The deferred item was: [`deploy/alertmanager.yml`](../deploy/alertmanager.yml)
+routes to a `null` receiver, so all 11 alert rules page nobody until an
+operator wires a real notifier. The deferral's reasoning — a Slack/PagerDuty
+secret cannot be baked into the repo — was right about the secret but wrong
+about the deferral. The alert *delivery* path (a firing alert actually
+reaching a human) is end-to-end-only-testable: a wrong webhook URL passes
+every config-load and healthcheck and then fails silently in the real
+incident, which is worse than no alerting because operators trust it.
+Deferring it would have shipped to production the one thing Run 2 never
+exercised.
+
+The secret objection does not force deferral — the notifier secret goes in the
+Run 2 `.env`, exactly as `INFLOOP_API_TOKEN` already does. So
+[`deploy/alertmanager.yml`](../deploy/alertmanager.yml) stays the burn-in
+default (the `null` receiver), and the observability overlay now also ships
+[`deploy/alertmanager.slack.yml`](../deploy/alertmanager.slack.yml): set
+`INFLOOP_ALERT_SLACK_WEBHOOK_URL` and the `alertmanager` service delivers to
+Slack. Run 2 Phase 3 then confirms an injected alert *lands in the channel*,
+not just on the UI. See [`docs/burn-in-run2-plan.md`](burn-in-run2-plan.md).
+
+This amendment is itself a change merged under the freeze, and it is
+consistent with the freeze rather than an exception to it. The freeze forbids
+*preparation that substitutes for running Run 2*; this does the opposite — it
+widens what Run 2 validates, converting an unvalidated post-Run-2 production
+change into a burn-in-covered one. It is the last such change. The disciplined
+next action is unchanged: execute Run 2.

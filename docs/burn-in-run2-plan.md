@@ -48,6 +48,11 @@ One well-planned remote-host run closes nearly every open item from Run 1's
   defect 4's fix holds on a real volume.
 - **Runbook operator-testing** — Run 1 validated *detection* for every alert
   that fired but not the operator *response* steps; walk each end to end here.
+- **Alert delivery** — Run 1 confirmed alerts *route and group* on the
+  Alertmanager UI; it never confirmed one *reaches a human*. With a Slack
+  notifier wired (`INFLOOP_ALERT_SLACK_WEBHOOK_URL`), Phase 3 confirms a firing
+  alert lands in a real channel — the alerting failure mode (a wrong webhook
+  URL) that no eyeball check catches.
 
 ## What the operator must supply
 
@@ -62,6 +67,10 @@ script can resolve:
 3. **A tight `INFLOOP_MAX_TOTAL_COST_USD`** and acceptance of a few dollars of
    real provider spend — Phase 3.3 cannot be proven without real cost.
 4. **A 24–72h unattended window** for the Phase 5 soak.
+5. **A Slack incoming-webhook URL** (`INFLOOP_ALERT_SLACK_WEBHOOK_URL`) for the
+   Phase 3 alert-delivery check — a throwaway channel is fine. Omitting it
+   keeps the null receiver, as in Run 1, but then the alert *delivery* path
+   stays unvalidated; treat it as expected, not optional.
 
 Everything else — load generation, gauge sampling, drift analysis, the cost
 drive — is scripted and runs unattended.
@@ -109,6 +118,12 @@ INFLOOP_MAX_TOTAL_COST_USD=2.00     # 3.3 — reach the budget on ~$1-2 of spend
 INFLOOP_MAX_CONCURRENT_RUNS=1       # 3.6 — one slot, so concurrent runs queue
 INFLOOP_WEBHOOK_RATE_LIMIT=20       # 3.4 — burst past it in seconds
 INFLOOP_MAX_TOTAL_EVENT_BUFFER=600  # 3.7 — event-heavy runs hit the ceiling
+
+# Phase 3 alert-delivery check — paste the operator's own Slack incoming-webhook
+# URL here (the literal placeholder below must be replaced). With it set, the
+# observability overlay loads alertmanager.slack.yml and delivers alerts to
+# Slack instead of the null receiver. Omit the line to keep the null receiver.
+INFLOOP_ALERT_SLACK_WEBHOOK_URL=<your Slack incoming-webhook URL>
 ```
 
 ### Profile B — production-representative (Phase 5)
@@ -150,7 +165,10 @@ Verify **all eleven** alert rules from `deploy/prometheus-alerts.yml` load
 `inactive` in the `infinite-loop` group. Run 1 verified *nine*; two have been
 added since — `InfiniteLoopDataDirNotWritable` and `InfiniteLoopBackupStale`.
 Confirm the `infinite-loop` target is `up`, `up{job="infinite-loop"}` is `1`,
-and `infloop_*` series are queryable.
+and `infloop_*` series are queryable. With `INFLOOP_ALERT_SLACK_WEBHOOK_URL`
+set, also confirm the `alertmanager` service came up on the Slack config —
+`docker compose logs alertmanager` shows it loaded `alertmanager.slack.yml`,
+not the null-receiver `alertmanager.yml`.
 
 ### Phase 2 — Functional pass
 
@@ -192,6 +210,18 @@ Run 1 gaps:
   generator with a low interval and high concurrency to flood the queue:
   `bun run soak-load -- --duration 0.3 --interval 1 --concurrency 40` — keep
   `queue_depth` above 50 long enough for the rule's 10m `for:` window.
+
+**Alert delivery — new for Run 2.** Run 1 confirmed alerts *route and group* on
+the Alertmanager UI; it never confirmed one *reaches a human*. With
+`INFLOOP_ALERT_SLACK_WEBHOOK_URL` set (Profile A above), the observability
+overlay loads [`deploy/alertmanager.slack.yml`](../deploy/alertmanager.slack.yml)
+and delivers to Slack. As the first alert of Phase 3 fires — e.g. 3.2's
+`InfiniteLoopTriggerQueueDropping` — confirm the notification actually lands in
+the configured Slack channel (the channel is fixed by the incoming webhook, not
+by the config), and that a `[RESOLVED]` follow-up arrives once the fault is
+cleared. A wrong webhook URL loads cleanly and passes the healthcheck, so this
+is only ever proven by an *observed* delivery — which is exactly why it belongs
+in the burn-in rather than a deferred go-live step.
 
 ### Phase 4 — Disaster-recovery drill (real disk)
 

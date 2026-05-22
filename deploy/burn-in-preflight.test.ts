@@ -211,6 +211,31 @@ function runbookAlertSections(markdown: string): Set<string> {
   return names;
 }
 
+/**
+ * The `route:` block of an Alertmanager config, with the receiver name blanked.
+ * alertmanager.slack.yml duplicates alertmanager.yml's route block so the two
+ * configs are interchangeable; comparing the blanked blocks asserts they stay
+ * in sync — drift would group and repeat burn-in and production alerts on
+ * different schedules.
+ */
+function alertmanagerRouteBlock(yaml: string): string {
+  const lines = yaml.split('\n');
+  const start = lines.findIndex((l) => l === 'route:');
+  if (start === -1) return '';
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    // A sibling top-level key (column-0, non-blank) closes the block.
+    if (/^\S/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return lines
+    .slice(start, end)
+    .map((l) => l.replace(/^(\s*receiver:\s*).*$/, '$1<receiver>'))
+    .join('\n');
+}
+
 /* ── audit ──────────────────────────────────────────────────────────────── */
 
 const alertRules = parseAlertRules(
@@ -394,5 +419,42 @@ describe('burn-in pre-flight: observability overlay', () => {
     const tokenWrite = compose.match(/>\s*(\/\S*scrape-token)\b/);
     expect(tokenWrite).not.toBeNull();
     expect(promConfig).toContain(`credentials_file: ${tokenWrite![1]}`);
+  });
+
+  it('wires the alertmanager slack config to the URL its entrypoint writes', () => {
+    // INFLOOP_ALERT_SLACK_WEBHOOK_URL is a secret. The alertmanager entrypoint
+    // materializes it into a tmpfs file; alertmanager.slack.yml must point its
+    // `api_url_file` at that exact path, or a configured notifier silently
+    // never delivers — the same materialize-a-secret-to-a-file contract the
+    // scrape-token check above guards for prometheus.
+    const urlWrite = compose.match(/>\s*(\/\S*slack-url)\b/);
+    expect(urlWrite).not.toBeNull();
+    const slackConfig = readRepoFile('deploy', 'alertmanager.slack.yml');
+    expect(slackConfig).toContain(`api_url_file: ${urlWrite![1]}`);
+  });
+
+  it('keeps the null receiver as the default alertmanager config', () => {
+    // With no notifier configured the overlay must behave exactly as before:
+    // both configs are mounted, and alertmanager.yml still routes to the null
+    // receiver so a local burn-in delivers nowhere.
+    expect(compose).toContain('./deploy/alertmanager.yml:');
+    expect(compose).toContain('./deploy/alertmanager.slack.yml:');
+    expect(readRepoFile('deploy', 'alertmanager.yml')).toMatch(
+      /receiver:\s*'null'/,
+    );
+  });
+
+  it('keeps the slack route block in sync with the null-receiver route block', () => {
+    // alertmanager.slack.yml duplicates alertmanager.yml's `route:` block. The
+    // two must stay identical except for the receiver name, or the burn-in and
+    // the production delivery path would group and repeat alerts differently.
+    const nullRoute = alertmanagerRouteBlock(
+      readRepoFile('deploy', 'alertmanager.yml'),
+    );
+    const slackRoute = alertmanagerRouteBlock(
+      readRepoFile('deploy', 'alertmanager.slack.yml'),
+    );
+    expect(nullRoute.length).toBeGreaterThan(0);
+    expect(slackRoute).toBe(nullRoute);
   });
 });

@@ -143,6 +143,14 @@ the wiring without spending; pass `--prometheus <url>` to also check the cost
 alert rules. Do not tick the 3.3 box on the driver's checklist alone — finish
 the queued-run and Alertmanager checks first.
 
+If the deployment wires a real notifier — set `INFLOOP_ALERT_SLACK_WEBHOOK_URL`
+and the observability overlay loads
+[`alertmanager.slack.yml`](../deploy/alertmanager.slack.yml) and delivers to
+Slack — also confirm the first alert that fires is *delivered*: it lands in the
+configured Slack channel, not just on the Alertmanager UI. A wrong webhook URL
+loads cleanly and passes the healthcheck, so this is only ever proven by an
+observed delivery.
+
 For each row that fires an alert, follow the matching
 [`runbook.md`](runbook.md) entry end to end — this validates the *response*,
 not just the detection.
@@ -208,7 +216,8 @@ The burn-in passes when every box is ticked:
 - [ ] Phase 1 — all eleven alert rules loaded; target `up`.
 - [ ] Phase 2 — UI, webhook, and MCP each ran end to end with an audit trail.
 - [ ] Phase 3 — every fault produced the expected behaviour; every expected
-      alert was observed firing (or its `for:` window understood).
+      alert was observed firing (or its `for:` window understood); if a
+      notifier is wired, at least one alert was seen delivered.
 - [ ] Phase 4 — backup taken, volume destroyed, restore verified intact.
 - [ ] Phase 5 — 24–72h soak with flat memory and no unexplained restart.
 - [ ] [`runbook.md`](runbook.md) has an operator-tested entry for every

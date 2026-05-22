@@ -1,0 +1,39 @@
+# Alertmanager configuration that DELIVERS alerts to Slack — the counterpart
+# to the null-receiver alertmanager.yml in this directory.
+#
+# Loaded by the `alertmanager` service in deploy/docker-compose.observability.yml
+# only when INFLOOP_ALERT_SLACK_WEBHOOK_URL is set; otherwise that service
+# loads alertmanager.yml (the null receiver). The Slack incoming-webhook URL is
+# a secret, so it is never written here — the service entrypoint materializes it
+# from the environment into the tmpfs file referenced below by `api_url_file`,
+# the same pattern the prometheus service uses for its scrape token.
+#
+# burn-in Run 2 (docs/burn-in-run2-plan.md) uses this config so Phase 3 can
+# validate the alert *delivery* path end to end — a firing alert actually
+# reaching a human — not just that alerts route and group on the UI.
+#
+# The `route:` block below is kept identical to alertmanager.yml except for the
+# receiver name; deploy/burn-in-preflight.test.ts enforces that they stay in
+# sync, so the burn-in and the delivery path group and repeat alike.
+
+route:
+  receiver: 'slack'
+  # Group by alert name so a burst of one alert is one notification.
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: 'slack'
+    slack_configs:
+      # api_url_file is read at notification time from the tmpfs file the
+      # compose entrypoint writes — the webhook URL is never stored in the repo.
+      - api_url_file: /run/alertmanager/slack-url
+        # `channel` does not select the channel for an incoming-webhook URL —
+        # the webhook always delivers to whatever it was provisioned for. Kept
+        # only as human-readable operator intent; it would matter only if this
+        # were switched to a bot-token `api_url`.
+        channel: '#infinite-loop-alerts'
+        # Send a follow-up when an alert clears, so an operator sees recovery.
+        send_resolved: true

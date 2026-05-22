@@ -67,6 +67,12 @@ type Props = InputProps | TextareaProps;
  *    a closing `}}` between it and the caret.
  *  - Walk forwards from the caret for `}}`. If absent, the user is still
  *    typing the closer — treat the segment as open-ended.
+ *  - The picker only completes the ref name, never the `| default …`
+ *    fallback that may follow it. When the placeholder carries a `|`,
+ *    `innerEnd` is clamped to it so a pick replaces only the ref and
+ *    leaves the default clause intact. There is no slot once the caret
+ *    crosses past the `|`, nor while such a placeholder is still
+ *    unclosed (an inserted ref's `}}` would have nowhere correct to go).
  */
 export function findTemplateSlot(
   text: string,
@@ -86,6 +92,27 @@ export function findTemplateSlot(
   const closeAfter = text.indexOf('}}', caret);
   const hasClose = closeAfter !== -1;
   const innerEnd = hasClose ? closeAfter : text.length;
+
+  // A `| default …` clause may follow the ref name. Keep the picker
+  // scoped to the ref: once the caret enters the default text there is
+  // nothing to complete, and a pick must not clobber what the user typed.
+  const pipeIdx = text.indexOf('|', innerStart);
+  if (pipeIdx !== -1 && pipeIdx < innerEnd) {
+    if (caret > pipeIdx) return null;
+    // An unclosed `{{ ref | default …` has no well-formed spot for an
+    // inserted ref's `}}` — it belongs after the clause, not after the
+    // ref. Leave the picker dormant until the user types the closer.
+    if (!hasClose) return null;
+    // The closed `| … }}` tail carries the closer, so an inserted ref
+    // replaces only the ref name and never appends its own `}}`.
+    return {
+      innerStart,
+      innerEnd: pipeIdx,
+      prefix: text.slice(innerStart, caret).trim(),
+      hasClose: true,
+    };
+  }
+
   const prefix = text.slice(innerStart, caret).trim();
   return { innerStart, innerEnd, prefix, hasClose };
 }

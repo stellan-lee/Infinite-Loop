@@ -96,3 +96,21 @@ verdict checklist, and abort criteria are already written in
 This decision stays in effect until burn-in Run 2 completes and a `## Run 2`
 section is recorded in [`BURN-IN.md`](../BURN-IN.md). At that point — and not
 before — Infinite Loop may be declared production-ready.
+
+## Go-live checklist (after Run 2 passes)
+
+Run 2 validates the system; it does not, by itself, finish the deployment. One
+operator step is deliberately **not** a Run 2 blocker but **must** be done
+before real production traffic — recorded here so it is not lost in the gap
+between "Run 2 passed" and "live":
+
+- **Wire a real Alertmanager notifier.** [`deploy/alertmanager.yml`](../deploy/alertmanager.yml)
+  routes to a `null` receiver: firing alerts collect on the Alertmanager and
+  Prometheus UIs and go nowhere else. That is correct for the burn-in — Phase 3
+  only needs to *see* alerts route and group — and it is correctly an operator
+  config decision rather than an in-repo gap, since a Slack/PagerDuty/webhook
+  secret cannot be baked into the repo. But until the `null` receiver is
+  replaced with a real notifier (`slack_configs:` / `email_configs:` /
+  `webhook_configs:` — the file's header has the pointer), all 11 Prometheus
+  alert rules page nobody. It is a ~5-minute change; the only risk is that it
+  is overlooked.

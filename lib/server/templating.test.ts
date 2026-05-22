@@ -66,3 +66,76 @@ describe('resolve', () => {
     expect(result.warnings).toEqual([{ field: '', missingKey: 'a.b.c' }]);
   });
 });
+
+describe('resolve — | default fallback', () => {
+  it('substitutes the default when the key is missing, with no warning', () => {
+    const result = resolve('value=[{{a.missing | default fallback}}]', {});
+    expect(result.text).toBe('value=[fallback]');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('ignores the default when the key resolves', () => {
+    const scope: Scope = { a: { b: 'real' } };
+    const result = resolve('{{a.b | default fallback}}', scope);
+    expect(result.text).toBe('real');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('uses the default for both null and undefined values', () => {
+    const scope: Scope = { a: { b: null, c: undefined } };
+    const result = resolve('[{{a.b | default X}}][{{a.c | default Y}}]', scope);
+    expect(result.text).toBe('[X][Y]');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('does NOT apply the default to an explicit empty-string value', () => {
+    const scope: Scope = { a: { b: '' } };
+    const result = resolve('[{{a.b | default fallback}}]', scope);
+    expect(result.text).toBe('[]');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('preserves internal spaces in the default value', () => {
+    const result = resolve('{{x.y | default hello world}}', {});
+    expect(result.text).toBe('hello world');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('tolerates whitespace around the | default clause', () => {
+    const result = resolve('{{  x.y  |  default   spaced  }}', {});
+    expect(result.text).toBe('spaced');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('treats an empty default as an empty fallback with no warning', () => {
+    const result = resolve('[{{x.y | default }}]', {});
+    expect(result.text).toBe('[]');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('resolves each placeholder against its own default', () => {
+    const scope: Scope = { a: { present: 'P' } };
+    const result = resolve(
+      '{{a.present | default D1}}/{{a.absent | default D2}}',
+      scope,
+    );
+    expect(result.text).toBe('P/D2');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('leaves a non-default pipe expression as literal text', () => {
+    // `| foo` is not a `default` clause, so the whole placeholder fails to
+    // match and passes through unchanged — same as before this feature.
+    const result = resolve('{{a.b | foo}}', { a: { b: 'hi' } });
+    expect(result.text).toBe('{{a.b | foo}}');
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('leaves `{{ref|default}}` (no space after default) as literal text', () => {
+    // `default` must be followed by whitespace; without it the placeholder
+    // does not match and is emitted verbatim, with no warning.
+    const result = resolve('{{a.b|default}}', {});
+    expect(result.text).toBe('{{a.b|default}}');
+    expect(result.warnings).toEqual([]);
+  });
+});

@@ -20,6 +20,9 @@ steps, the two `.env` profiles, the soak load/observer invocation, the verdict
 checklist, and the abort criteria.
 
 Run 2 starts from the frozen candidate: the `main` tag `burn-in-run2-candidate`.
+The off-host staging steps of this plan have been dress-rehearsed locally —
+[`burn-in-run2-preflight.md`](burn-in-run2-preflight.md) records what was
+verified without a host and what remains host-gated.
 
 ## What Run 2 closes
 

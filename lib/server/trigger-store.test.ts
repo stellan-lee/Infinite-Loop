@@ -131,6 +131,21 @@ describe('trigger-store', () => {
     expect(second.createdAt).toBe(first.createdAt);
     expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
   });
+
+  test('saveTrigger writes the trigger file 0600 — it can carry a webhook secret', async () => {
+    if (process.platform === 'win32') return; // POSIX mode bits only
+    const saved = await saveTrigger(baseTrigger({ secret: 'webhook-shared-secret' }));
+    const st = await fs.stat(path.join(tmpTrDir, `${saved.id}.json`));
+    expect(st.mode & 0o777).toBe(0o600);
+  });
+
+  test('touchLastFired keeps the trigger file 0600', async () => {
+    if (process.platform === 'win32') return; // POSIX mode bits only
+    const saved = await saveTrigger(baseTrigger({ secret: 'webhook-shared-secret' }));
+    await touchLastFired(saved.id);
+    const st = await fs.stat(path.join(tmpTrDir, `${saved.id}.json`));
+    expect(st.mode & 0o777).toBe(0o600);
+  });
 });
 
 describe('malformed trigger files', () => {

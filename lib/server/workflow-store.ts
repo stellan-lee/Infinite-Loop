@@ -374,7 +374,14 @@ async function migrateLegacyTriggers(wf: Workflow & { triggers?: unknown }): Pro
 
     try {
       const tmp = `${target}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify(trigger, null, 2), 'utf8');
+      // 0600 to match trigger-store: every triggers/*.json is owner-only,
+      // since the live write path can persist a webhook secret into one.
+      // Remove any stale temp first — this path uses a fixed `.tmp` suffix,
+      // and `writeFile`'s `mode` is honoured only on a fresh create, so
+      // reopening crash debris would silently keep its old 0644. Mirrors
+      // hermes-local-store.ts.
+      await fs.rm(tmp, { force: true });
+      await fs.writeFile(tmp, JSON.stringify(trigger, null, 2), { encoding: 'utf8', mode: 0o600 });
       await fs.rename(tmp, target);
     } catch (err) {
       log.error('migration: failed to save trigger', { triggerId: id, err });

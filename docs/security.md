@@ -337,6 +337,33 @@ The log shares the data directory's trust boundary: it is not tamper-proofed,
 because a local attacker who can rewrite it can already rewrite everything
 else on the machine.
 
+## Secrets at rest
+
+The data directory holds two kinds of secret:
+
+- **Webhook shared secrets** — the HMAC `secret` on a signature-verified
+  trigger, stored in `triggers/<id>.json`.
+- **Provider connection tokens** — bearer tokens for registered connections,
+  stored in `connections/<id>.json`.
+
+Both are stored **in plaintext**. Encryption at rest would not add a real
+boundary here: this host already runs arbitrary code (agent and script nodes),
+so anything that can read the data directory can also read the key used to
+decrypt it. The honest control is the data directory's own trust boundary —
+the same one the [audit log](#audit-log) relies on.
+
+As **defense-in-depth** against *other* local users on a shared host — and
+against accidental exposure through a world-readable backup or a misconfigured
+file sync — these files are written with `0600` permissions (owner read/write
+only). The atomic tmp-write-then-rename used for both stores creates the temp
+file `0600`, so the published file is owner-only from the moment it appears.
+
+One residual: a trigger file written by a build *older* than this behavior
+keeps its original permissions until it is next written — re-saving the
+trigger, or any real webhook fire (which updates `lastFiredAt`), rewrites it
+`0600`. Keep the data directory itself owner-only, and never commit it to a
+repo or sync it to a shared location.
+
 ## Reporting security issues
 
 Infinite Loop is pre-1.0 and currently has no formal disclosure channel. Open a GitHub issue for non-sensitive concerns; for anything that warrants private disclosure, contact the maintainer directly.

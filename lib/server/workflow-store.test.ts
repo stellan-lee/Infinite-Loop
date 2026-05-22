@@ -407,6 +407,12 @@ describe('saveWorkflow migration: legacy triggers[] → trigger-store', () => {
     expect(migratedTrigger.id).toBe(triggerId);
     expect(migratedTrigger.workflowId).toBe('wf-migrate');
     expect(migratedTrigger.pluginId).toBe('generic');
+
+    // The migrated trigger file is written 0600, like every triggers/*.json.
+    if (process.platform !== 'win32') {
+      const st = await fsp.stat(path.join(tmpTrDir, `${triggerId}.json`));
+      expect(st.mode & 0o777).toBe(0o600);
+    }
   });
 
   test('migration is idempotent across multiple loads', async () => {

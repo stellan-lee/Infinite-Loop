@@ -211,10 +211,19 @@ export async function saveTrigger(
  * (and concurrent unlinkers like `deleteTrigger`) can't collide on the
  * same `.tmp` path — a previous bug where two near-simultaneous saves
  * raced via `${target}.tmp` and one rename hit ENOENT when the other
- * cleanup arrived between writeFile and rename. */
+ * cleanup arrived between writeFile and rename.
+ *
+ * Written `0600` (owner-only): a trigger file can carry a webhook shared
+ * `secret`, so it must not be world-readable on a multi-user host. The
+ * `mode` reliably applies because the random suffix guarantees `tmp` is
+ * always freshly created — `writeFile`'s `mode` is honoured only when it
+ * creates the file — and the rename then moves that 0600 inode into
+ * place, so a re-save also upgrades a trigger file left 0644 by an older
+ * build. Matches the provider connection store (hermes-local-store.ts),
+ * 0600 for the same reason. See docs/security.md "Secrets at rest". */
 async function atomicWriteJson(target: string, value: unknown): Promise<void> {
   const tmp = `${target}.${randomBytes(6).toString('hex')}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
+  await fs.writeFile(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 });
   try {
     await fs.rename(tmp, target);
   } catch (err) {

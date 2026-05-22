@@ -1,0 +1,24 @@
+# Compose override for the production burn-in (docs/burn-in.md).
+#
+# The base docker-compose.yml runs the orchestrator-only `infinite-loop:local`
+# image. The burn-in needs a real provider CLI on PATH (see burn-in.md
+# Prerequisites), so this override swaps in the provider-overlay image built
+# from deploy/Dockerfile.providers.
+#
+# It also redirects `build:` at that overlay. The overlay is `FROM
+# infinite-loop:local`, so the base image must exist first — build it once
+# WITHOUT this override, then bring the stack up WITH it:
+#   docker compose build                                          # base image
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.burn-in.yml up -d --build
+#
+# Because `build:` points here at the overlay, a `--build` rebuilds the
+# provider image correctly instead of silently clobbering it with the base.
+
+services:
+  infinite-loop:
+    build:
+      # context: resolved relative to the project directory (the directory of
+      # the first -f file, i.e. the repo root) — same `.` the base file uses.
+      context: .
+      dockerfile: deploy/Dockerfile.providers
+    image: infinite-loop:burn-in

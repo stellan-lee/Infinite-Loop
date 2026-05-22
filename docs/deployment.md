@@ -214,14 +214,26 @@ contain agent provider CLIs (`claude`, `codex`, …) or a Python interpreter:
 - **Agent nodes** need their provider CLI on `PATH` inside the container.
 - **Script nodes** with `language: py` need `python3`.
 
-TypeScript Script nodes work out of the box (Bun runs them). To run Agent or
-Python nodes, extend the image — a small Dockerfile `FROM infinite-loop:local`
-that installs your provider CLIs and/or `python3` — and point providers at
-the right binary with `INFLOOP_PROVIDER_BIN_<ID>` (see
+TypeScript Script nodes work out of the box (Bun runs them). This is
+deliberate: which agent runners you trust on a host is a deployment decision,
+not something the base image should bake in.
+
+To run Agent or Python nodes, extend the image with a thin overlay —
+`FROM infinite-loop:local`, installing your provider CLIs and/or `python3` —
+and, if a binary is not on `PATH` under its manifest name, point the provider
+at it with `INFLOOP_PROVIDER_BIN_<ID>` (see
 [configuration.md](configuration.md)).
 
-This is deliberate: which agent runners you trust on a host is a deployment
-decision, not something the base image should bake in.
+The repo ships a worked example of exactly that overlay:
+[`deploy/Dockerfile.providers`](../deploy/Dockerfile.providers) adds the
+`claude` CLI on top of the base image. The production [burn-in](burn-in.md)
+builds it — it requires a real provider — and it is a copyable starting point
+for a real deployment:
+
+```bash
+docker compose build                                   # base: infinite-loop:local
+docker build -f deploy/Dockerfile.providers -t infinite-loop:burn-in .
+```
 
 ## Plain `docker run` (no Compose)
 

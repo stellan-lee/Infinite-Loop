@@ -320,4 +320,22 @@ describe('burn-in pre-flight: deployment artifacts', () => {
       /restart:\s*unless-stopped/,
     );
   });
+
+  it('ships a provider overlay that bakes a real provider CLI in', () => {
+    // burn-in.md Prerequisites require a real provider CLI on PATH, and the
+    // cost-budget phase needs `claude` specifically. Phase 0 builds
+    // deploy/Dockerfile.providers to satisfy that. If the overlay is renamed
+    // or stops installing `claude`, the burn-in silently loses its provider.
+    const overlay = readRepoFile('deploy', 'Dockerfile.providers');
+    expect(overlay).toContain('FROM ${BASE_IMAGE}');
+    expect(overlay).toContain('claude --version');
+  });
+
+  it('keeps the burn-in compose override pointed at the overlay image', () => {
+    // burn-in.md Phase 0 brings the stack up with this override so the
+    // running container is the provider image, not the orchestrator-only base.
+    expect(readRepoFile('deploy', 'docker-compose.burn-in.yml')).toMatch(
+      /image:\s*infinite-loop:burn-in/,
+    );
+  });
 });

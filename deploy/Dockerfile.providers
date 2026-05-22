@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1
+#
+# Infinite Loop — provider overlay image.
+#
+# The base image (../Dockerfile) deliberately ships only the orchestrator —
+# no agent provider CLIs — because which agent runner you trust on a host is
+# a deployment decision (docs/deployment.md "Known limitation"). The
+# production burn-in (docs/burn-in.md) needs the opposite: at least one real
+# provider CLI on PATH. Its cost and run-failure phases need a provider that
+# actually runs, and the cost-budget phase needs `claude` specifically — the
+# one provider that reports cost.
+#
+# This overlay reconciles the two: a thin layer that adds the `claude` CLI on
+# top of the base image, without touching the base. It is the worked form of
+# the "extend the image" advice in deployment.md — the burn-in builds it, and
+# it is a copyable starting point for any deployment that runs Agent nodes.
+#
+# Build the base image first, then this overlay on top of it (the burn-in
+# compose override, deploy/docker-compose.burn-in.yml, does the second step):
+#   docker compose build                                       # base image
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.burn-in.yml up -d --build
+# See docs/burn-in.md Phase 0.
+#
+# DEVIATION FROM THE TYPESCRIPT DOCKERFILE STANDARD: that standard mandates a
+# multi-stage, distroless build. This overlay compiles nothing — it only adds
+# a vendor CLI onto an already-built application image, so `FROM` must be that
+# image and a single stage is correct. No npm/yarn/pnpm is used: `claude` is
+# installed from its official self-contained native installer.
+
+# The base application image, built from ../Dockerfile (the tag is
+# docker-compose.yml's `image:`). Override to pin a digest if you prefer.
+ARG BASE_IMAGE=infinite-loop:local
+FROM ${BASE_IMAGE}
+
+# Which Claude Code release to install. `stable` avoids chasing a moving
+# `latest`; pass an exact version for a fully reproducible image.
+ARG CLAUDE_CODE_VERSION=stable
+
+# Installing a system binary needs root; the base image ends as the
+# unprivileged `bun` user. The final `USER bun` below restores that — the
+# deployed container must keep the non-root runtime the security model
+# depends on (docs/security.md).
+USER root
+
+# Install `claude` from its official native installer — a self-contained
+# binary, so no Node runtime is added to the image. HOME points at a dir
+# under /opt: the installer writes to $HOME/.local, and /opt is baked into
+# the image rather than masked by the /home/bun runtime volume
+# (docker-compose.yml). The installer drops `claude` at $HOME/.local/bin as a
+# symlink into $HOME/.local/share; a symlink onto /usr/local/bin then puts it
+# on every user's PATH. chown so the unprivileged `bun` user can execute it
+# and claude can manage its own version store. The build host needs egress to
+# claude.ai.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl ca-certificates \
+  && export HOME=/opt/claude-cli \
+  && mkdir -p "$HOME" \
+  && curl -fsSL https://claude.ai/install.sh | bash -s -- "${CLAUDE_CODE_VERSION}" \
+  && ln -s "$HOME/.local/bin/claude" /usr/local/bin/claude \
+  && chown -R bun:bun /opt/claude-cli \
+  && apt-get purge -y --auto-remove curl \
+  && rm -rf /var/lib/apt/lists/*
+
+# Python Script nodes (language: py) also need `python3` on PATH — add it the
+# same way (`apt-get install -y --no-install-recommends python3`) if your
+# workflows use them. Omitted by default: the burn-in does not need it.
+
+USER bun
+
+# Smoke-test as the unprivileged runtime user, not root: the build fails here
+# if `bun` cannot resolve or execute `claude` — the exact condition burn-in
+# Phase 0 verifies with `docker compose exec ... which claude`. CMD,
+# HEALTHCHECK, ENV, EXPOSE and WORKDIR are all inherited from the base image.
+RUN claude --version

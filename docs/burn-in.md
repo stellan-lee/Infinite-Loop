@@ -27,7 +27,9 @@ time you can author the response while watching the real behaviour.
   ships only the orchestrator (see
   [deployment.md](deployment.md#known-limitation--agent-providers-are-not-in-the-image)).
   The cost and run-failure phases below need a provider that actually runs;
-  the `claude` CLI also reports cost, which the budget phase requires.
+  the `claude` CLI also reports cost, which the budget phase requires. The
+  repo ships [`deploy/Dockerfile.providers`](../deploy/Dockerfile.providers),
+  an overlay that bakes `claude` on top of the base image — Phase 0 builds it.
 - A **Prometheus + Alertmanager** pair, or equivalent, able to scrape an
   authenticated endpoint and evaluate rule files.
 - A reverse proxy or tunnel in front, as the deployment requires for any
@@ -40,9 +42,17 @@ sign-off checklist at the end as you go.
 
 ### Phase 0 — Deploy
 
-1. Deploy per [deployment.md](deployment.md) with `docker compose up -d
-   --build`. `INFLOOP_API_TOKEN` is set; the provider CLI is on `PATH`
-   inside the container (`docker compose exec infinite-loop which claude`).
+1. Build the base image, then build-and-start the stack with the provider
+   overlay (`INFLOOP_API_TOKEN` must already be set in `.env` — see
+   [deployment.md](deployment.md)):
+
+   ```bash
+   docker compose build                                   # base image
+   docker compose -f docker-compose.yml -f deploy/docker-compose.burn-in.yml up -d --build
+   ```
+
+   Then confirm the provider CLI is on `PATH` inside the container:
+   `docker compose exec infinite-loop which claude`.
 2. For the cost and slot phases, set tight limits in `.env` so the bounds
    are reachable in minutes, not hours — e.g. `INFLOOP_MAX_TOTAL_COST_USD`
    to a low dollar figure, a low `maxConcurrentRuns` in settings.

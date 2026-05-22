@@ -9,6 +9,7 @@
     "start": "NODE_ENV=production bun --preload ./lib/server/async-local-storage-global.ts server.ts",
     "backup": "bun scripts/backup.ts",
     "restore": "bun scripts/restore.ts",
+    "burn-in": "bun deploy/burn-in-driver.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "test:e2e": "playwright test",

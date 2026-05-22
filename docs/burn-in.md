@@ -127,6 +127,21 @@ observed wording so [`runbook.md`](runbook.md) can quote it.
 | 3.8 | Force runs to fail repeatedly (point a provider at a missing binary, or run a known-bad workflow) — more than 5, over 50% of settled runs | Runs land in history as `failed`; `infloop_runs_total{status="failed"}` climbs. | `InfiniteLoopHighRunFailureRate` after 15m. |
 | 3.9 | Stop the container and leave it down past 2m | Prometheus loses the target. | `InfiniteLoopInstanceDown` (critical) after 2m. |
 
+Row 3.3 (the process-wide cost budget) is *partially* automated — it drives
+and checks the `503` admission gate, the mid-run abort, and the spend metrics;
+the queued-run-held-on-disk behaviour and the Alertmanager hop are **not**
+automated and must be walked by hand. The repo ships
+[`deploy/burn-in-driver.ts`](../deploy/burn-in-driver.ts) and the costed probe
+workflow [`deploy/burn-in-cost-workflow.json`](../deploy/burn-in-cost-workflow.json):
+`bun run burn-in -- --confirm-spend` pre-flights the budget wiring, installs
+the probe, then fires costed `claude` runs one at a time — scraping
+`infloop_cost_budget_spent_usd` between them — until the admission gate
+returns `503`, and prints a Phase 3.3 checklist to paste into
+[`BURN-IN.md`](../BURN-IN.md). Run it with `--preflight-only` first to confirm
+the wiring without spending; pass `--prometheus <url>` to also check the cost
+alert rules. Do not tick the 3.3 box on the driver's checklist alone — finish
+the queued-run and Alertmanager checks first.
+
 For each row that fires an alert, follow the matching
 [`runbook.md`](runbook.md) entry end to end — this validates the *response*,
 not just the detection.

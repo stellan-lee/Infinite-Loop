@@ -1,0 +1,56 @@
+{
+  "id": "burn-in-cost",
+  "name": "Burn-in — cost budget probe",
+  "version": 1,
+  "createdAt": 1779800000000,
+  "updatedAt": 1779800000000,
+  "inputs": [
+    {
+      "name": "prompt",
+      "type": "string",
+      "default": "Reply with the single word: ok",
+      "description": "Agent prompt, kept deliberately tiny so each run incurs a small, predictable provider cost. deploy/burn-in-driver.ts fires this workflow repeatedly to walk cumulative spend up to INFLOOP_MAX_TOTAL_COST_USD for docs/burn-in.md Phase 3.3."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "position": { "x": 0, "y": 120 },
+      "config": {}
+    },
+    {
+      "id": "agent-1",
+      "type": "agent",
+      "position": { "x": 260, "y": 100 },
+      "config": {
+        "providerId": "claude",
+        "prompt": "{{__inputs.prompt}}",
+        "cwd": "/tmp",
+        "timeoutMs": 180000
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "position": { "x": 560, "y": 120 },
+      "config": { "outcome": "succeeded" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-1",
+      "sourceHandle": "next",
+      "target": "agent-1",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e2",
+      "source": "agent-1",
+      "sourceHandle": "next",
+      "target": "end-1",
+      "targetHandle": "in"
+    }
+  ]
+}

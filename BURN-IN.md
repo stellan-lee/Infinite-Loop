@@ -204,7 +204,12 @@ watch that the gauges return to baseline between runs, RSS stays flat, and
    provider credentials. Both need a provider that actually runs: 3.3 needs
    the `claude` CLI authenticated and real spend; 3.6 needs Agent nodes that
    hold folder-touching directory locks. Run both on the remote host with a
-   credentialed provider and a tight `INFLOOP_MAX_TOTAL_COST_USD`.
+   credentialed provider and a tight `INFLOOP_MAX_TOTAL_COST_USD`. Phase 3.3
+   is now partially pre-built: `deploy/burn-in-driver.ts` +
+   `deploy/burn-in-cost-workflow.json` (`bun run burn-in`) drive and check the
+   `503` gate, the mid-run abort, and the spend metrics, and print a checklist;
+   the queued-run-held-on-disk behaviour and the Alertmanager hop still need a
+   manual pass — see `docs/burn-in.md` Phase 3.
 3. **`InfiniteLoopTriggerQueueBacklog`** was not reproduced locally (see
    Phase 3) — exercise it under a real load generator or a cost-budget pause.
 4. **Phase 3.5 monitoring gap — resolved.** Run 1 confirmed an unwritable

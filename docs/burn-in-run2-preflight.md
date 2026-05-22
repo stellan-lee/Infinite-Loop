@@ -170,3 +170,47 @@ without the Slack notifier configured, the burn-in tooling runs and fails
 safely, and the plan is internally consistent with every command in it
 runnable. The remaining work is exactly the host-gated list above, and it is
 genuinely host-gated: it needs infrastructure, not more preparation.
+
+## Final pre-provisioning verification — 2026-05-22
+
+This section is **not** another re-run trigger — there has been no
+deployment-shape change since the `b695fe7` re-run above. It is the go/no-go
+snapshot taken immediately before the operator provisions the Run 2 host: a
+last confirmation that the frozen candidate is still clean at the moment the
+host appears, so Phase 0 of [`burn-in-run2-plan.md`](burn-in-run2-plan.md)
+starts against a known-good tree rather than discovering a regression hours in.
+
+The candidate is unchanged — `8377dd4`, the commit that recorded the `b695fe7`
+re-run, and the current `main` HEAD. The full no-host check set was re-executed
+against it:
+
+| Check | Command | Result |
+|---|---|---|
+| Full test suite | `bun test` | **1255 pass, 1 skip, 0 fail** (117 files, ~9s) |
+| Type check | `bun run typecheck` (`tsc --noEmit`) | **clean** — no errors |
+| Burn-in driver unit tests | `bun test deploy/` | **77 pass, 0 fail** (4 files) |
+| Observability overlay parses | `docker compose -f docker-compose.yml -f deploy/docker-compose.observability.yml config` | **valid** — with and without `INFLOOP_ALERT_SLACK_WEBHOOK_URL` set |
+| Burn-in overlay parses | `docker compose -f docker-compose.yml -f deploy/docker-compose.burn-in.yml config` | **valid** |
+| Candidate tag resolves to HEAD | `git rev-parse burn-in-run2-candidate^{commit}` | **`8377dd4`** — equals `main` HEAD, and the tag is in sync with `origin` |
+
+No defect. The numbers are identical to the `b695fe7` re-run above — the
+expected result for an unchanged tree. The value of this pass is not new
+information but a fresh confirmation that nothing in the candidate has
+regressed or drifted between the re-run and provisioning.
+
+The candidate-tag row is worth calling out: the previous defect this rehearsal
+caught was a *stale* `burn-in-run2-candidate` tag, so each verification
+re-checks that `git checkout burn-in-run2-candidate` — the literal first
+instruction of the plan's Phase 0 — still lands on the current candidate. It
+does.
+
+**Verdict: GO.** Every gate a no-host check can clear is clear. The only work
+between here and a production-readiness declaration is host-gated Run 2 — the
+24–72h soak, the real-Linux pass, and the credential-gated cost and slot-pool
+phases listed under *Host-gated* above. That is infrastructure, not
+preparation: provision the host and run it.
+
+As with the `b695fe7` re-run, the `burn-in-run2-candidate` tag is moved forward
+to the commit that records this verification — a docs-only delta over `8377dd4`
+that changes nothing in the deployable image, the compose files, or the alert
+rules — so the candidate tree always carries a current pre-flight record.

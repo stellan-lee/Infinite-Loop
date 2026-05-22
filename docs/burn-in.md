@@ -38,7 +38,9 @@ time you can author the response while watching the real behaviour.
 ## Phases
 
 Run the phases in order — each assumes the previous one passed. Tick the
-sign-off checklist at the end as you go.
+sign-off checklist at the end as you go, and record each run's results —
+per-phase observations, alerts seen, runbook entries validated — in
+[`BURN-IN.md`](../BURN-IN.md), so this procedure stays a reusable checklist.
 
 ### Phase 0 — Deploy
 

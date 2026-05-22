@@ -28,6 +28,20 @@ afterEach(() => {
   cleanup();
 });
 
+// Hermetic environment. Bun auto-loads `.env` into process.env before this
+// preload runs, and the project quick-start tells operators to create one
+// (`cp .env.example .env`). Any INFLOOP_* knob in that file would then leak
+// into the suite — most damagingly INFLOOP_API_TOKEN, which flips the API
+// auth gate out of its loopback / no-token mode and fails every test that
+// legitimately sends no token. CI has no `.env`, so the breakage only ever
+// shows up on developer machines. Scrub the whole INFLOOP_* namespace up
+// front so the suite behaves identically everywhere; setup.ts then sets the
+// few INFLOOP_* variables it deliberately wants, just below. A test that
+// needs a specific value still sets it itself, at runtime.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith('INFLOOP_')) delete process.env[key];
+}
+
 // Spawned-child env scrubbing (lib/server/child-env.ts) strips every host
 // variable not on its allowlist. The env-driven fake CLIs under
 // tests/fixtures/ are configured via FAKE_* variables — allow those through

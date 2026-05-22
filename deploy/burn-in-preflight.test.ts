@@ -339,3 +339,51 @@ describe('burn-in pre-flight: deployment artifacts', () => {
     );
   });
 });
+
+describe('burn-in pre-flight: observability overlay', () => {
+  // The observability overlay (deploy/docker-compose.observability.yml) stands
+  // up Prometheus, Alertmanager, and a reverse proxy locally so burn-in
+  // Phase 0's proxy check and Phase 1 can be driven without a remote staging
+  // host. Its config files must stay wired to each other and to
+  // prometheus-alerts.yml — a drifted mount path or job name is the same
+  // silent-never-fires failure class the alert audit above guards against, so
+  // it belongs in the same static gate.
+  const compose = readRepoFile('deploy', 'docker-compose.observability.yml');
+  const promConfig = readRepoFile('deploy', 'prometheus.yml');
+
+  it('defines the prometheus, alertmanager, and proxy services', () => {
+    for (const svc of ['prometheus:', 'alertmanager:', 'proxy:']) {
+      expect(compose).toContain(svc);
+    }
+  });
+
+  it('loads prometheus rules from the path the overlay mounts them to', () => {
+    // The overlay bind-mounts the shipped alert rules to a container path;
+    // prometheus.yml must reference that exact path under `rule_files:`, or
+    // the nine alerts silently never load.
+    const mount = compose.match(/prometheus-alerts\.yml:(\/\S+?):ro/);
+    expect(mount).not.toBeNull();
+    const rulePath = mount![1];
+    expect(promConfig).toMatch(/rule_files:/);
+    expect(promConfig).toContain(rulePath);
+  });
+
+  it('scrapes /api/metrics under the documented job name', () => {
+    // Same job-name contract the up{} audit pins: the scrape job must be
+    // `infinite-loop` or InfiniteLoopInstanceDown can never fire.
+    expect(promConfig).toContain('metrics_path: /api/metrics');
+    expect(promConfig).toMatch(
+      new RegExp(`job_name:\\s*${EXPECTED_SCRAPE_JOB}\\b`),
+    );
+  });
+
+  it('reads the scrape token from the file the overlay entrypoint writes', () => {
+    // /api/metrics is authenticated. The compose entrypoint materializes
+    // INFLOOP_API_TOKEN into a file; prometheus.yml must point its
+    // credentials_file at that same path, or every scrape gets 401 and the
+    // target reads as down.
+    const tokenWrite = compose.match(/>\s*(\/\S*scrape-token)\b/);
+    expect(tokenWrite).not.toBeNull();
+    expect(promConfig).toContain(`credentials_file: ${tokenWrite![1]}`);
+  });
+});

@@ -1,0 +1,127 @@
+# Compose override that stands up a LOCAL observability + proxy stack around
+# Infinite Loop, so the production burn-in (docs/burn-in.md) can be driven on
+# a developer machine instead of waiting on a remote staging host.
+#
+# It adds three services and touches nothing in the base `infinite-loop`
+# service, so it layers cleanly on its own or on top of the burn-in overlay:
+#
+#   # base stack + observability
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/docker-compose.observability.yml up -d
+#
+#   # provider-overlay burn-in image + observability (this is the burn-in)
+#   docker compose -f docker-compose.yml \
+#                  -f deploy/docker-compose.burn-in.yml \
+#                  -f deploy/docker-compose.observability.yml up -d --build
+#
+# What it adds:
+#   * prometheus   — scrapes the authenticated /api/metrics endpoint and loads
+#                    deploy/prometheus-alerts.yml. Unblocks burn-in Phase 1.
+#   * alertmanager — receives the alerts Prometheus fires (null receiver; see
+#                    deploy/alertmanager.yml to wire a real notifier).
+#   * proxy        — an nginx reverse-proxy hop in front of the app, so the
+#                    last Phase 0 box ("UI loads behind the proxy") is local.
+#
+# Relative paths below resolve from the project directory — the directory of
+# the FIRST -f file, i.e. the repo root — so they are written as ./deploy/...
+# (the same convention as docker-compose.burn-in.yml). Always layer this file
+# on docker-compose.yml; it has no `infinite-loop` service of its own.
+#
+# All published ports are bound to host loopback only, matching the base
+# file's posture — these are operator surfaces, not public ones:
+#   http://localhost:8080  proxy        → the Infinite Loop UI behind a proxy
+#   http://localhost:9090  Prometheus   → Status -> Targets / Alerts
+#   http://localhost:9093  Alertmanager → firing alerts, grouped and routed
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    depends_on:
+      - infinite-loop
+
+    # /api/metrics is authenticated, and Prometheus has no env-var substitution
+    # in its config file. The entrypoint below materializes the bearer token
+    # from the environment into a file that prometheus.yml references via
+    # `credentials_file`, keeping .env the single source of the token.
+    environment:
+      INFLOOP_API_TOKEN: ${INFLOOP_API_TOKEN:?set INFLOOP_API_TOKEN in .env — the /api/metrics scrape is authenticated}
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        # `$$` escapes Compose interpolation so the shell reads the container
+        # env var. printf writes no trailing newline — the file is the exact
+        # token. The token is a secret, so it goes to the tmpfs mount below
+        # (never persisted at rest), not into the tsdb data volume.
+        printf '%s' "$$INFLOOP_API_TOKEN" > /run/prometheus/scrape-token
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --web.enable-lifecycle
+    # Compose does not clear the image's inherited CMD when `entrypoint` is
+    # overridden; without this, the image's default args get appended to the
+    # shell entrypoint above. The entrypoint is self-contained, so clear it.
+    command: []
+
+    # In-memory scratch for the materialized scrape token — a secret that must
+    # not outlive the container. mode=1777 so the unprivileged `nobody`
+    # prometheus user can write it.
+    tmpfs:
+      - /run/prometheus:mode=1777
+
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # prometheus.yml loads its rules from this exact path — see the
+      # `rule_files:` entry there and the alerts file's own header.
+      - ./deploy/prometheus-alerts.yml:/etc/prometheus/infinite-loop-alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      # 127.0.0.1, not localhost — in these images `localhost` can resolve to
+      # IPv6 ::1 while the server listens on IPv4 only, which reads as down.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "-T", "5", "http://127.0.0.1:9090/-/healthy"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    volumes:
+      - ./deploy/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "-T", "5", "http://127.0.0.1:9093/-/healthy"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - infinite-loop
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # Hits nginx's own /healthz, not the proxied app — so the proxy reads
+      # healthy independently of whether the upstream is up. 127.0.0.1, not
+      # localhost: `localhost` resolves to IPv6 ::1 in the nginx image while
+      # nginx listens on IPv4 only.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "-T", "5", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  prometheus-data:
+  alertmanager-data:

@@ -30,10 +30,13 @@ time you can author the response while watching the real behaviour.
   the `claude` CLI also reports cost, which the budget phase requires. The
   repo ships [`deploy/Dockerfile.providers`](../deploy/Dockerfile.providers),
   an overlay that bakes `claude` on top of the base image — Phase 0 builds it.
-- A **Prometheus + Alertmanager** pair, or equivalent, able to scrape an
-  authenticated endpoint and evaluate rule files.
-- A reverse proxy or tunnel in front, as the deployment requires for any
-  non-loopback exposure.
+- A **Prometheus + Alertmanager** pair able to scrape an authenticated
+  endpoint and evaluate rule files, and a reverse proxy in front of the app.
+  The repo ships
+  [`deploy/docker-compose.observability.yml`](../deploy/docker-compose.observability.yml) —
+  a local overlay that stands all three up, already wired to the app — so
+  Phases 1–4 can be driven on a developer machine. Phase 0 brings it up. A
+  remote staging deployment may substitute its own equivalents.
 
 ## Phases
 
@@ -45,33 +48,49 @@ per-phase observations, alerts seen, runbook entries validated — in
 ### Phase 0 — Deploy
 
 1. Build the base image, then build-and-start the stack with the provider
-   overlay (`INFLOOP_API_TOKEN` must already be set in `.env` — see
-   [deployment.md](deployment.md)):
+   overlay **and the observability overlay** (`INFLOOP_API_TOKEN` must already
+   be set in `.env` — see [deployment.md](deployment.md)):
 
    ```bash
    docker compose build                                   # base image
-   docker compose -f docker-compose.yml -f deploy/docker-compose.burn-in.yml up -d --build
+   docker compose -f docker-compose.yml \
+                  -f deploy/docker-compose.burn-in.yml \
+                  -f deploy/docker-compose.observability.yml up -d --build
    ```
+
+   The observability overlay adds Prometheus, Alertmanager, and an nginx
+   reverse proxy alongside the app — bringing them up here means Phase 0's
+   proxy check and all of Phase 1 are wired from the start. See the
+   [overlay header](../deploy/docker-compose.observability.yml) for what it
+   exposes and on which loopback ports.
 
    Then confirm the provider CLI is on `PATH` inside the container:
    `docker compose exec infinite-loop which claude`.
 2. For the cost and slot phases, set tight limits in `.env` so the bounds
    are reachable in minutes, not hours — e.g. `INFLOOP_MAX_TOTAL_COST_USD`
    to a low dollar figure, a low `maxConcurrentRuns` in settings.
-3. Confirm `docker compose ps` shows `(healthy)` and the UI loads behind the
-   proxy and accepts the token at the login page.
+3. Confirm `docker compose ps` shows every service `(healthy)` and the UI
+   loads through the reverse proxy at `http://localhost:8080` and accepts the
+   token at the login page.
 
 ### Phase 1 — Wire observability
 
-1. Point Prometheus at `/api/metrics` with the bearer token in the scrape
-   config (it is **authenticated** — an unauthenticated scrape reads as a
-   down target). See [configuration.md](configuration.md#metrics).
-2. Load [`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml)
-   under `rule_files:` and confirm all nine rules show up in the Prometheus
-   **Alerts** page in the `inactive` state.
-3. Confirm `infloop_*` series are present and `up{job="infinite-loop"}` is
-   `1`. If the job label differs from `infinite-loop`, fix the scrape config
-   or the `InfiniteLoopInstanceDown` rule — they must agree.
+The observability overlay brought up in Phase 0 already does the wiring:
+[`deploy/prometheus.yml`](../deploy/prometheus.yml) scrapes the authenticated
+`/api/metrics` with the bearer token and loads
+[`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml) under
+`rule_files:`. This phase *verifies* it took.
+
+1. Open Prometheus at `http://localhost:9090`. Under **Status → Targets**,
+   confirm the `infinite-loop` target is **`up`** — a scrape that returns
+   `401` (wrong or missing token) reads as down, not as an error.
+2. On the **Alerts** page, confirm all nine rules from
+   `prometheus-alerts.yml` are listed in the `inactive` state.
+3. Confirm `infloop_*` series are queryable and `up{job="infinite-loop"}` is
+   `1`. If the job label differs from `infinite-loop`, the scrape config and
+   the `InfiniteLoopInstanceDown` rule disagree — fix one. (A remote staging
+   deployment running its own Prometheus must reproduce this wiring; see
+   [configuration.md](configuration.md#metrics).)
 
 A burn-in that injects faults but cannot see the alerts is just breaking
 things. Do not proceed until every rule is loaded and the target is `up`.

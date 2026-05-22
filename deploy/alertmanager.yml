@@ -1,0 +1,25 @@
+# Alertmanager configuration for the Infinite Loop burn-in (docs/burn-in.md).
+# Loaded by the `alertmanager` service in deploy/docker-compose.observability.yml.
+#
+# The burn-in only needs to SEE alerts route and group — it does not need them
+# delivered anywhere — so the default route points at a null receiver (a
+# receiver with no notifier). Firing alerts are still visible on the
+# Alertmanager UI (http://localhost:9093) and the Prometheus Alerts page,
+# which is all Phase 3 verification requires.
+#
+# To send alerts somewhere real, add a notifier to a receiver — e.g.
+# `slack_configs:`, `email_configs:`, or `webhook_configs:` — and route to it.
+# See https://prometheus.io/docs/alerting/latest/configuration/.
+
+route:
+  receiver: 'null'
+  # Group by alert name so a burst of one alert is one notification.
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  # A receiver with no notifier config — alerts collect on the UI and go
+  # nowhere else. Replace with a real notifier for a non-burn-in deployment.
+  - name: 'null'

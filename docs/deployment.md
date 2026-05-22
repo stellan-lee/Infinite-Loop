@@ -206,6 +206,13 @@ A ready-to-load set of alerting rules covering these metrics ships at
 [configuration.md](configuration.md#metrics). When one of those alerts
 fires, [runbook.md](runbook.md) has a per-alert operator response.
 
+For a runnable local example — Prometheus already pointed at `/api/metrics`
+with the token, the alert rules loaded, and Alertmanager and a reverse proxy
+alongside — the repo ships
+[`deploy/docker-compose.observability.yml`](../deploy/docker-compose.observability.yml),
+the overlay the production [burn-in](burn-in.md) uses. Layer it on
+`docker-compose.yml`.
+
 ## Known limitation — agent providers are not in the image
 
 The image contains the **orchestrator** and the Bun runtime. It does **not**

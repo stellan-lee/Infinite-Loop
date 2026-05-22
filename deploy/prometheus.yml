@@ -1,0 +1,48 @@
+# Prometheus configuration for the Infinite Loop burn-in (docs/burn-in.md).
+# Loaded by the `prometheus` service in deploy/docker-compose.observability.yml.
+#
+# The scrape token: /api/metrics is authenticated, and Prometheus has no
+# env-var substitution in this file. The compose service's entrypoint writes
+# INFLOOP_API_TOKEN to the `credentials_file` path below before starting
+# Prometheus — see deploy/docker-compose.observability.yml.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# deploy/prometheus-alerts.yml is bind-mounted to this exact path by the
+# compose overlay. Keep the two in sync — a drifted path means the nine alert
+# rules silently never load. This is the path the alerts file's header asks
+# for, and the burn-in pre-flight audit (deploy/burn-in-preflight.test.ts)
+# checks the mount and this entry still agree.
+rule_files:
+  - /etc/prometheus/infinite-loop-alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+scrape_configs:
+  # The target the burn-in cares about. `job_name: infinite-loop` is REQUIRED —
+  # the InfiniteLoopInstanceDown rule selects `up{job="infinite-loop"}`, so a
+  # different job name leaves that rule permanently inactive.
+  - job_name: infinite-loop
+    metrics_path: /api/metrics
+    # /api/metrics is authenticated. credentials_file points at the token the
+    # compose entrypoint materializes from INFLOOP_API_TOKEN; an unauthenticated
+    # scrape gets 401 and reads as a down target, not as an error.
+    authorization:
+      type: Bearer
+      credentials_file: /run/prometheus/scrape-token
+    static_configs:
+      # `infinite-loop` is the app's service name on the compose network; 3000
+      # is the in-container port (the host only publishes it on loopback).
+      - targets: ['infinite-loop:3000']
+
+  # Prometheus scraping itself — confirms the Prometheus container is healthy
+  # independently of the app target. 127.0.0.1, not localhost: `localhost` can
+  # resolve to IPv6 ::1 while the server listens on IPv4 only.
+  - job_name: prometheus
+    static_configs:
+      - targets: ['127.0.0.1:9090']

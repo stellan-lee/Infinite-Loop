@@ -39,8 +39,8 @@ built from [`deploy/Dockerfile.providers`](deploy/Dockerfile.providers).
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 — Deploy | `pass` (local) | Two boot-blocking defects found and fixed (`c403c6a`, `43ff712`); both images build clean and the stack runs `Up (healthy)` with `claude` on PATH — verified on a local Docker host 2026-05-22. Remaining: UI behind a reverse proxy (staging host). |
-| 1 — Observability wiring | `static-pass` | Pre-flight audit 11/11 pass; live Prometheus load still to confirm. |
+| 0 — Deploy | `pass` (local) | Two boot-blocking defects found and fixed (`c403c6a`, `43ff712`); both images build clean and the stack runs `Up (healthy)` with `claude` on PATH — verified on a local Docker host 2026-05-22. The reverse proxy now ships as `deploy/docker-compose.observability.yml`, so the UI-behind-proxy check is locally reproducible; not yet run. |
+| 1 — Observability wiring | `static-pass` | Pre-flight audit 15/15 pass. Observability overlay (`deploy/docker-compose.observability.yml`) shipped and smoke-tested standalone: Prometheus boots, loads all 9 alert rules, and the alert pipeline evaluates (`InfiniteLoopInstanceDown` went `pending` against an absent target). The full pass — target `up` against the live app — is now locally reproducible; still to run. |
 | 2 — Functional pass | `pending` | Needs a staging host. |
 | 3 — Failure-injection pass | `pending` | The core of the burn-in — see the matrix below. |
 | 4 — Disaster-recovery drill | `pending` | Needs a staging host. |
@@ -88,19 +88,31 @@ reverse proxy — that is the one piece of Phase 0 left for the staging run.
 
 ### Phase 1 — Observability wiring
 
-`bun test deploy/burn-in-preflight.test.ts` — **11/11 pass** (2026-05-22).
+`bun test deploy/burn-in-preflight.test.ts` — **15/15 pass** (2026-05-22).
 
 This is the static gate `docs/burn-in.md` Phase 1 describes. It confirms that
 every alert in [`deploy/prometheus-alerts.yml`](deploy/prometheus-alerts.yml)
 references an `infloop_*` series `MetricsRegistry` actually emits, that every
 label value is one the registry really emits, that every `up{}` selector pins
 `job="infinite-loop"`, and that every alert has a one-to-one entry in
-`docs/runbook.md`.
+`docs/runbook.md`. It now also audits the observability overlay
+([`deploy/docker-compose.observability.yml`](deploy/docker-compose.observability.yml)):
+that `deploy/prometheus.yml` loads its rules from the path the overlay mounts
+them to, scrapes `/api/metrics` under `job="infinite-loop"`, and reads the
+scrape token from the file the overlay's entrypoint writes.
 
-`static-pass`: the alert ↔ metric ↔ runbook *wiring* is sound on paper. This
-is a name/label check, not a behavioural one — Phase 1 still needs a live
-Prometheus to confirm all nine rules load in the `inactive` state and the
-target reads `up`.
+The overlay was also smoke-tested standalone on a local Docker host
+(2026-05-22): `promtool`, `amtool`, and `nginx -t` all pass on the shipped
+configs; Prometheus boots, loads all nine alert rules into one `infinite-loop`
+group, and the alert pipeline evaluates — `InfiniteLoopInstanceDown` correctly
+went `pending` against an absent target. Alertmanager and the nginx proxy come
+up `healthy`, and the proxy forwards to the app upstream.
+
+`static-pass`: the alert ↔ metric ↔ runbook wiring is sound and the overlay
+provably boots, but the full pass — `up{job="infinite-loop"}` reading `1`
+against the live app with the real token — has not been run end to end. That
+is now locally reproducible (bring the whole stack up per Phase 0); it no
+longer needs a remote host.
 
 ### Phase 2 — Functional pass
 
@@ -151,9 +163,15 @@ watch that the gauges return to baseline between runs, RSS stays flat, and
 
 ### Outstanding / decisions before production
 
-1. **Phases 2–5 are operator-gated.** They need a staging host, a
-   Prometheus + Alertmanager pair, a reverse proxy, and a 24–72h soak
-   window. They cannot be run from CI or a developer machine.
+1. **Most of Phases 1–4 are now locally reproducible.** The observability
+   overlay (`deploy/docker-compose.observability.yml`) stands up Prometheus,
+   Alertmanager, and a reverse proxy on a developer machine, so Phase 1
+   (live rule load), Phase 2 (functional pass), Phase 3 (failure injection —
+   all `docker`/`chmod`/config operations), and Phase 4 (DR drill) no longer
+   need a remote host. The genuinely operator-gated remainder is Phase 5's
+   24–72h soak window, plus one final pass on a real remote host before
+   go-live to catch host-specific reality (TLS, the real proxy, real
+   network).
 2. **The runbook is authored but unproven.** Every entry in
    `docs/runbook.md` exists, but none has been operator-tested. Phase 3 is
    the one chance to validate the *response*, not just the detection —

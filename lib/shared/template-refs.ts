@@ -35,21 +35,9 @@ export interface TemplateRef {
   kind: 'node' | 'global' | 'inputs';
 }
 
-/**
- * The single `{{ … }}` matcher — imported by both this lint module and the
- * runtime resolver (lib/server/templating.ts) so the two can never drift.
- * Global, so it can scan a whole templated string.
- *
- *   - group 1: the `nodeId.field` ref the user wrote.
- *   - group 2: the optional `| default …` fallback text. Literal, may
- *     contain spaces, cannot contain `}`; trimmed of surrounding
- *     whitespace. `undefined` when there is no `| default` clause.
- *
- * `default` must be followed by whitespace, so a node/field literally
- * named `default` (e.g. `{{run.default}}`) is unaffected.
- */
-export const TEMPLATE_REF_RE =
-  /\{\{\s*([\w.-]+)\s*(?:\|\s*default\s+([^}]*?)\s*)?\}\}/g;
+/** Same shape as the runtime regex in lib/server/templating.ts. Anchored
+ * so we can match across a whole templated string. */
+export const TEMPLATE_REF_RE = /\{\{\s*([\w.-]+)\s*\}\}/g;
 
 /** Static output schema per node type. Container nodes are listed even
  * though their executor returns no scope, because we still want to filter
@@ -399,16 +387,6 @@ function classifyRef(
   return null;
 }
 
-/** Lint reasons that always indicate a genuine authoring mistake — a
- * typo'd node id, a field that doesn't exist on it, or a node referencing
- * itself. A `| default` clause never excuses these: the fallback would
- * just silently mask the bug at run time. The remaining reasons
- * (out-of-scope / missing-global / missing-input) describe a value that
- * may *legitimately* be absent, which is exactly what a default is for —
- * so a default suppresses those. */
-const STRUCTURAL_LINT_REASONS: ReadonlySet<TemplateLintWarning['reason']> =
-  new Set(['unknown', 'missing-field', 'self-ref']);
-
 /** Scan a single string for `{{...}}` refs and classify each against the
  * workflow's known refs. Exported so the autocomplete UI can show
  * inline warnings per field without re-implementing the parse. */
@@ -426,14 +404,10 @@ export function lintField(
   let m: RegExpExecArray | null;
   while ((m = re.exec(raw)) !== null) {
     const ref = m[1];
-    const hasDefault = m[2] !== undefined;
     const reason = classifyRef(workflow, selfId, ref);
-    if (reason === null) continue;
-    // A `{{ ref | default … }}` tolerates an absent value at run time, so
-    // suppress the "might legitimately be missing" warnings — but still
-    // surface a typo'd ref, which the default would otherwise hide.
-    if (hasDefault && !STRUCTURAL_LINT_REASONS.has(reason)) continue;
-    out.push({ nodeId: selfId, field: fieldPath, ref, reason });
+    if (reason !== null) {
+      out.push({ nodeId: selfId, field: fieldPath, ref, reason });
+    }
   }
   return out;
 }

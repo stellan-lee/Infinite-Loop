@@ -297,71 +297,6 @@ describe('lintField — workflow inputs', () => {
   });
 });
 
-describe('lintField — | default clause', () => {
-  it('suppresses out-of-scope when the ref has a default', () => {
-    // claude-1 → script-1 is downstream, normally out-of-scope.
-    const warnings = lintField(
-      baseWorkflow,
-      'claude-1',
-      'prompt',
-      '{{script-1.greeting | default none}}',
-    );
-    expect(warnings).toEqual([]);
-  });
-
-  it('suppresses missing-global when the ref has a default', () => {
-    const wf: Workflow = { ...baseWorkflow, globals: { API_URL: 'https://x' } };
-    const warnings = lintField(
-      wf,
-      'claude-1',
-      'prompt',
-      '{{globals.MISSING | default https://fallback}}',
-    );
-    expect(warnings).toEqual([]);
-  });
-
-  it('suppresses missing-input when the ref has a default', () => {
-    const wf: Workflow = { ...baseWorkflow, inputs: [{ name: 'topic', type: 'string' }] };
-    const warnings = lintField(
-      wf,
-      'claude-1',
-      'prompt',
-      '{{inputs.unknown | default placeholder}}',
-    );
-    expect(warnings).toEqual([]);
-  });
-
-  it('still flags an unknown node even with a default', () => {
-    const warnings = lintField(
-      baseWorkflow,
-      'script-1',
-      'inputs.arg1',
-      '{{ghost-node.stdout | default x}}',
-    );
-    expect(warnings.map((w) => w.reason)).toEqual(['unknown']);
-  });
-
-  it('still flags a missing field even with a default', () => {
-    const warnings = lintField(
-      baseWorkflow,
-      'script-1',
-      'inputs.arg1',
-      '{{claude-1.notarealfield | default x}}',
-    );
-    expect(warnings.map((w) => w.reason)).toEqual(['missing-field']);
-  });
-
-  it('still flags a self-reference even with a default', () => {
-    const warnings = lintField(
-      baseWorkflow,
-      'script-1',
-      'inputs.arg1',
-      '{{script-1.greeting | default x}}',
-    );
-    expect(warnings.map((w) => w.reason)).toEqual(['self-ref']);
-  });
-});
-
 describe('findTemplateSlot', () => {
   it('returns the slot when caret sits inside open braces', () => {
     // Text: "hello {{x.y}} world", caret right after "{{"
@@ -381,27 +316,5 @@ describe('findTemplateSlot', () => {
   it('returns null when the caret is outside any braces', () => {
     expect(findTemplateSlot('plain text', 4)).toBeNull();
     expect(findTemplateSlot('{{x.y}} done', 11)).toBeNull();
-  });
-
-  it('clamps the slot to the ref name when a | default clause follows', () => {
-    // "{{ cla | default x }}", caret right after "cla" (index 6).
-    const text = '{{ cla | default x }}';
-    const slot = findTemplateSlot(text, 6);
-    expect(slot).not.toBeNull();
-    expect(slot!.prefix).toBe('cla');
-    // innerEnd stops at the pipe so a pick keeps "| default x" intact.
-    expect(text[slot!.innerEnd]).toBe('|');
-    expect(slot!.hasClose).toBe(true);
-  });
-
-  it('closes the picker once the caret crosses into the default text', () => {
-    // Same text; caret sits inside "default x".
-    expect(findTemplateSlot('{{ cla | default x }}', 14)).toBeNull();
-  });
-
-  it('yields no slot for an unclosed placeholder that already has a |', () => {
-    // "{{cl | default x" — no closing "}}". A picked ref would have
-    // nowhere correct to place its closer, so the picker stays dormant.
-    expect(findTemplateSlot('{{cl | default x', 4)).toBeNull();
   });
 });

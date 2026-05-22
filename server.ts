@@ -1,3 +1,7 @@
+// This server must be launched with a Bun `--preload` of
+// lib/server/async-local-storage-global.ts — without it Next 16's App Router
+// crash-loops the process on the first request. Every launch command wires it
+// in; see that module for why a plain import here would be too late.
 import { createServer } from 'http';
 import { networkInterfaces } from 'node:os';
 import next from 'next';

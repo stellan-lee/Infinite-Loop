@@ -93,7 +93,8 @@ export interface ServerHandle {
   output(): string;
 }
 
-/** Spawn `bun server.ts` with the given env. Requires `.next` to already exist. */
+/** Spawn the `server.ts` process with the given env. Requires `.next` to
+ *  already exist. */
 export function spawnServer(env: Record<string, string>): ServerHandle {
   if (!existsSync(path.join(REPO_ROOT, '.next'))) {
     throw new Error(
@@ -102,11 +103,17 @@ export function spawnServer(env: Record<string, string>): ServerHandle {
     );
   }
   const port = Number(env.PORT);
-  const proc = spawn('bun', ['server.ts'], {
-    cwd: REPO_ROOT,
-    env: { ...process.env, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  // --preload matches the Dockerfile CMD so this server boots like production.
+  // See lib/server/async-local-storage-global.ts.
+  const proc = spawn(
+    'bun',
+    ['--preload', './lib/server/async-local-storage-global.ts', 'server.ts'],
+    {
+      cwd: REPO_ROOT,
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  );
   let buf = '';
   const capture = (chunk: Buffer): void => {
     buf = (buf + chunk.toString()).slice(-4000);

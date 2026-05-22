@@ -43,7 +43,9 @@ export default defineConfig({
   webServer: {
     // Build, then start the real production artifact. The build also populates
     // `.next` for the crash-recovery spec, which spawns its own server.
-    command: 'next build && bun server.ts',
+    // --preload matches the Dockerfile CMD — see lib/server/async-local-storage-global.ts.
+    command:
+      'next build && bun --preload ./lib/server/async-local-storage-global.ts server.ts',
     url: `http://127.0.0.1:${PORT}/api/health`,
     timeout: 240_000,
     reuseExistingServer: !isCI,

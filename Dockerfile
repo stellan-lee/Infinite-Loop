@@ -105,4 +105,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD ["bun", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
-CMD ["bun", "server.ts"]
+# `--preload` sets globalThis.AsyncLocalStorage before server.ts (and Next's
+# App Router internals) are evaluated. Without it Next 16 falls back to a
+# throwing AsyncLocalStorage stub and the container crash-loops on the first
+# request. See lib/server/async-local-storage-global.ts.
+CMD ["bun", "--preload", "./lib/server/async-local-storage-global.ts", "server.ts"]

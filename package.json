@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun server.ts",
+    "dev": "bun --preload ./lib/server/async-local-storage-global.ts server.ts",
     "build": "next build",
-    "start": "NODE_ENV=production bun server.ts",
+    "start": "NODE_ENV=production bun --preload ./lib/server/async-local-storage-global.ts server.ts",
     "backup": "bun scripts/backup.ts",
     "restore": "bun scripts/restore.ts",
     "test": "bun test",

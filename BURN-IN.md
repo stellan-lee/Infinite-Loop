@@ -128,9 +128,10 @@ Verified live against the running app:
       scraping `http://infinite-loop:3000/api/metrics`.
 - [x] `up{job="infinite-loop"}` evaluates to `1`.
 - [x] All **nine** alert rules from `deploy/prometheus-alerts.yml` are loaded
-      in one `infinite-loop` group, state `inactive`. (A tenth rule,
-      `InfiniteLoopDataDirNotWritable`, was added after Run 1 closing item 4
-      under *Outstanding* below — Run 2 verifies all ten.)
+      in one `infinite-loop` group, state `inactive`. (Two more rules —
+      `InfiniteLoopDataDirNotWritable` and `InfiniteLoopBackupStale` — have
+      been added since Run 1; the alert set is now **eleven**, and Run 2
+      verifies all eleven. See *Outstanding* item 4 below.)
 - [x] 19 `infloop_*` series are queryable.
 
 This upgrades the previous run's `static-pass` to a live `pass`.
@@ -230,8 +231,9 @@ ratchet, RSS leak. The soak now needs only the wall-clock window.
    exposes an `infloop_data_dir_writable` gauge (1/0), probed live at scrape
    time from the same check `/api/health` uses, and
    `InfiniteLoopDataDirNotWritable` (critical, `for: 2m`) alerts on it. The
-   alert set is now ten rules. Re-verify in Run 2 that the alert actually
-   transitions to `firing` when the data directory is made unwritable.
+   alert set is now eleven rules (`InfiniteLoopBackupStale` was added later
+   still). Re-verify in Run 2 that the alert actually transitions to `firing`
+   when the data directory is made unwritable.
 5. **Runbook operator-testing.** Detection is validated for every alert that
    fired; the operator *response* procedures in `docs/runbook.md` were
    reviewed against observed behaviour but not separately executed. Walk each
@@ -243,3 +245,8 @@ Per `docs/burn-in.md`, re-run the whole burn-in after any change to the
 deployment shape, and open a new `## Run N` section here. This commit changes
 `docker-compose.yml` (defect 3) and the image (defects 1, 2, 4) — the next
 run is the remote-host pass that closes items 1–3 and 5 above.
+
+The pre-flight plan for that run — host sizing, the two `.env` profiles, the
+soak load/observer invocation, the verdict checklist, and the abort criteria —
+is [`docs/burn-in-run2-plan.md`](docs/burn-in-run2-plan.md), so Run 2 can
+start the moment a host and credentials exist.

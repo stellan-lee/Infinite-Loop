@@ -449,12 +449,23 @@ export async function restoreBackup(
     }
   }
 
+  // When the archive lives inside the data directory — exactly what the
+  // documented Docker restore does (`docker compose cp ./backup.tar.gz
+  // infinite-loop:/data/backup.tar.gz`) — the move-aside above relocated the
+  // archive itself into `movedAsideTo`. Extract from its new location so
+  // `tar` can still read it; otherwise the documented procedure fails with
+  // "Cannot open" (caught by the production burn-in).
+  let effectiveArchive = archivePath;
+  if (movedAsideTo && isInside(root, archivePath)) {
+    effectiveArchive = path.join(movedAsideTo, path.relative(root, archivePath));
+  }
+
   // Extract over the data dir. After a move-aside the dir holds only the new
   // `.pre-restore-*` directory, so this overlays nothing; with an empty data
   // dir it is a clean write. (It does not delete files the archive omits — a
   // non-empty restore always goes through the move-aside path above.)
   await fs.mkdir(root, { recursive: true });
-  await runTar(['-x', '-z', '-f', archivePath, '-C', root]);
+  await runTar(['-x', '-z', '-f', effectiveArchive, '-C', root]);
 
   // The manifest extracts into the data dir as a provenance record; the
   // store scans ignore it. `.pre-restore-*` is excluded from the count.

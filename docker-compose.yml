@@ -95,6 +95,21 @@ services:
       # in-flight run is aborted at its next costed node. `0` (default)
       # disables it. See docs/configuration.md.
       INFLOOP_MAX_TOTAL_COST_USD: ${INFLOOP_MAX_TOTAL_COST_USD:-0}
+      # Optional operator knobs. Every one is documented in .env.example and
+      # read by the app, but a container only sees what is listed here — so
+      # without these lines a value set in .env was silently ignored (caught
+      # by the production burn-in). Each is passed through empty when unset in
+      # .env; the app then applies its documented default. Run-level and
+      # webhook/login safety ceilings, plus concurrency and the in-memory
+      # event-buffer cap. See docs/configuration.md.
+      INFLOOP_MAX_CONCURRENT_RUNS: ${INFLOOP_MAX_CONCURRENT_RUNS:-}
+      INFLOOP_MAX_TOTAL_EVENT_BUFFER: ${INFLOOP_MAX_TOTAL_EVENT_BUFFER:-}
+      INFLOOP_MAX_RUN_NODE_EXECUTIONS: ${INFLOOP_MAX_RUN_NODE_EXECUTIONS:-}
+      INFLOOP_MAX_RUN_DURATION_MS: ${INFLOOP_MAX_RUN_DURATION_MS:-}
+      INFLOOP_MAX_RUN_COST_USD: ${INFLOOP_MAX_RUN_COST_USD:-}
+      INFLOOP_WEBHOOK_RATE_LIMIT: ${INFLOOP_WEBHOOK_RATE_LIMIT:-}
+      INFLOOP_LOGIN_RATE_LIMIT: ${INFLOOP_LOGIN_RATE_LIMIT:-}
+      INFLOOP_EGRESS_ENFORCE: ${INFLOOP_EGRESS_ENFORCE:-}
 
     volumes:
       # All persistent state (run history, saved workflows, triggers,

@@ -374,7 +374,13 @@ export class RunController {
       seedScope.globals = { ...workflow.globals };
     }
     if (opts?.resolvedInputs && typeof opts.resolvedInputs === 'object') {
+      // Caller-supplied inputs are reachable as both `inputs` and `__inputs`,
+      // mirroring the subworkflow child scope (see runSubworkflow). The docs
+      // (docs/workflow-format.md) and the shipped library presets reference
+      // `{{__inputs.NAME}}`; a top-level run that seeded only `inputs` left
+      // those templates unresolved (caught by the production burn-in).
       seedScope.inputs = { ...opts.resolvedInputs };
+      seedScope.__inputs = { ...opts.resolvedInputs };
     }
     this.snapshot = {
       status: 'running',

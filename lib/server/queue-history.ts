@@ -88,9 +88,12 @@ export function subscribeQueueHistory(
       });
     } else if (ev.type === 'trigger_dropped') {
       const prev = history.get(ev.queueId);
-      // trigger_dropped is always preceded by trigger_enqueued (the queue
-      // emits dropped only from drain()). If `prev` is missing the history
-      // wasn't wired in time — skip instead of fabricating a workflowId.
+      // A `trigger_dropped` from drain() (workflow-deleted / engine-start-
+      // failed) is preceded by a `trigger_enqueued`. A `queue-full` drop is
+      // emitted by enqueue() for an item that was never admitted to the queue,
+      // so it legitimately has no prior history. Either way, with no `prev`
+      // there is nothing to transition — skip instead of fabricating a
+      // workflowId.
       if (!prev) return;
       history.set({
         ...prev,

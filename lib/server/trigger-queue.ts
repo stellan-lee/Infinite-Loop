@@ -115,6 +115,21 @@ export class TriggerQueue {
     item: Omit<QueuedRun, 'queueId' | 'correlationId'> & { correlationId?: string },
   ): { queueId: string; position: number; correlationId: string } {
     if (this.q.length >= this.maxQueue) {
+      // The queue is at its cap — this item is shed before it ever enters the
+      // queue. Emit `trigger_dropped{reason:"queue-full"}` so the shed is
+      // counted in `infloop_queue_dropped_total` and the
+      // `InfiniteLoopTriggerQueueDropping` alert can fire. Without this emit
+      // the queue-full counter sat permanently at 0 (caught by the production
+      // burn-in). There is no real queueId — the item was never queued — so a
+      // synthetic one is used: the metrics registry keys only on `reason`, and
+      // queue-history skips a dropped event with no matching `trigger_enqueued`.
+      eventBus.emit({
+        type: 'trigger_dropped',
+        queueId: `rejected-${Date.now()}-${++this.nextId}`,
+        triggerId: item.triggerId,
+        correlationId: item.correlationId,
+        reason: 'queue-full',
+      });
       const err = new Error('trigger queue is full');
       (err as Error & { code?: string }).code = 'QUEUE_FULL';
       throw err;

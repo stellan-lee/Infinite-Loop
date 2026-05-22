@@ -173,6 +173,38 @@ describe('TriggerQueue', () => {
     ).toThrow(/queue.*full|cap/i);
   });
 
+  test('enqueue at cap emits trigger_dropped{reason:queue-full}', () => {
+    // Regression: the queue-full shed must emit `trigger_dropped` so
+    // `infloop_queue_dropped_total{reason="queue-full"}` increments and
+    // `InfiniteLoopTriggerQueueDropping` can fire. The counter sat at 0
+    // before this emit was wired (found by the production burn-in).
+    for (let i = 0; i < 3; i++) {
+      q.enqueue({
+        workflow: fakeWorkflow('w'), resolvedInputs: {},
+        triggerId: 't', receivedAt: i,
+      });
+    }
+    const captured: WorkflowEvent[] = [];
+    const unsub = eventBus.subscribe((e) => captured.push(e));
+    try {
+      expect(() =>
+        q.enqueue({
+          workflow: fakeWorkflow('w'), resolvedInputs: {},
+          triggerId: 't-rejected', correlationId: 'cid-full', receivedAt: 99,
+        }),
+      ).toThrow(/queue.*full|cap/i);
+    } finally {
+      unsub();
+    }
+    const dropped = captured.filter((e) => e.type === 'trigger_dropped');
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]).toMatchObject({
+      reason: 'queue-full',
+      triggerId: 't-rejected',
+      correlationId: 'cid-full',
+    });
+  });
+
   test('FIFO order', async () => {
     q.enqueue({
       workflow: fakeWorkflow('a'), resolvedInputs: {},

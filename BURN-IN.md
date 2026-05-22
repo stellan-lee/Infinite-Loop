@@ -30,130 +30,159 @@ instead of accumulating one run's state.
 
 ---
 
-## Run 1 — started 2026-05-22
+## Run 1 — 2026-05-22
 
-First burn-in run. Target: a staging deployment of the provider-overlay image
-built from [`deploy/Dockerfile.providers`](deploy/Dockerfile.providers).
+First burn-in run, driven end to end on a local Docker host (Docker Desktop
+29.3.1, `desktop-linux`, macOS) against the provider-overlay image built from
+[`deploy/Dockerfile.providers`](deploy/Dockerfile.providers), with the
+observability + proxy overlay
+([`deploy/docker-compose.observability.yml`](deploy/docker-compose.observability.yml))
+layered on. Phases 0–4 were driven to completion; Phase 5 (the 24–72h soak)
+and the final remote-host pass remain.
+
+**The burn-in did its job: it found four real defects that every green test
+missed.** All four are fixed in this same commit, and the burn-in image was
+rebuilt after each fix so the later phases ran on the corrected code — the
+same find → fix → re-run loop Phase 0 established in the previous run
+(`c403c6a`, `43ff712`). See **Defects found & fixed** below.
 
 ### Sign-off checklist
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 — Deploy | `pass` (local) | Two boot-blocking defects found and fixed (`c403c6a`, `43ff712`); both images build clean and the stack runs `Up (healthy)` with `claude` on PATH — verified on a local Docker host 2026-05-22. The reverse proxy now ships as `deploy/docker-compose.observability.yml`, so the UI-behind-proxy check is locally reproducible; not yet run. |
-| 1 — Observability wiring | `static-pass` | Pre-flight audit 15/15 pass. Observability overlay (`deploy/docker-compose.observability.yml`) shipped and smoke-tested standalone: Prometheus boots, loads all 9 alert rules, and the alert pipeline evaluates (`InfiniteLoopInstanceDown` went `pending` against an absent target). The full pass — target `up` against the live app — is now locally reproducible; still to run. |
-| 2 — Functional pass | `pending` | Needs a staging host. |
-| 3 — Failure-injection pass | `pending` | The core of the burn-in — see the matrix below. |
-| 4 — Disaster-recovery drill | `pending` | Needs a staging host. |
+| 0 — Deploy | `pass` | All four services `Up (healthy)`; `claude` 2.1.141 on PATH; UI loads through the nginx reverse proxy at `:8080`, redirects to `/login`, and accepts the API token. |
+| 1 — Observability wiring | `pass` | Prometheus `infinite-loop` target `up`; `up{job="infinite-loop"}=1`; all nine alert rules loaded `inactive`; 19 `infloop_*` series queryable. |
+| 2 — Functional pass | `pass` | UI/API, webhook (generic + HMAC-signed), and MCP each enqueued → executed → persisted → audited a run end to end; correlation id threads the whole chain; SSE streams live events. |
+| 3 — Failure-injection pass | `pass` (7/9) | 7 of 9 faults verified; 5 alerts observed `firing` and reaching Alertmanager. 3.3 (cost) and 3.6 (slot pool) are blocked on provider credentials — see the matrix. |
+| 4 — Disaster-recovery drill | `pass` | Backup → inspect → `down -v` (volume destroyed) → restore via the documented Docker procedure → state verified bit-for-bit intact. |
 | 5 — Soak (24–72h) | `pending` | Needs an unattended soak window. |
-| `runbook.md` operator-tested | `pending` | Every entry is authored; none is operator-validated yet. |
+| `runbook.md` operator-tested | `partial` | Detection verified for every alert that fired (3.2, 3.4, 3.7, 3.8, 3.9) and for the unwritable-data-dir case (3.5); the operator *response* steps were reviewed against observed behaviour but not separately executed end to end. |
+
+### Defects found & fixed (all in this commit)
+
+1. **`{{__inputs.*}}` unresolved in top-level runs** — `run-controller.ts`
+   `start()` seeded the run scope with `inputs` only; the subworkflow path
+   seeds both `inputs` and `__inputs`. Every `{{__inputs.NAME}}` reference —
+   the form `docs/workflow-format.md` documents and the shipped
+   `workflows/library/team.json` preset uses — resolved to empty with a
+   `template_warning`. Surfaced in Phase 2 (the burn-in driver workflow's
+   inputs arrived blank). Fixed by seeding `__inputs` alongside `inputs`.
+2. **`queue-full` queue drops never counted** —
+   `infloop_queue_dropped_total{reason="queue-full"}` is driven by
+   `trigger_dropped` bus events, but `TriggerQueue.enqueue()` threw
+   `QUEUE_FULL` without emitting one. The counter sat permanently at `0`, so
+   `InfiniteLoopTriggerQueueDropping` could never fire for the most common,
+   most important drop reason. A unit test asserted the *handler* counts the
+   event; nothing asserted the event is ever *emitted*. Surfaced in Phase 3.2.
+   Fixed by emitting `trigger_dropped{reason:"queue-full"}` from `enqueue()`.
+3. **Most `.env` knobs silently ignored by the Docker deployment** —
+   `docker-compose.yml`'s `environment:` block forwarded only a subset of the
+   app's config vars. `INFLOOP_WEBHOOK_RATE_LIMIT`,
+   `INFLOOP_MAX_CONCURRENT_RUNS`, `INFLOOP_MAX_TOTAL_EVENT_BUFFER`,
+   `INFLOOP_MAX_RUN_DURATION_MS`, `INFLOOP_MAX_RUN_COST_USD`,
+   `INFLOOP_LOGIN_RATE_LIMIT` and `INFLOOP_EGRESS_ENFORCE` set in `.env` never
+   reached the container — the app silently used built-in defaults. The
+   compose file even told operators to "tune `INFLOOP_MAX_CONCURRENT_RUNS`"
+   while providing no way to set it. For a product whose safety story is
+   unattended operation with these very knobs, a silent config no-op is
+   serious. Surfaced when reconfiguring for Phase 3. Fixed by forwarding the
+   documented operator knobs in `environment:`. `INFLOOP_MAX_RUN_NODE_EXECUTIONS`
+   — a run-level safety ceiling that was missing from `.env.example` as well —
+   was added to both, so the run-level ceiling family is now complete.
+4. **Documented Docker restore procedure broken** — `restoreBackup()` moves
+   the data directory's contents aside before extracting; when the archive
+   lives *inside* the data directory — exactly what
+   `docs/backup-restore.md`'s Docker procedure does
+   (`docker compose cp ./backup.tar.gz infinite-loop:/data/backup.tar.gz`) —
+   the move-aside relocated the archive itself, and `tar` then failed with
+   "Cannot open: No such file or directory". The documented disaster-recovery
+   restore did not work. Surfaced in Phase 4. Fixed by extracting from the
+   archive's post-move-aside location.
+
+Regression tests were added for defects 2 and 4
+(`trigger-queue.test.ts`, `backup.test.ts`). Full suite after the fixes:
+**804 pass, 1 skip, 0 fail**.
 
 ### Phase 0 — Deploy
 
-The burn-in did its job immediately: Phase 0 alone — "deploy and confirm
-healthy" — surfaced **two boot-blocking defects that every green test had
-missed**, both now fixed and merged to `main`:
+Built `infinite-loop:local` and the provider overlay `infinite-loop:burn-in`;
+brought up the full stack (base + burn-in + observability overlays). Verified:
 
-- `c403c6a` — the container crash-looped on the first request: Next 16 fell
-  back to a throwing `AsyncLocalStorage` stub. Fixed by preloading
-  `globalThis.AsyncLocalStorage` (`bun --preload`) before `server.ts`.
-- `43ff712` — the base image ships no provider CLI, so the cost and
-  run-failure phases had nothing to run. Fixed by shipping
-  `deploy/Dockerfile.providers`, an overlay that bakes the `claude` CLI onto
-  the base image.
-
-Verified on a local Docker host (2026-05-22):
-
-- [x] `docker compose build` — the base image `infinite-loop:local` builds
-      clean.
-- [x] The burn-in overlay builds clean as `infinite-loop:burn-in`; its
-      build-time `claude --version` smoke test reported version
-      `2.1.141 (Claude Code)`, so the CLI resolves for the unprivileged
-      `bun` user.
-- [x] The burn-in compose override brings the stack up
-      (`up -d` against `docker-compose.yml` + `deploy/docker-compose.burn-in.yml`).
-- [x] `docker compose ps` shows `Up (healthy)`; `/api/health` returns
-      `{"status":"ok"}`.
-- [x] `docker compose exec infinite-loop which claude` resolves to
-      `/usr/local/bin/claude`.
-
-Still to confirm on the staging host:
-
-- [ ] The UI loads behind the reverse proxy and accepts the token at the
-      login page. This needs the proxy the deployment requires for
-      non-loopback exposure and is not reproducible on a local Docker host.
-
-The two boot fixes hold: the provider-overlay container boots and stays
-`(healthy)` with the provider CLI on PATH. The local run cannot exercise the
-reverse proxy — that is the one piece of Phase 0 left for the staging run.
+- [x] `docker compose ps` — all four services (`infinite-loop`, `prometheus`,
+      `alertmanager`, `proxy`) `Up (healthy)`.
+- [x] `docker compose exec infinite-loop which claude` → `/usr/local/bin/claude`;
+      `claude --version` → `2.1.141 (Claude Code)`.
+- [x] `/api/health` → `{"status":"ok"}`.
+- [x] The UI loads through the nginx reverse proxy at `http://localhost:8080`:
+      `/` → `307` redirect to `/login`, the login page renders, a wrong token
+      → `401`, the real token via `POST /api/auth` → `200` and an
+      authenticated `/api/runs` → `200`. **This closes the one Phase 0 box the
+      previous run left open** (UI-behind-proxy was not locally reproducible
+      before the observability overlay shipped).
 
 ### Phase 1 — Observability wiring
 
-`bun test deploy/burn-in-preflight.test.ts` — **15/15 pass** (2026-05-22).
+Verified live against the running app:
 
-This is the static gate `docs/burn-in.md` Phase 1 describes. It confirms that
-every alert in [`deploy/prometheus-alerts.yml`](deploy/prometheus-alerts.yml)
-references an `infloop_*` series `MetricsRegistry` actually emits, that every
-label value is one the registry really emits, that every `up{}` selector pins
-`job="infinite-loop"`, and that every alert has a one-to-one entry in
-`docs/runbook.md`. It now also audits the observability overlay
-([`deploy/docker-compose.observability.yml`](deploy/docker-compose.observability.yml)):
-that `deploy/prometheus.yml` loads its rules from the path the overlay mounts
-them to, scrapes `/api/metrics` under `job="infinite-loop"`, and reads the
-scrape token from the file the overlay's entrypoint writes.
+- [x] Prometheus **Status → Targets**: the `infinite-loop` target is `up`,
+      scraping `http://infinite-loop:3000/api/metrics`.
+- [x] `up{job="infinite-loop"}` evaluates to `1`.
+- [x] All **nine** alert rules from `deploy/prometheus-alerts.yml` are loaded
+      in one `infinite-loop` group, state `inactive`.
+- [x] 19 `infloop_*` series are queryable.
 
-The overlay was also smoke-tested standalone on a local Docker host
-(2026-05-22): `promtool`, `amtool`, and `nginx -t` all pass on the shipped
-configs; Prometheus boots, loads all nine alert rules into one `infinite-loop`
-group, and the alert pipeline evaluates — `InfiniteLoopInstanceDown` correctly
-went `pending` against an absent target. Alertmanager and the nginx proxy come
-up `healthy`, and the proxy forwards to the app upstream.
-
-`static-pass`: the alert ↔ metric ↔ runbook wiring is sound and the overlay
-provably boots, but the full pass — `up{job="infinite-loop"}` reading `1`
-against the live app with the real token — has not been run end to end. That
-is now locally reproducible (bring the whole stack up per Phase 0); it no
-longer needs a remote host.
+This upgrades the previous run's `static-pass` to a live `pass`.
 
 ### Phase 2 — Functional pass
 
-`pending` — needs a staging host. Confirm the UI, webhook, and MCP ingress
-surfaces each enqueue, stream, persist, and audit a run end to end.
+| Surface | Observed | Result |
+|---|---|---|
+| UI / API | `POST /api/run` → `202`; run executed; `succeeded` in history; SSE `/api/events` streamed `run_started` / `node_started` / `stdout_chunk` / `node_finished` / `run_finished`; audit `run started` + `run finished`. | `pass` |
+| Webhook | `POST /api/webhook/<triggerId>` (generic plugin) → `202 queued`; run executed `succeeded`; audit `webhook accepted` → `run started/finished`, all sharing one correlation id. A second trigger on the HMAC-signed `frogo` plugin: a correctly-signed delivery → `202`; a bad signature → `401 bad-signature` + audit `webhook rejected (bad-signature)`. | `pass` |
+| MCP | `POST /api/mcp` `tools/list` exposed the per-workflow tool; `tools/call` enqueued; run executed `succeeded` with the returned correlation id. | `pass` |
+
+`{{__inputs.*}}` templating was confirmed working after defect 1 was fixed —
+the run scope carries both `inputs` and `__inputs`, no `template_warning`.
 
 ### Phase 3 — Failure-injection pass
 
-`pending` — the core of the burn-in. These safety controls exist *only* for
-unattended operation and have never been exercised on the real provider
-image. For each fault, record the behaviour observed, whether the alert
-fired, and whether the matching `docs/runbook.md` entry held up when followed
-end to end.
+Driven on the burn-in image with defects 1–3 fixed. Five distinct alerts were
+observed transitioning to `firing`, and all firing alerts reached
+Alertmanager (`prometheus → alertmanager` routing confirmed).
 
-| # | Fault injected | Behaviour observed | Alert fired | Runbook entry validated |
+| # | Fault injected | Behaviour observed | Alert fired | Runbook entry |
 |---|---|---|---|---|
-| 3.1 | `kill -9` mid-run | _pending_ | _pending_ | `InfiniteLoopInstanceDown` (crash-loop backstop) |
-| 3.2 | Flood trigger queue past the 100-run cap | _pending_ | _pending_ | `InfiniteLoopTriggerQueueDropping`, `InfiniteLoopTriggerQueueBacklog` |
-| 3.3 | Exceed `INFLOOP_MAX_TOTAL_COST_USD` | _pending_ | _pending_ | `InfiniteLoopCostBudgetNearLimit`, `InfiniteLoopCostBudgetExhausted` |
-| 3.4 | Hammer one trigger past `INFLOOP_WEBHOOK_RATE_LIMIT` | _pending_ | _pending_ | `InfiniteLoopWebhookErrorRate` |
-| 3.5 | Make the data directory unwritable | _pending_ | n/a — no alert *by design* | "Data directory not writable" |
-| 3.6 | Push more concurrent runs than execution slots | _pending_ | _pending_ | `InfiniteLoopSlotPoolSaturated` |
-| 3.7 | Run event-heavy workflows past `INFLOOP_MAX_TOTAL_EVENT_BUFFER` | _pending_ | _pending_ | `InfiniteLoopEventBufferNearLimit` |
-| 3.8 | Force repeated run failures (>5, >50% of settled runs) | _pending_ | _pending_ | `InfiniteLoopHighRunFailureRate` |
-| 3.9 | Stop the container and leave it down past 2m | _pending_ | _pending_ | `InfiniteLoopInstanceDown` |
+| 3.1 | `kill -9` mid-run | Interrupted run reconciled to `failed` in history with audit `run finished (reason: crash-recovered)`; `infloop_process_uptime_seconds` reset. The `restart: unless-stopped` policy **does** restart on a real process crash (`RestartCount` incremented, container back `healthy`); a `docker kill -s KILL` did **not** auto-restart on this Docker Desktop / macOS host — a host runtime quirk, not a repo defect (the compose policy is correct, and the realistic crash path works). | n/a — restart is faster than the 2m `for:` | crash-recovery validated |
+| 3.2 | Flood the trigger queue past the 100-run cap (350 concurrent MCP enqueues) | 254 enqueued, the rest shed; `infloop_queue_dropped_total{reason="queue-full"}` climbed to 295 (**stuck at 0 before defect 2 was fixed**). | `InfiniteLoopTriggerQueueDropping` — **firing** (71 scrapes) | dropping validated |
+| 3.3 | Exceed `INFLOOP_MAX_TOTAL_COST_USD` | **Not verified** — the image ships the `claude` CLI but has no Anthropic credentials; costed runs need real provider auth and real spend, which was not incurred. | not observed | — |
+| 3.4 | Hammer one webhook past `INFLOOP_WEBHOOK_RATE_LIMIT` (set to 20/min) | Burst of 80 → 20 accepted, 60 × `429`; repeated over the window; `infloop_webhook_requests_total{outcome="rejected"}` climbed. | `InfiniteLoopWebhookErrorRate` — **firing** | validated |
+| 3.5 | Make the data directory unwritable (`chmod 0555 /data`) | `/api/health` → `503 {status:"degraded","error":"data directory is not writable"}`; the Docker healthcheck flipped the container `unhealthy` (~80s); `/api/metrics` kept scraping `200`. | **No Prometheus alert — confirmed by design**; the Docker healthcheck is the sole detector. | "Data directory not writable" validated |
+| 3.6 | Push more concurrent runs than slots | **Not verified** — `INFLOOP_MAX_CONCURRENT_RUNS=1` correctly set `infloop_slot_pool_capacity=1`, but the folder-touching slot pool is only entered by runs that take a directory lock (Agent-node work). A pure-Script workflow never contends — `slot_pool_waiting` stayed `0`. Saturating it needs provider Agent nodes (same provider-credential gap as 3.3). | not observed | — |
+| 3.7 | Run event-heavy workflows past `INFLOOP_MAX_TOTAL_EVENT_BUFFER` (set to 600) | Event-heavy runs drove `infloop_event_buffer_events / infloop_event_buffer_limit` to ~4.2 (the `MIN_PER_RUN_EVENT_CAP` floor lifts the aggregate above the nominal cap, as documented). | `InfiniteLoopEventBufferNearLimit` — **firing** | validated |
+| 3.8 | Force repeated run failures | 358 `mode=fail` runs settled; `infloop_runs_total{status="failed"}=358`, 100% of settled runs. | `InfiniteLoopHighRunFailureRate` — **firing** | validated |
+| 3.9 | Stop the container, leave it down >2m | During the 3.1 `docker kill` the container was down ~6m; Prometheus lost the target. The `ALERTS` series shows the alert going `pending` (2m `for:`) then `firing`. | `InfiniteLoopInstanceDown` — **firing** | validated |
 
-**Note on 3.5 — accepted monitoring limitation.** An unwritable data
-directory has **no Prometheus alert**: `/api/metrics` can still scrape `200`
-while the data directory is unwritable, so the Docker `HEALTHCHECK` against
-`/api/health` is its sole detector (`docs/runbook.md` → "Data directory not
-writable"; `docs/burn-in.md` Phase 3.5). If your monitoring is Prometheus-
-only, wire the container `unhealthy` state to your orchestrator or an external
-uptime check. Whether to leave this accepted or add a health-derived alert is
-a deployment decision to settle **before** production — record the decision
-here rather than letting it pass silently.
+**`InfiniteLoopTriggerQueueBacklog` (`queue_depth > 50` for 10m) was not
+reproduced.** The trigger-queue drain hands a queued run off to the engine as
+fast as `engineStart` returns, so the queue empties faster than an HTTP client
+can fill it; `queue_depth` only holds high when the drain itself is paused
+(cost-budget exhaustion). Reproducing this alert needs either a cost-budget
+pause or a load generator beyond a shell — noted for a future run.
 
 ### Phase 4 — Disaster-recovery drill
 
-`pending` — needs a staging host. Take a backup, destroy the volume
-(`docker compose down -v`), restore into a fresh volume, and confirm
-workflows, run history, triggers, settings, and the audit log are all intact.
+- [x] Backup taken inside the container (`bun run backup`) — `0.38 MiB`,
+      copied off-host.
+- [x] `restore --inspect` — valid manifest, 112 members, no `uncoveredPaths`.
+- [x] Captured pre-drill state: workflows=2, triggers=2, run history=100,
+      audit entries=200.
+- [x] `docker compose down -v` — **all volumes destroyed**.
+- [x] Restore via the documented Docker procedure
+      (`docs/backup-restore.md` → "Restoring in Docker"). **This failed the
+      first time** — defect 4 — and passed after the fix: "Restored 6 item(s)".
+- [x] Post-restore state: workflows=2, triggers=2, run history=100, audit
+      entries=200 — **identical to pre-drill**; `/api/health` → `ok`;
+      the `burnin` and `team` workflows intact.
 
 ### Phase 5 — Soak
 
@@ -163,21 +192,32 @@ watch that the gauges return to baseline between runs, RSS stays flat, and
 
 ### Outstanding / decisions before production
 
-1. **Most of Phases 1–4 are now locally reproducible.** The observability
-   overlay (`deploy/docker-compose.observability.yml`) stands up Prometheus,
-   Alertmanager, and a reverse proxy on a developer machine, so Phase 1
-   (live rule load), Phase 2 (functional pass), Phase 3 (failure injection —
-   all `docker`/`chmod`/config operations), and Phase 4 (DR drill) no longer
-   need a remote host. The genuinely operator-gated remainder is Phase 5's
-   24–72h soak window, plus one final pass on a real remote host before
-   go-live to catch host-specific reality (TLS, the real proxy, real
-   network).
-2. **The runbook is authored but unproven.** Every entry in
-   `docs/runbook.md` exists, but none has been operator-tested. Phase 3 is
-   the one chance to validate the *response*, not just the detection —
-   follow each runbook entry end to end as its alert fires.
-3. **Phase 3.5 monitoring gap.** Decide consciously whether the
-   healthcheck-only detection of an unwritable data directory is acceptable
-   for this deployment, or whether it warrants a health-derived alert.
-4. **Re-run trigger.** Per `docs/burn-in.md`, re-run the whole burn-in after
-   any change to the deployment shape, and open a new `## Run N` section here.
+1. **Phase 5 soak** and **one final pass on a real remote Linux host** remain
+   the genuinely time/host-gated work. A local burn-in proves logic and
+   wiring; it cannot prove host reality — TLS termination, the real reverse
+   proxy, real network egress, real disk-full behaviour, and the
+   `restart: unless-stopped` auto-restart on a `docker kill` (which did not
+   fire on Docker Desktop / macOS here — confirm it on Linux).
+2. **3.3 (cost budget) and 3.6 (slot pool) are unverified** for lack of
+   provider credentials. Both need a provider that actually runs: 3.3 needs
+   the `claude` CLI authenticated and real spend; 3.6 needs Agent nodes that
+   hold folder-touching directory locks. Run both on the remote host with a
+   credentialed provider and a tight `INFLOOP_MAX_TOTAL_COST_USD`.
+3. **`InfiniteLoopTriggerQueueBacklog`** was not reproduced locally (see
+   Phase 3) — exercise it under a real load generator or a cost-budget pause.
+4. **Phase 3.5 monitoring gap.** Confirmed real: an unwritable data directory
+   has no Prometheus alert — only the Docker healthcheck detects it. Decide
+   consciously whether healthcheck-only detection is acceptable, or wire the
+   container `unhealthy` state to an external uptime check / add a
+   health-derived alert.
+5. **Runbook operator-testing.** Detection is validated for every alert that
+   fired; the operator *response* procedures in `docs/runbook.md` were
+   reviewed against observed behaviour but not separately executed. Walk each
+   one end to end on the remote-host run.
+
+### Re-run trigger
+
+Per `docs/burn-in.md`, re-run the whole burn-in after any change to the
+deployment shape, and open a new `## Run N` section here. This commit changes
+`docker-compose.yml` (defect 3) and the image (defects 1, 2, 4) — the next
+run is the remote-host pass that closes items 1–3 and 5 above.

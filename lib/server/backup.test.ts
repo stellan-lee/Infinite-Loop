@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -217,6 +218,33 @@ describe('restoreBackup', () => {
     );
     expect(result.restoredItems).toContain('workflows');
     expect(result.restoredItems).not.toContain('backup-manifest.json');
+  });
+
+  it('restores when the archive lives inside the data directory', async () => {
+    // The documented Docker restore copies the archive to <dataDir>/backup.tar.gz
+    // before restoring. The move-aside must not strand the archive — regression
+    // for the burn-in finding where `tar` failed with "Cannot open".
+    const data = freshDir('data');
+    seedData(data);
+    process.env.INFLOOP_DATA_DIR = data;
+    const outPath = path.join(freshDir('out'), 'b.tar.gz');
+    await createBackup({ outPath });
+
+    // Place the archive inside the data directory, as the Docker procedure does.
+    const innerArchive = path.join(data, 'backup.tar.gz');
+    copyFileSync(outPath, innerArchive);
+
+    const result = await restoreBackup({ archivePath: innerArchive, force: true });
+
+    expect(result.movedAsideTo).not.toBeNull();
+    // Durable state is restored from the archive.
+    expect(readFileSync(path.join(data, 'workflows', 'w1.json'), 'utf8')).toBe(
+      '{"id":"w1"}',
+    );
+    // The archive was carried into the move-aside dir with the rest, not lost.
+    expect(
+      existsSync(path.join(result.movedAsideTo as string, 'backup.tar.gz')),
+    ).toBe(true);
   });
 });
 

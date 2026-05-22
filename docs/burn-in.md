@@ -177,15 +177,27 @@ The one behaviour class with no automated coverage: slow drift over time.
 3. A gauge that ratchets up, RSS that trends up, or an unexplained uptime
    reset is a leak or an instability — file it before going to production.
 
-Step 2 is automated. The repo ships
-[`deploy/burn-in-soak-watch.ts`](../deploy/burn-in-soak-watch.ts):
-`bun run soak-watch -- --duration <h>` samples those gauges on an interval and,
-when the window elapses (or on Ctrl-C), prints a Phase 5 drift verdict —
-uptime monotonic, the return-to-baseline gauges did not ratchet, RSS flat.
-Pass `--docker-container <name>` (host-local only — RSS is not in `/api/metrics`)
-to add the container-RSS leak check, and `--out <path>` to log every sample as
-JSONL. It is the *observer* only: step 1's steady load is still yours, and an
-idle soak passes vacuously — do not tick the box on a watch run with no load.
+Steps 1 and 2 are both automated, by a generator/observer pair — run them
+together for the soak window:
+
+- **Generator** — [`deploy/burn-in-soak-load.ts`](../deploy/burn-in-soak-load.ts):
+  `bun run soak-load -- --duration <h>` fires a webhook trigger every
+  `--interval` seconds (default 180), idempotently installing a cheap,
+  provider-free probe workflow and a generic webhook trigger if you do not
+  pass `--trigger-id`. A low `--interval` with a high `--concurrency` instead
+  floods the trigger queue — the route to reproduce
+  `InfiniteLoopTriggerQueueBacklog` (Phase 3.2).
+- **Observer** — [`deploy/burn-in-soak-watch.ts`](../deploy/burn-in-soak-watch.ts):
+  `bun run soak-watch -- --duration <h>` samples those gauges on an interval
+  and, when the window elapses (or on Ctrl-C), prints a Phase 5 drift verdict —
+  uptime monotonic, the return-to-baseline gauges did not ratchet, RSS flat.
+  Pass `--docker-container <name>` (host-local only — RSS is not in
+  `/api/metrics`) to add the container-RSS leak check, and `--out <path>` to
+  log every sample as JSONL.
+
+The soak's pass/fail is the observer's verdict; the generator only drives load
+and reports how much landed. An idle soak passes vacuously — do not tick the
+box on a watch run with no generator (or other steady load) behind it.
 
 ## Sign-off
 

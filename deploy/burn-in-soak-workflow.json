@@ -1,0 +1,49 @@
+{
+  "id": "burn-in-soak",
+  "name": "Burn-in — soak load probe",
+  "version": 1,
+  "createdAt": 1779800000000,
+  "updatedAt": 1779800000000,
+  "nodes": [
+    {
+      "id": "start-1",
+      "type": "start",
+      "position": { "x": 0, "y": 120 },
+      "config": {}
+    },
+    {
+      "id": "script-1",
+      "type": "script",
+      "position": { "x": 260, "y": 100 },
+      "config": {
+        "language": "ts",
+        "inputs": {},
+        "outputs": [],
+        "code": "function run() {\n  // Burn-in soak probe — intentionally trivial and provider-free. Phase 5\n  // measures slow drift in the run pipeline (queue, engine, event buffer,\n  // RSS) over 24-72h, not a workload, so this must stay cheap: a Script\n  // node spawns Bun and incurs no provider cost. deploy/burn-in-soak-load.ts\n  // fires the webhook trigger for this workflow on a steady interval.\n  console.log('burn-in soak probe tick');\n  return {};\n}\n",
+        "timeoutMs": 30000
+      }
+    },
+    {
+      "id": "end-1",
+      "type": "end",
+      "position": { "x": 560, "y": 120 },
+      "config": { "outcome": "succeeded" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "source": "start-1",
+      "sourceHandle": "next",
+      "target": "script-1",
+      "targetHandle": "in"
+    },
+    {
+      "id": "e2",
+      "source": "script-1",
+      "sourceHandle": "next",
+      "target": "end-1",
+      "targetHandle": "in"
+    }
+  ]
+}

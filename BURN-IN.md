@@ -191,10 +191,11 @@ pause or a load generator beyond a shell — noted for a future run.
 `pending` — needs a 24–72h unattended window. Drive a steady modest load and
 watch that the gauges return to baseline between runs, RSS stays flat, and
 `infloop_process_uptime_seconds` climbs monotonically (no silent restart).
-The *watch* half is now automated: `deploy/burn-in-soak-watch.ts`
-(`bun run soak-watch`) samples the soak gauges on an interval and prints a
-Phase 5 drift verdict — uptime monotonicity, gauge ratchet, RSS leak. The soak
-still needs the load generator and the wall-clock window.
+Both halves are now automated: `deploy/burn-in-soak-load.ts`
+(`bun run soak-load`) fires a webhook trigger on an interval to generate the
+load, and `deploy/burn-in-soak-watch.ts` (`bun run soak-watch`) samples the
+soak gauges and prints the Phase 5 drift verdict — uptime monotonicity, gauge
+ratchet, RSS leak. The soak now needs only the wall-clock window.
 
 ### Outstanding / decisions before production
 
@@ -203,11 +204,11 @@ still needs the load generator and the wall-clock window.
    wiring; it cannot prove host reality — TLS termination, the real reverse
    proxy, real network egress, real disk-full behaviour, and the
    `restart: unless-stopped` auto-restart on a `docker kill` (which did not
-   fire on Docker Desktop / macOS here — confirm it on Linux). Phase 5's
-   observation is now tooled: `deploy/burn-in-soak-watch.ts` (`bun run
-   soak-watch`) samples the soak gauges and prints the drift verdict, so the
-   soak needs a load generator and a wall-clock window — not a human watching
-   Prometheus for three days.
+   fire on Docker Desktop / macOS here — confirm it on Linux). Phase 5 is now
+   fully tooled: `deploy/burn-in-soak-load.ts` (`bun run soak-load`) generates
+   the webhook load and `deploy/burn-in-soak-watch.ts` (`bun run soak-watch`)
+   samples the gauges and prints the drift verdict, so the soak needs only a
+   wall-clock window — not a human watching Prometheus for three days.
 2. **3.3 (cost budget) and 3.6 (slot pool) are unverified** for lack of
    provider credentials. Both need a provider that actually runs: 3.3 needs
    the `claude` CLI authenticated and real spend; 3.6 needs Agent nodes that
@@ -219,7 +220,10 @@ still needs the load generator and the wall-clock window.
    the queued-run-held-on-disk behaviour and the Alertmanager hop still need a
    manual pass — see `docs/burn-in.md` Phase 3.
 3. **`InfiniteLoopTriggerQueueBacklog`** was not reproduced locally (see
-   Phase 3) — exercise it under a real load generator or a cost-budget pause.
+   Phase 3). The load generator now exists: `bun run soak-load` with a low
+   `--interval` and a high `--concurrency` floods the trigger queue and reports
+   the peak `queue_depth` reached. Run it long enough to satisfy the alert's
+   10m `for:` window, then confirm the alert in Prometheus.
 4. **Phase 3.5 monitoring gap — resolved.** Run 1 confirmed an unwritable
    data directory had no Prometheus alert. Rather than rely on
    healthcheck-only detection, the gap was closed in-repo: `/api/metrics` now

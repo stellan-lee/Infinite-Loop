@@ -10,6 +10,11 @@ and what is still open.
 progress is captured, so the procedure doc stays a clean, reusable checklist
 instead of accumulating one run's state.
 
+> **Project status (2026-05-22):** feature work is **frozen**. The codebase is
+> production-*complete*; the only remaining gate is executing burn-in Run 2 on
+> a real Linux host. No further burn-in *preparation* commits should be merged
+> — see [`docs/production-readiness-decision.md`](docs/production-readiness-decision.md).
+
 ## How to use this log
 
 - Open a new `## Run N` section each time the burn-in is run end to end

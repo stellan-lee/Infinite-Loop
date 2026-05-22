@@ -21,6 +21,9 @@ const ZERO_GAUGES: GaugeSnapshot = {
   processUptimeSeconds: 0,
   // A freshly started healthy process has a writable data directory.
   dataDirWritable: true,
+  // null = backups not configured; render() then omits the freshness gauge
+  // entirely. Cases that exercise the gauge override this with a number.
+  backupLastSuccessTimestampSeconds: null,
 };
 
 /** Parse the `name{labels} value` sample lines of an exposition body into a
@@ -245,6 +248,7 @@ describe('MetricsRegistry — gauges', () => {
         costBudgetLimitUsd: 100,
         processUptimeSeconds: 123,
         dataDirWritable: true,
+        backupLastSuccessTimestampSeconds: 1_700_000_000,
       }),
     );
     expect(s.get('infloop_runs_active')).toBe(2);
@@ -258,6 +262,34 @@ describe('MetricsRegistry — gauges', () => {
     expect(s.get('infloop_cost_budget_limit_usd')).toBe(100);
     expect(s.get('infloop_process_uptime_seconds')).toBe(123);
     expect(s.get('infloop_data_dir_writable')).toBe(1);
+    expect(s.get('infloop_backup_last_success_timestamp_seconds')).toBe(
+      1_700_000_000,
+    );
+  });
+
+  it('emits the backup-freshness gauge only when backups are configured', () => {
+    // null (INFLOOP_BACKUP_DIR unset) → the family is omitted entirely, so
+    // InfiniteLoopBackupStale cannot fire on a deployment that never opted in.
+    const omitted = new MetricsRegistry().render({
+      ...ZERO_GAUGES,
+      backupLastSuccessTimestampSeconds: null,
+    });
+    expect(omitted).not.toContain('infloop_backup_last_success_timestamp_seconds');
+
+    // A number — including 0, the "configured but never succeeded" sentinel —
+    // renders the gauge.
+    for (const value of [0, 1_700_000_000]) {
+      const body = new MetricsRegistry().render({
+        ...ZERO_GAUGES,
+        backupLastSuccessTimestampSeconds: value,
+      });
+      expect(body).toContain(
+        '# TYPE infloop_backup_last_success_timestamp_seconds gauge',
+      );
+      expect(
+        samples(body).get('infloop_backup_last_success_timestamp_seconds'),
+      ).toBe(value);
+    }
   });
 
   it('renders the data-dir readiness gauge as 1 when writable, 0 when not', () => {

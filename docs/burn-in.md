@@ -84,7 +84,7 @@ The observability overlay brought up in Phase 0 already does the wiring:
 1. Open Prometheus at `http://localhost:9090`. Under **Status → Targets**,
    confirm the `infinite-loop` target is **`up`** — a scrape that returns
    `401` (wrong or missing token) reads as down, not as an error.
-2. On the **Alerts** page, confirm all ten rules from
+2. On the **Alerts** page, confirm all eleven rules from
    `prometheus-alerts.yml` are listed in the `inactive` state.
 3. Confirm `infloop_*` series are queryable and `up{job="infinite-loop"}` is
    `1`. If the job label differs from `infinite-loop`, the scrape config and
@@ -126,6 +126,7 @@ observed wording so [`runbook.md`](runbook.md) can quote it.
 | 3.7 | Set `INFLOOP_MAX_TOTAL_EVENT_BUFFER` low; run event-heavy workflows | Per-run event buffers are squeezed to a fair share — memory stays bounded, per-run history truncates. | `InfiniteLoopEventBufferNearLimit` once the ratio holds above 0.8 for 10m. |
 | 3.8 | Force runs to fail repeatedly (point a provider at a missing binary, or run a known-bad workflow) — more than 5, over 50% of settled runs | Runs land in history as `failed`; `infloop_runs_total{status="failed"}` climbs. | `InfiniteLoopHighRunFailureRate` after 15m. |
 | 3.9 | Stop the container and leave it down past 2m | Prometheus loses the target. | `InfiniteLoopInstanceDown` (critical) after 2m. |
+| 3.10 | Age the newest archive in the `infinite-loop-backups` volume past 36h (`docker compose exec backup touch -d '40 hours ago' /backups/<newest>`), or stop the `backup` sidecar and remove every archive | `infloop_backup_last_success_timestamp_seconds` reads the aged mtime — or `0` once no archive remains. A fresh snapshot (`docker compose restart backup`, or the next interval) clears it. | `InfiniteLoopBackupStale` (warning) after its 2h `for:` window. |
 
 Row 3.3 (the process-wide cost budget) is *partially* automated — it drives
 and checks the `503` admission gate, the mid-run abort, and the spend metrics;
@@ -204,7 +205,7 @@ box on a watch run with no generator (or other steady load) behind it.
 The burn-in passes when every box is ticked:
 
 - [ ] Phase 0 — deployed; `(healthy)`; provider CLI present.
-- [ ] Phase 1 — all ten alert rules loaded; target `up`.
+- [ ] Phase 1 — all eleven alert rules loaded; target `up`.
 - [ ] Phase 2 — UI, webhook, and MCP each ran end to end with an audit trail.
 - [ ] Phase 3 — every fault produced the expected behaviour; every expected
       alert was observed firing (or its `for:` window understood).

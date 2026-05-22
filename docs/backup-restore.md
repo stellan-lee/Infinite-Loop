@@ -107,9 +107,14 @@ docker compose logs -f backup
 ```
 
 A failed snapshot is logged and the sidecar waits for the next interval, so
-one transient failure (a full disk, say) does not stop later backups — but it
-also will not page you. Check these logs, or treat a persistently silent
-`backup` service as a problem.
+one transient failure (a full disk, say) does not stop later backups. A
+*persistent* failure — or a dead sidecar — does surface on its own: the app
+mounts the backup volume read-only and exposes the age of the newest archive
+as `infloop_backup_last_success_timestamp_seconds` on `/api/metrics`, and the
+shipped `InfiniteLoopBackupStale` alert fires once that archive is over 36
+hours old (see [prometheus-alerts.yml](../deploy/prometheus-alerts.yml) and
+the [runbook](runbook.md)). `docker compose logs -f backup` is still the
+fastest way to see *why* a snapshot failed.
 
 > **Still copy the archives off-host.** The sidecar removes the *manual* and
 > *operator-error* failure modes, but `infinite-loop-backups` is a volume on

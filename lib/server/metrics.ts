@@ -116,6 +116,14 @@ export interface GaugeSnapshot {
    * and the only signal that surfaces an unwritable data dir to alerting.
    */
   dataDirWritable: boolean;
+  /**
+   * Unix timestamp (seconds) of the most recent data-directory backup
+   * archive; `0` when backups are configured but no archive was found; or
+   * `null` when backups are not configured for this deployment. When `null`,
+   * `render()` emits no `infloop_backup_last_success_timestamp_seconds`
+   * family at all — see `backupLastSuccessTimestamp` in backup-health.ts.
+   */
+  backupLastSuccessTimestampSeconds: number | null;
 }
 
 /**
@@ -460,6 +468,24 @@ export class MetricsRegistry {
     out.push(
       `infloop_data_dir_writable ${formatValue(gauges.dataDirWritable ? 1 : 0)}`,
     );
+
+    // Emitted only when backups are configured (INFLOOP_BACKUP_DIR is set).
+    // An absent family means this deployment never opted into automated
+    // backups, so InfiniteLoopBackupStale correctly never fires for it.
+    if (gauges.backupLastSuccessTimestampSeconds !== null) {
+      family(
+        'infloop_backup_last_success_timestamp_seconds',
+        'gauge',
+        'Unix timestamp of the most recent data-directory backup archive ' +
+          'written by the scheduled-backup sidecar. 0 means backups are ' +
+          'configured but no archive exists yet — the mechanism has never ' +
+          'succeeded. Absent entirely when backups are not configured.',
+      );
+      out.push(
+        'infloop_backup_last_success_timestamp_seconds ' +
+          formatValue(gauges.backupLastSuccessTimestampSeconds),
+      );
+    }
 
     // Prometheus requires a trailing newline after the final sample.
     return out.join('\n') + '\n';

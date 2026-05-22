@@ -200,6 +200,44 @@ plugin, or a caller hitting the per-trigger rate limit
   leaked or abused URL should be rotated by recreating the trigger.
 - Plugin error → check the plugin manifest and the logs.
 
+## InfiniteLoopBackupStale — warning
+
+**Means.** The newest data-directory backup archive is over 36 hours old
+(`infloop_backup_last_success_timestamp_seconds`), so the scheduled-backup
+sidecar has missed at least one snapshot and the recovery point is rotting. A
+metric value of `0` — a `1970` timestamp — is the stronger signal: no archive
+exists at all, so backups are configured but the sidecar has never once
+produced one (a bad config it crash-loops on, or a misdirected
+`INFLOOP_BACKUP_DIR`).
+
+**Diagnose.**
+- `docker compose logs --tail=200 backup` — is the sidecar working? A failed
+  snapshot is logged `backup failed: …`; a bad config exits it `config
+  error: …`.
+- `docker compose ps` — is the `backup` service `up`, or `exited` /
+  crash-looping?
+- A brand-new deployment reads `0` only until its first snapshot lands — the
+  sidecar backs up immediately on start, so the alert clears itself within
+  the `for:` window. An empty data directory has nothing to back up:
+  `createBackup` reports "nothing to back up" until the first workflow or run
+  creates state.
+
+**Resolve.**
+- Sidecar down or crash-looping → fix the cause (usually a bad
+  `INFLOOP_BACKUP_DIR`, interval, or keep value — the script prints a
+  per-variable explanation) and `docker compose up -d backup`.
+- Snapshots failing → a full backup volume or a permissions problem on
+  `/backups`; free space or fix the mount. The next interval retries on its
+  own once the cause is cleared.
+- The alert clears once a fresh archive lands. Force one without waiting for
+  the interval: `docker compose restart backup` snapshots immediately on
+  start.
+
+> If you raised `INFLOOP_BACKUP_INTERVAL_HOURS` past ~18 hours, the 36-hour
+> threshold in [`prometheus-alerts.yml`](../deploy/prometheus-alerts.yml) is
+> now too tight — raise it above the new interval, or this alert fires
+> permanently.
+
 ---
 
 ## Routine procedures

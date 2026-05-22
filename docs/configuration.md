@@ -105,7 +105,10 @@ The surface covers run outcomes and duration (`infloop_runs_total`,
 trigger-queue flow (`infloop_queue_*`), slot-pool saturation
 (`infloop_slot_pool_*`), in-memory event-buffer pressure
 (`infloop_event_buffer_*`), and webhook outcomes
-(`infloop_webhook_requests_total`). Every series carries a `# HELP` line.
+(`infloop_webhook_requests_total`), plus readiness signals for data-directory
+writability (`infloop_data_dir_writable`) and scheduled-backup freshness
+(`infloop_backup_last_success_timestamp_seconds`, present only when backups
+are configured). Every series carries a `# HELP` line.
 
 A ready-to-load set of alerting rules wired to these metrics ships at
 [`deploy/prometheus-alerts.yml`](../deploy/prometheus-alerts.yml) — instance

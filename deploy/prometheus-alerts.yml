@@ -185,3 +185,27 @@ groups:
             Over 30% of webhook deliveries in the last 15 minutes ended in
             `error` or `rejected`. Check for a bad signature secret, a
             misconfigured plugin, or a caller hitting the rate limit.
+
+      # ── Backups ───────────────────────────────────────────────────────────
+      - alert: InfiniteLoopBackupStale
+        # 36h is sized for the 24h default backup interval
+        # (INFLOOP_BACKUP_INTERVAL_HOURS): comfortably past one interval so a
+        # late snapshot or a sidecar restart never trips it, and short of two
+        # so a genuinely dead sidecar still pages within ~38h (the 36h here
+        # plus the 2h `for:`). RAISE this threshold — and the burn-in row, and
+        # the runbook — if INFLOOP_BACKUP_INTERVAL_HOURS is raised past ~18h, or
+        # the alert will fire permanently. The metric is absent on deployments
+        # that never configured backups, so this rule stays silent for them.
+        expr: time() - infloop_backup_last_success_timestamp_seconds > 36 * 3600
+        for: 2h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Infinite Loop data-directory backups are stale"
+          description: >
+            The newest data-directory backup archive is over 36 hours old —
+            the scheduled-backup sidecar has missed at least one snapshot, so
+            the recovery point is rotting silently. A metric value of 0
+            (timestamp 1970) is the stronger signal: backups are configured
+            but no archive exists at all — the sidecar has never once
+            succeeded. Check `docker compose logs backup`.

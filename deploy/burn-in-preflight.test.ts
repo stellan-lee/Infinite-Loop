@@ -63,6 +63,13 @@ function collectEmittedMetrics(): EmittedMetrics {
     costBudgetLimitUsd: 0,
     processUptimeSeconds: 0,
     dataDirWritable: true,
+    // infloop_backup_last_success_timestamp_seconds is emitted only when this
+    // field is non-null (backups configured). The audit must see the family
+    // to resolve InfiniteLoopBackupStale's metric reference, so this fixture
+    // pins a number — it asserts the family *can* be emitted. That the route
+    // actually populates it from a live backup directory is covered separately
+    // by app/api/metrics/route.test.ts, not by this static gate.
+    backupLastSuccessTimestampSeconds: 0,
   };
   const exposition = new MetricsRegistry().render(zeroGauges);
 
@@ -216,8 +223,8 @@ describe('burn-in pre-flight: prometheus-alerts.yml ↔ /api/metrics', () => {
   it('parses the shipped alert rules into a non-vacuous set', () => {
     // Guards the parser itself: a YAML reformat that broke extraction would
     // otherwise make every downstream check pass trivially. burn-in.md
-    // Phase 1 expects ten rules, so treat that as the floor.
-    expect(alertRules.length).toBeGreaterThanOrEqual(10);
+    // Phase 1 expects eleven rules, so treat that as the floor.
+    expect(alertRules.length).toBeGreaterThanOrEqual(11);
     for (const rule of alertRules) {
       expect(rule.name).toMatch(/^InfiniteLoop\w+$/);
       expect(rule.expr.trim().length).toBeGreaterThan(0);

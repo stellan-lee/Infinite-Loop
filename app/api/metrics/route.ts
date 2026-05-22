@@ -5,6 +5,7 @@ import { globalCostBudget } from '@/lib/server/cost-budget';
 import { workflowEngine } from '@/lib/server/workflow-engine';
 import { triggerQueue } from '@/lib/server/trigger-queue-singleton';
 import { dataDirWritable } from '@/lib/server/data-dir-health';
+import { backupLastSuccessTimestamp } from '@/lib/server/backup-health';
 
 /**
  * GET /api/metrics — authenticated Prometheus metrics surface.
@@ -50,6 +51,10 @@ export async function GET(req: Request): Promise<Response> {
     // itself keeps returning 200, so a failed scrape is not the signal —
     // InfiniteLoopDataDirNotWritable alerts on this gauge instead.
     dataDirWritable: await dataDirWritable(),
+    // Probed live too (see lib/server/backup-health.ts): the freshness of the
+    // scheduled-backup sidecar's newest archive. `null` (backups not
+    // configured) renders no metric; InfiniteLoopBackupStale alerts on it.
+    backupLastSuccessTimestampSeconds: await backupLastSuccessTimestamp(),
   });
 
   return new Response(body, {

@@ -82,6 +82,11 @@ services:
       # not by this. See docs/deployment.md#how-network-exposure-works.
       HOST: "0.0.0.0"
       INFLOOP_DATA_DIR: /data
+      # The scheduled-backup sidecar writes archives here; the app mounts the
+      # same volume read-only (see `volumes` below) and reads it only to derive
+      # infloop_backup_last_success_timestamp_seconds on /api/metrics — the
+      # gauge InfiniteLoopBackupStale alerts on. Must match the sidecar's value.
+      INFLOOP_BACKUP_DIR: /backups
       INFLOOP_LOG_LEVEL: ${INFLOOP_LOG_LEVEL:-info}
       # Required: the network-posture gate refuses a non-loopback bind with no
       # token. `docker compose up` fails fast if INFLOOP_API_TOKEN is unset.
@@ -121,6 +126,11 @@ services:
       # root so agent CLIs spawned inside the container (Claude Code, git)
       # can persist their config/credentials across restarts.
       - infinite-loop-home:/home/bun
+      # The backup sidecar's archive volume, READ-ONLY. The app never writes
+      # here — it only stats the newest archive to expose backup freshness as
+      # infloop_backup_last_success_timestamp_seconds. A bug in that read path
+      # therefore cannot corrupt a backup. INFLOOP_BACKUP_DIR above points here.
+      - infinite-loop-backups:/backups:ro
 
   # --- Scheduled backups -----------------------------------------------------
   # Periodic, retained snapshots of the data volume. `bun run backup` alone is

@@ -398,6 +398,8 @@ const ZERO_GAUGES: GaugeSnapshot = {
   costBudgetLimitUsd: 0,
   processUptimeSeconds: 0,
   dataDirWritable: true,
+  // null = backups not configured; the freshness gauge is then omitted.
+  backupLastSuccessTimestampSeconds: null,
 };
 
 /** The current value of `infloop_runs_total{status="failed"}` on the process

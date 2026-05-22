@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GET } from './route';
@@ -10,6 +10,7 @@ const TOKEN = 'test-metrics-token';
 // mode it needs and afterEach restores it.
 const savedToken = process.env.INFLOOP_API_TOKEN;
 const savedDataDir = process.env.INFLOOP_DATA_DIR;
+const savedBackupDir = process.env.INFLOOP_BACKUP_DIR;
 let tmpDir: string;
 
 beforeEach(() => {
@@ -17,6 +18,10 @@ beforeEach(() => {
   // `infloop_data_dir_writable` — from the real ~/.infinite-loop.
   tmpDir = mkdtempSync(join(tmpdir(), 'infinite-loop-metrics-'));
   process.env.INFLOOP_DATA_DIR = tmpDir;
+  // Backups default to unconfigured here so the freshness gauge is absent
+  // unless a case opts in — keeps the suite hermetic against an ambient
+  // INFLOOP_BACKUP_DIR in a developer's environment.
+  delete process.env.INFLOOP_BACKUP_DIR;
 });
 
 afterEach(() => {
@@ -24,6 +29,8 @@ afterEach(() => {
   else process.env.INFLOOP_API_TOKEN = savedToken;
   if (savedDataDir === undefined) delete process.env.INFLOOP_DATA_DIR;
   else process.env.INFLOOP_DATA_DIR = savedDataDir;
+  if (savedBackupDir === undefined) delete process.env.INFLOOP_BACKUP_DIR;
+  else process.env.INFLOOP_BACKUP_DIR = savedBackupDir;
   try {
     rmSync(tmpDir, { recursive: true, force: true });
   } catch {
@@ -85,5 +92,45 @@ describe('GET /api/metrics', () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('infloop_data_dir_writable 0');
+  });
+
+  it('omits the backup-freshness gauge when backups are not configured', async () => {
+    // INFLOOP_BACKUP_DIR is unset (beforeEach clears it) — the family must be
+    // absent so InfiniteLoopBackupStale cannot fire on an opt-out deployment.
+    delete process.env.INFLOOP_API_TOKEN;
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).not.toContain('infloop_backup_last_success_timestamp_seconds');
+  });
+
+  it('exposes infloop_backup_last_success_timestamp_seconds when backups are configured', async () => {
+    // Point INFLOOP_BACKUP_DIR at a directory holding one backup archive; the
+    // scrape-time probe must surface its mtime as the freshness gauge.
+    delete process.env.INFLOOP_API_TOKEN;
+    const backupDir = join(tmpDir, 'backups');
+    mkdirSync(backupDir);
+    writeFileSync(
+      join(backupDir, 'infinite-loop-backup-20260520-120000.tar.gz'),
+      'archive',
+    );
+    process.env.INFLOOP_BACKUP_DIR = backupDir;
+
+    const res = await GET(req());
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain(
+      '# TYPE infloop_backup_last_success_timestamp_seconds gauge',
+    );
+    // A real archive resolves to a non-zero, non-1970 timestamp.
+    const line = body
+      .split('\n')
+      .find(
+        (l) =>
+          l.startsWith('infloop_backup_last_success_timestamp_seconds ') &&
+          !l.startsWith('#'),
+      );
+    expect(line).toBeDefined();
+    expect(Number(line!.split(' ')[1])).toBeGreaterThan(0);
   });
 });

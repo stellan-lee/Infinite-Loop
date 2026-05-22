@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "NODE_ENV=production bun --preload ./lib/server/async-local-storage-global.ts server.ts",
     "backup": "bun scripts/backup.ts",
+    "backup:scheduled": "bun scripts/scheduled-backup.ts",
     "restore": "bun scripts/restore.ts",
     "burn-in": "bun deploy/burn-in-driver.ts",
     "soak-watch": "bun deploy/burn-in-soak-watch.ts",

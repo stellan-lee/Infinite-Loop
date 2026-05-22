@@ -96,6 +96,13 @@ RUN mkdir -p /data && chown -R bun:bun /data
 # chown it so a fresh volume inherits bun-writable ownership.
 RUN mkdir -p /home/bun && chown -R bun:bun /home/bun
 
+# Mount point for the scheduled-backup sidecar's archive volume. The `backup`
+# service in docker-compose.yml runs scripts/scheduled-backup.ts and writes
+# snapshots here. Created and chowned now — exactly like /data and /home/bun
+# above — so a fresh `infinite-loop-backups` volume inherits bun-writable
+# ownership. Unused by the main app process; harmless when empty.
+RUN mkdir -p /backups && chown bun:bun /backups
+
 USER bun
 EXPOSE 3000
 

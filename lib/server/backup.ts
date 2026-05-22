@@ -107,6 +107,14 @@ export interface BackupManifest {
 export interface CreateBackupOptions {
   /** Archive path to write. Default: a timestamped name in the cwd. */
   outPath?: string;
+  /**
+   * Directory to write the default timestamped archive name into. Ignored
+   * when `outPath` is set. Default: the current working directory. The
+   * scheduled-backup daemon uses this to drop each snapshot into a dedicated
+   * backup directory without having to reconstruct the archive-name format
+   * itself — that format stays owned solely by this module.
+   */
+  outDir?: string;
   /** Clock injection for tests. */
   now?: Date;
 }
@@ -147,6 +155,31 @@ function formatStamp(d: Date): string {
   );
 }
 
+/**
+ * The default archive filename for a backup taken at `d` —
+ * `infinite-loop-backup-YYYYMMDD-HHMMSS.tar.gz`. Used whenever the caller does
+ * not pass an explicit `outPath`. This module is the single authority on the
+ * name format: `createBackup` produces it and `isBackupArchiveName` recognizes
+ * it, so the two can never drift.
+ */
+function defaultBackupName(d: Date): string {
+  return `infinite-loop-backup-${formatStamp(d)}.tar.gz`;
+}
+
+/** Matches exactly the names `defaultBackupName` produces. */
+const DEFAULT_BACKUP_NAME_RE = /^infinite-loop-backup-\d{8}-\d{6}\.tar\.gz$/;
+
+/**
+ * True when `name` is an archive `createBackup` wrote with an auto-generated
+ * timestamped name. The scheduled-backup daemon's retention prune uses this so
+ * it only ever deletes Infinite Loop's own snapshots — never an operator's
+ * hand-named `--out` archive, and never an unrelated file that happens to sit
+ * in the same directory.
+ */
+export function isBackupArchiveName(name: string): boolean {
+  return DEFAULT_BACKUP_NAME_RE.test(name);
+}
+
 async function pathExists(p: string): Promise<boolean> {
   try {
     await fs.access(p);
@@ -166,8 +199,13 @@ async function listDir(dir: string): Promise<string[]> {
   }
 }
 
-/** True when `child` is `parent` itself or nested anywhere beneath it. */
-function isInside(parent: string, child: string): boolean {
+/**
+ * True when `child` is `parent` itself or nested anywhere beneath it. Exported
+ * so the scheduled-backup module can reuse this exact failure-domain check —
+ * rejecting a backup directory inside the data directory — rather than forking
+ * a second, drift-prone copy of safety-critical path logic.
+ */
+export function isInside(parent: string, child: string): boolean {
   const rel = path.relative(parent, child);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
@@ -344,7 +382,8 @@ export async function createBackup(
 
   const now = opts.now ?? new Date();
   const outPath = path.resolve(
-    opts.outPath ?? `infinite-loop-backup-${formatStamp(now)}.tar.gz`,
+    opts.outPath ??
+      path.join(opts.outDir ?? '.', defaultBackupName(now)),
   );
   if (await pathExists(outPath)) {
     throw new Error(`refusing to overwrite an existing file: ${outPath}`);

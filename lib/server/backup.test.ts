@@ -16,6 +16,7 @@ import {
   assertSafeEntries,
   createBackup,
   inspectBackup,
+  isBackupArchiveName,
   restoreBackup,
 } from './backup';
 
@@ -364,5 +365,73 @@ describe('archive contents', () => {
         'workflows',
       ].sort(),
     );
+  });
+});
+
+describe('createBackup outDir', () => {
+  it('writes the default timestamped name into outDir', async () => {
+    const data = freshDir('data');
+    seedData(data);
+    process.env.INFLOOP_DATA_DIR = data;
+    const outDir = freshDir('out');
+
+    const result = await createBackup({
+      outDir,
+      now: new Date('2026-05-22T13:45:09Z'),
+    });
+
+    expect(result.outPath).toBe(
+      path.join(outDir, 'infinite-loop-backup-20260522-134509.tar.gz'),
+    );
+    expect(existsSync(result.outPath)).toBe(true);
+    // The generated name is one isBackupArchiveName recognizes.
+    expect(isBackupArchiveName(path.basename(result.outPath))).toBe(true);
+  });
+
+  it('creates outDir when it does not exist', async () => {
+    const data = freshDir('data');
+    seedData(data);
+    process.env.INFLOOP_DATA_DIR = data;
+    const outDir = path.join(freshDir('out'), 'nested', 'backups');
+
+    const result = await createBackup({ outDir });
+
+    expect(existsSync(result.outPath)).toBe(true);
+    expect(path.dirname(result.outPath)).toBe(outDir);
+  });
+
+  it('lets an explicit outPath win over outDir', async () => {
+    const data = freshDir('data');
+    seedData(data);
+    process.env.INFLOOP_DATA_DIR = data;
+    const outDir = freshDir('out');
+    const explicit = path.join(freshDir('explicit'), 'chosen.tar.gz');
+
+    const result = await createBackup({ outDir, outPath: explicit });
+
+    expect(result.outPath).toBe(explicit);
+  });
+});
+
+describe('isBackupArchiveName', () => {
+  it('accepts a name createBackup auto-generates', () => {
+    expect(
+      isBackupArchiveName('infinite-loop-backup-20260522-134509.tar.gz'),
+    ).toBe(true);
+  });
+
+  it('rejects names createBackup never generates', () => {
+    for (const name of [
+      'backup.tar.gz',
+      'infinite-loop-backup.tar.gz',
+      'my-infinite-loop-backup-20260522-134509.tar.gz',
+      'infinite-loop-backup-20260522-134509.tar.gz.tmp',
+      'infinite-loop-backup-2026-05-22.tar.gz',
+      'infinite-loop-backup-20260522.tar.gz',
+      'backup-manifest.json',
+      '',
+    ]) {
+      expect(isBackupArchiveName(name)).toBe(false);
+    }
   });
 });

@@ -68,9 +68,69 @@ docker compose exec infinite-loop rm /data/backup.tar.gz
 ```
 
 Store the archive somewhere that does **not** share a failure domain with the
-data volume — a different disk, host, or object store. Automate it on a
-schedule (cron, a systemd timer) and keep enough generations to cover the
-window you need to recover.
+data volume — a different disk, host, or object store — and keep enough
+generations to cover the window you need to recover. For an unattended
+deployment, do not do this by hand: see [Automated backups](#automated-backups).
+
+## Automated backups
+
+`bun run backup` is a manual step. Relying on it alone means the recovery
+point is only ever as fresh as the last time someone remembered to run it —
+not a backup strategy for an unattended deployment.
+
+The Docker deployment closes that gap with a **`backup` sidecar**. It is part
+of `docker-compose.yml` and starts with the stack — no extra step:
+
+```bash
+docker compose up -d --build
+```
+
+The sidecar runs `scripts/scheduled-backup.ts`: it takes a snapshot
+immediately on start, then every `INFLOOP_BACKUP_INTERVAL_HOURS`, and after
+each one prunes the backup directory to `INFLOOP_BACKUP_KEEP` generations. The
+archives land on their own volume — `infinite-loop-backups`, mounted at
+`/backups` — separate from the data volume, so a deleted or corrupted data
+volume does not take the backups with it. The data volume is mounted into the
+sidecar **read-only**: it can only ever read what it backs up.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `INFLOOP_BACKUP_DIR` | `/backups` (set by compose) | Directory archives are written to. Must resolve outside the data directory. |
+| `INFLOOP_BACKUP_INTERVAL_HOURS` | `24` | Hours between snapshots. Must be positive. |
+| `INFLOOP_BACKUP_KEEP` | `7` | Snapshot generations retained; older ones are pruned. Must be a positive integer. |
+
+Set the two optional knobs in `.env`. Watch the sidecar — and catch a failing
+backup — with:
+
+```bash
+docker compose logs -f backup
+```
+
+A failed snapshot is logged and the sidecar waits for the next interval, so
+one transient failure (a full disk, say) does not stop later backups — but it
+also will not page you. Check these logs, or treat a persistently silent
+`backup` service as a problem.
+
+> **Still copy the archives off-host.** The sidecar removes the *manual* and
+> *operator-error* failure modes, but `infinite-loop-backups` is a volume on
+> the same host — it does not survive the host itself dying. For real disaster
+> recovery, ship `/backups` to a different machine or an object store; a cron
+> job running `docker compose cp` is enough.
+
+### One-off and non-Docker use
+
+The same script takes a single backup and exits when given `--once` — useful
+for a host-level `cron` job or systemd timer when you are not running the
+Docker stack:
+
+```bash
+INFLOOP_BACKUP_DIR=/var/backups/infinite-loop \
+  bun scripts/scheduled-backup.ts --once
+```
+
+`INFLOOP_BACKUP_DIR` is required — there is no safe default, since a backup
+beside the data it protects is worthless — and must resolve outside the data
+directory; the script refuses to start otherwise.
 
 ## Inspecting an archive
 

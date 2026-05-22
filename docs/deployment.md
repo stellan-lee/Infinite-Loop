@@ -21,6 +21,8 @@ as a supervised container:
   probe; `docker ps` then shows `healthy` / `unhealthy`.
 - **A persistent volume** for all run history, workflows, triggers, and
   connections, so they survive a restart or an image rebuild.
+- **Scheduled backups.** A `backup` sidecar snapshots the data volume on a
+  schedule and keeps a fixed number of generations — see [Backups](#backups).
 
 ## Prerequisites
 
@@ -124,7 +126,16 @@ disk loss, a deleted volume, or operator error. Crash recovery, the durable
 queue, and the audit log all protect against a process dying; none protects
 against losing the volume itself.
 
-Take periodic snapshots of the data directory:
+`docker-compose.yml` includes a **`backup` sidecar** that closes this gap: it
+snapshots the data volume on a schedule (default every 24h), keeps a fixed
+number of generations, and writes them to a separate `infinite-loop-backups`
+volume. It starts with the stack — `docker compose up -d` — so backups are
+automatic, with no manual step. Tune the interval and retention via
+`INFLOOP_BACKUP_INTERVAL_HOURS` and `INFLOOP_BACKUP_KEEP` in `.env`, and watch
+it with `docker compose logs -f backup`.
+
+For a one-off snapshot — before an upgrade, say — you can still run a backup by
+hand:
 
 ```bash
 # Write a snapshot to the volume, then copy it off the host.
@@ -133,11 +144,10 @@ docker compose cp infinite-loop:/data/backup.tar.gz ./backup.tar.gz
 docker compose exec infinite-loop rm /data/backup.tar.gz
 ```
 
-A backup is safe to take while the server runs. Restoring requires the server
-to be stopped. Store archives off-host, automate them on a schedule, and keep
-enough generations for your recovery window. Full procedure — including
-restore and inspecting an archive — in
-[backup-restore.md](backup-restore.md).
+A backup is safe to take while the server runs; restoring requires the server
+to be stopped. The sidecar's volume still lives on this host — copy archives
+off-host for true disaster recovery. Full procedure — the sidecar's knobs,
+restore, and inspecting an archive — in [backup-restore.md](backup-restore.md).
 
 ## Supervision & health
 

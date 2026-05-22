@@ -122,6 +122,68 @@ services:
       # can persist their config/credentials across restarts.
       - infinite-loop-home:/home/bun
 
+  # --- Scheduled backups -----------------------------------------------------
+  # Periodic, retained snapshots of the data volume. `bun run backup` alone is
+  # a MANUAL step — without this service the recovery point is only ever as
+  # fresh as the last time an operator remembered to run it. This sidecar runs
+  # scripts/scheduled-backup.ts: it snapshots the data dir immediately on
+  # start, then every INFLOOP_BACKUP_INTERVAL_HOURS, and prunes the backup
+  # directory to INFLOOP_BACKUP_KEEP generations after each one.
+  # See docs/backup-restore.md#automated-backups.
+  backup:
+    # The same image as the app — this service only runs a script, never the
+    # server. `build` is declared so a plain `docker compose up` builds it; the
+    # shared image tag makes the second build a near-instant cache hit.
+    build:
+      context: .
+    image: infinite-loop:local
+
+    # Restart after any abnormal exit so the schedule survives a crash. A
+    # FAILED backup is not an exit — the script logs it and waits for the next
+    # interval — so a transient error cannot crash-loop this container.
+    restart: unless-stopped
+
+    # Reap the `tar` / `gzip` children each snapshot spawns.
+    init: true
+
+    command: ["bun", "scripts/scheduled-backup.ts"]
+
+    # --- Containment hardening (mirrors the app service) ---------------------
+    # The sidecar needs no network and spawns only `tar`/`gzip`; lock it down.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+
+    environment:
+      INFLOOP_DATA_DIR: /data
+      INFLOOP_LOG_LEVEL: ${INFLOOP_LOG_LEVEL:-info}
+      # Archives are written here — a SEPARATE volume from the data dir, so a
+      # deleted or corrupted data volume does not take the backups with it.
+      INFLOOP_BACKUP_DIR: /backups
+      # Optional operator knobs, documented in .env.example. Passed through
+      # empty when unset in .env; the script then applies its default
+      # (every 24h, keep 7 generations).
+      INFLOOP_BACKUP_INTERVAL_HOURS: ${INFLOOP_BACKUP_INTERVAL_HOURS:-}
+      INFLOOP_BACKUP_KEEP: ${INFLOOP_BACKUP_KEEP:-}
+
+    # createBackup stages its manifest and lets `tar` use the system temp dir;
+    # both land here on the otherwise read-only root filesystem.
+    tmpfs:
+      - /tmp:mode=1777,size=256m
+
+    volumes:
+      # The data volume, READ-ONLY: a backup only ever reads it, so a bug in
+      # this sidecar can never corrupt live data.
+      - infinite-loop-data:/data:ro
+      # The archives — a dedicated volume, separate from the data volume (see
+      # INFLOOP_BACKUP_DIR above). Still on the same host: for true disaster
+      # recovery copy these off-host (docs/backup-restore.md#automated-backups).
+      - infinite-loop-backups:/backups
+
 volumes:
   infinite-loop-data:
   infinite-loop-home:
+  infinite-loop-backups:

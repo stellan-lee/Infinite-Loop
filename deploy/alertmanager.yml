@@ -1,15 +1,20 @@
 # Alertmanager configuration for the Infinite Loop burn-in (docs/burn-in.md).
-# Loaded by the `alertmanager` service in deploy/docker-compose.observability.yml.
+# Loaded by the `alertmanager` service in deploy/docker-compose.observability.yml
+# when no notifier is configured — see that service's entrypoint.
 #
 # The burn-in only needs to SEE alerts route and group — it does not need them
 # delivered anywhere — so the default route points at a null receiver (a
 # receiver with no notifier). Firing alerts are still visible on the
 # Alertmanager UI (http://localhost:9093) and the Prometheus Alerts page,
-# which is all Phase 3 verification requires.
+# which is all a local burn-in requires.
 #
-# To send alerts somewhere real, add a notifier to a receiver — e.g.
-# `slack_configs:`, `email_configs:`, or `webhook_configs:` — and route to it.
-# See https://prometheus.io/docs/alerting/latest/configuration/.
+# To deliver alerts to Slack instead, set INFLOOP_ALERT_SLACK_WEBHOOK_URL in
+# .env: the alertmanager service then loads alertmanager.slack.yml from this
+# directory rather than this file. burn-in Run 2 (docs/burn-in-run2-plan.md)
+# does exactly that, to validate the alert delivery path end to end. For other
+# notifiers (`email_configs:`, `webhook_configs:`, …) add a receiver here or in
+# alertmanager.slack.yml — see
+# https://prometheus.io/docs/alerting/latest/configuration/.
 
 route:
   receiver: 'null'
@@ -21,5 +26,6 @@ route:
 
 receivers:
   # A receiver with no notifier config — alerts collect on the UI and go
-  # nowhere else. Replace with a real notifier for a non-burn-in deployment.
+  # nowhere else. Set INFLOOP_ALERT_SLACK_WEBHOOK_URL to use alertmanager.slack.yml
+  # instead, or replace this with a real notifier for a non-burn-in deployment.
   - name: 'null'

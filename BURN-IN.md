@@ -191,6 +191,10 @@ pause or a load generator beyond a shell — noted for a future run.
 `pending` — needs a 24–72h unattended window. Drive a steady modest load and
 watch that the gauges return to baseline between runs, RSS stays flat, and
 `infloop_process_uptime_seconds` climbs monotonically (no silent restart).
+The *watch* half is now automated: `deploy/burn-in-soak-watch.ts`
+(`bun run soak-watch`) samples the soak gauges on an interval and prints a
+Phase 5 drift verdict — uptime monotonicity, gauge ratchet, RSS leak. The soak
+still needs the load generator and the wall-clock window.
 
 ### Outstanding / decisions before production
 
@@ -199,7 +203,11 @@ watch that the gauges return to baseline between runs, RSS stays flat, and
    wiring; it cannot prove host reality — TLS termination, the real reverse
    proxy, real network egress, real disk-full behaviour, and the
    `restart: unless-stopped` auto-restart on a `docker kill` (which did not
-   fire on Docker Desktop / macOS here — confirm it on Linux).
+   fire on Docker Desktop / macOS here — confirm it on Linux). Phase 5's
+   observation is now tooled: `deploy/burn-in-soak-watch.ts` (`bun run
+   soak-watch`) samples the soak gauges and prints the drift verdict, so the
+   soak needs a load generator and a wall-clock window — not a human watching
+   Prometheus for three days.
 2. **3.3 (cost budget) and 3.6 (slot pool) are unverified** for lack of
    provider credentials. Both need a provider that actually runs: 3.3 needs
    the `claude` CLI authenticated and real spend; 3.6 needs Agent nodes that

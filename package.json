@@ -10,6 +10,7 @@
     "backup": "bun scripts/backup.ts",
     "restore": "bun scripts/restore.ts",
     "burn-in": "bun deploy/burn-in-driver.ts",
+    "soak-watch": "bun deploy/burn-in-soak-watch.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "test:e2e": "playwright test",

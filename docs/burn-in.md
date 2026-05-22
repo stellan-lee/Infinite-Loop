@@ -177,6 +177,16 @@ The one behaviour class with no automated coverage: slow drift over time.
 3. A gauge that ratchets up, RSS that trends up, or an unexplained uptime
    reset is a leak or an instability — file it before going to production.
 
+Step 2 is automated. The repo ships
+[`deploy/burn-in-soak-watch.ts`](../deploy/burn-in-soak-watch.ts):
+`bun run soak-watch -- --duration <h>` samples those gauges on an interval and,
+when the window elapses (or on Ctrl-C), prints a Phase 5 drift verdict —
+uptime monotonic, the return-to-baseline gauges did not ratchet, RSS flat.
+Pass `--docker-container <name>` (host-local only — RSS is not in `/api/metrics`)
+to add the container-RSS leak check, and `--out <path>` to log every sample as
+JSONL. It is the *observer* only: step 1's steady load is still yours, and an
+idle soak passes vacuously — do not tick the box on a watch run with no load.
+
 ## Sign-off
 
 The burn-in passes when every box is ticked:

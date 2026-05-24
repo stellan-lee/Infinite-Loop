@@ -120,4 +120,51 @@ describe('GET /api/runs/:workflowId/:runId fall-through', () => {
     const res = await GET(req, ctx);
     expect(res.status).toBe(404);
   });
+
+  it('reports status=waiting_for_human and surfaces every pending gate when one or more human gates are parked', async () => {
+    getRunMock.mockRejectedValue(notFound());
+    const snap: RunSnapshot = {
+      status: 'running',
+      runId: 'rid',
+      workflowId: 'wf',
+      iterationByLoopId: {},
+      scope: {},
+      startedAt: 1,
+      // The single-slot waitingFor mirror points at one gate; the
+      // canonical list lives on the controller.
+      waitingFor: {
+        kind: 'human',
+        nodeId: 'manual-a',
+        brief: 'A',
+        decisions: [{ key: 'accepted' }],
+        since: 1,
+      },
+    };
+    const fakeCtrl = {
+      getState: () => snap,
+      pendingHumanDecisions: () => [
+        { nodeId: 'manual-a', brief: 'A', decisions: [{ key: 'accepted' }], since: 1 },
+        { nodeId: 'manual-b', brief: 'B', decisions: [{ key: 'rejected' }], since: 2 },
+      ],
+      workflow: { id: 'wf' },
+      correlationId: 'corr',
+      runId: 'rid',
+    };
+    (workflowEngine.getRun as unknown as AnyMock).mockReturnValue(fakeCtrl);
+
+    const [req, ctx] = reqCtx('wf', 'rid');
+    const res = await GET(req, ctx);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      run: {
+        status: string;
+        pendingHumanDecisions?: Array<{ nodeId: string }>;
+      };
+    };
+    expect(body.run.status).toBe('waiting_for_human');
+    expect(body.run.pendingHumanDecisions?.map((g) => g.nodeId).sort()).toEqual([
+      'manual-a',
+      'manual-b',
+    ]);
+  });
 });

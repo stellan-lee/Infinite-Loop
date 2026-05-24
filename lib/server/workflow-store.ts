@@ -4,6 +4,7 @@ import { dataDir, triggersDir } from './paths';
 import type {
   AgentConfig,
   JudgeNodeConfig,
+  ManualConfig,
   ParallelConfig,
   SubworkflowConfig,
   Workflow,
@@ -11,7 +12,10 @@ import type {
   WorkflowNode,
   WorkflowSummary,
 } from '../shared/workflow';
-import { validateAgentOutputs } from '../shared/workflow';
+import {
+  validateAgentOutputs,
+  validateManualDecisions,
+} from '../shared/workflow';
 import { createLogger } from './logger';
 import type { WebhookTrigger } from '../shared/trigger';
 import {
@@ -109,6 +113,36 @@ function validateNodeConfig(n: WorkflowNode): void {
   if (n.type === 'agent') {
     const cfg = n.config as AgentConfig;
     validateAgentOutputs(cfg.outputs, n.id);
+  }
+  if (n.type === 'manual') {
+    const cfg = n.config as ManualConfig;
+    validateManualDecisions(cfg.decisions, n.id);
+    if (cfg.timeoutMs !== undefined) {
+      if (
+        typeof cfg.timeoutMs !== 'number' ||
+        !Number.isFinite(cfg.timeoutMs) ||
+        cfg.timeoutMs < 0
+      ) {
+        throw new Error(
+          `invalid workflow: manual node "${n.id}" timeoutMs must be a non-negative number`,
+        );
+      }
+      // The timeout path fabricates a `rejected` decision (see
+      // RunController.awaitHumanDecision) — fail-closed when nobody
+      // answers. If the author disabled the `rejected` handle, the
+      // fabricated decision would have nowhere to route. Reject at save
+      // time so the deploy never silently dead-ends. Decisions default
+      // to all three keys when omitted, so this only trips an explicit
+      // opt-out.
+      if (cfg.timeoutMs > 0 && Array.isArray(cfg.decisions)) {
+        const hasRejected = cfg.decisions.some((d) => d && d.key === 'rejected');
+        if (!hasRejected) {
+          throw new Error(
+            `invalid workflow: manual node "${n.id}" timeoutMs > 0 requires a "rejected" decision (the timeout fallback)`,
+          );
+        }
+      }
+    }
   }
 }
 

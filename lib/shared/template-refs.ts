@@ -99,6 +99,14 @@ function staticOutputs(type: WorkflowNode['type']): Array<{ field: string; descr
         { field: 'status', description: 'succeeded / failed / cancelled' },
         { field: 'errorMessage', description: "set when status !== 'succeeded'" },
       ];
+    case 'manual':
+      return [
+        { field: 'decision', description: 'accepted / needs_changes / rejected' },
+        { field: 'decidedBy', description: 'credential kind of the reviewer' },
+        { field: 'decidedAt', description: 'epoch-ms timestamp of the decision' },
+        { field: 'comment', description: 'optional reviewer comment' },
+        { field: 'timedOut', description: 'true if the gate timed out' },
+      ];
     case 'start':
     case 'end':
     case 'sidenote':
@@ -317,6 +325,7 @@ const TEMPLATED_FIELDS: Partial<Record<WorkflowNode['type'], string[]>> = {
   branch: ['lhs', 'rhs'],
   script: ['cwd'],
   judge: ['criteria', 'judgePrompt'],
+  manual: ['brief', 'reviewerHint'],
 };
 
 export interface TemplateLintWarning {

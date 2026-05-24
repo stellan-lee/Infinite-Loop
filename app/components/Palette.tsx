@@ -7,6 +7,7 @@ import {
   LuColumns3,
   LuFilter,
   LuGitBranch,
+  LuHand,
   LuLayers,
   LuPlay,
   LuRepeat,
@@ -75,6 +76,7 @@ const STATIC_CATEGORIES: PaletteCategory[] = [
       { type: 'loop', name: 'Loop', Icon: LuRepeat, glyph: '↻', description: 'repeat until met' },
       { type: 'branch', name: 'If', Icon: LuGitBranch, glyph: '⋔', description: 'if/else on a value' },
       { type: 'condition', name: 'Condition', Icon: LuFilter, glyph: '◷', description: 'evaluate a condition' },
+      { type: 'manual', name: 'Manual', Icon: LuHand, glyph: '✋', description: 'pause for a human acceptance decision' },
     ],
   },
   {

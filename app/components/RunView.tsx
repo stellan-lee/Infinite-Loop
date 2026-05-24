@@ -5,11 +5,15 @@ import { useWorkflowStore } from '../../lib/client/workflow-store-client';
 import { GroupedEventLog, formatPayload } from './RunLog';
 import { eventNodeId } from '../../lib/client/group-events';
 import type {
+  ManualDecisionDecl,
+  ManualDecisionKey,
   NodeStartedEvent,
+  NodeWaitingForHumanEvent,
   Workflow,
   WorkflowEvent,
   WorkflowNode,
 } from '../../lib/shared/workflow';
+import { MANUAL_DECISION_KEYS } from '../../lib/shared/workflow';
 
 const SUBWORKFLOW_PREF_KEY = 'infinite_loop:runview:expandSubworkflows';
 
@@ -20,6 +24,56 @@ interface BranchState {
   status: 'idle' | 'live' | 'succeeded' | 'failed' | 'cancelled';
   /** All stdout lines emitted by this branch, in arrival order. */
   stdoutLines: string[];
+}
+
+interface PendingManualGate {
+  nodeId: string;
+  brief: string;
+  reviewerHint?: string;
+  decisions: ManualDecisionDecl[];
+  /** Approximate epoch-ms the gate started waiting (derived from the
+   *  event index at parse time when no `since` is on the wire). */
+  since: number;
+}
+
+const MANUAL_DECISION_DEFAULT_LABELS: Record<ManualDecisionKey, string> = {
+  accepted: 'Accept',
+  needs_changes: 'Needs changes',
+  rejected: 'Reject',
+};
+
+/**
+ * Walk events to derive the set of Manual gates currently awaiting a
+ * human decision. A gate enters waiting on `node_waiting_for_human`,
+ * leaves it on the matching `node_human_decided` (or `node_finished`,
+ * which carries the same node id). The map keeps it O(n) and lets a
+ * future workflow park multiple gates concurrently — common when a
+ * parallel branch fans out reviewers.
+ */
+function findPendingManualGates(
+  events: readonly WorkflowEvent[],
+): PendingManualGate[] {
+  const pending = new Map<string, PendingManualGate>();
+  for (const ev of events) {
+    if (ev.type === 'node_waiting_for_human') {
+      const e = ev as NodeWaitingForHumanEvent;
+      pending.set(e.nodeId, {
+        nodeId: e.nodeId,
+        brief: e.brief,
+        reviewerHint: e.reviewerHint,
+        decisions:
+          e.decisions && e.decisions.length > 0
+            ? e.decisions
+            : MANUAL_DECISION_KEYS.map((key) => ({ key })),
+        since: Date.now(),
+      });
+    } else if (ev.type === 'node_human_decided' || ev.type === 'node_finished') {
+      if ('nodeId' in ev && typeof ev.nodeId === 'string') {
+        pending.delete(ev.nodeId);
+      }
+    }
+  }
+  return Array.from(pending.values());
 }
 
 /**
@@ -309,6 +363,21 @@ export default function RunView() {
     [runEvents],
   );
 
+  const pendingGates = useMemo(
+    () => findPendingManualGates(runEvents),
+    [runEvents],
+  );
+  // runId rides on every run-scoped event the controller emits. Pulled
+  // here so the decision panel can post to /api/runs/<wfId>/<runId>/decision
+  // without the store needing a dedicated `currentRunId` field.
+  const runId = useMemo(() => {
+    for (const ev of runEvents) {
+      const r = (ev as { runId?: unknown }).runId;
+      if (typeof r === 'string') return r;
+    }
+    return null;
+  }, [runEvents]);
+
   const parallelChildIds = useMemo(
     () => findParallelChildIds(currentWorkflow),
     [currentWorkflow],
@@ -373,6 +442,19 @@ export default function RunView() {
         </span>
       </header>
 
+      {pendingGates.length > 0 && currentWorkflow && runId ? (
+        <div className="run-view-gates" aria-label="awaiting human decision">
+          {pendingGates.map((gate) => (
+            <ManualGatePanel
+              key={gate.nodeId}
+              gate={gate}
+              workflowId={currentWorkflow.id}
+              runId={runId}
+            />
+          ))}
+        </div>
+      ) : null}
+
       {running.length > 0 ? (
         <div className="run-view-current" aria-label="currently running">
           {running.map((ev) => {
@@ -419,6 +501,129 @@ export default function RunView() {
         <GroupedEventLog events={visibleEvents} />
       </div>
     </aside>
+  );
+}
+
+/**
+ * Inline panel for a Manual / human-acceptance gate that is currently
+ * parked. Lets the reviewer pick a decision and (optionally) attach a
+ * comment, then posts to `/api/runs/<wf>/<run>/decision`.
+ *
+ * Productized: never references any specific reviewer / agent / persona.
+ * The 'authorized reviewer' identity is whatever the API token / session
+ * cookie represents — single-tenant by design.
+ */
+function ManualGatePanel({
+  gate,
+  workflowId,
+  runId,
+}: {
+  gate: PendingManualGate;
+  workflowId: string;
+  runId: string;
+}) {
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState<ManualDecisionKey | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (decision: ManualDecisionKey) => {
+    if (submitting) return;
+    setSubmitting(decision);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/runs/${encodeURIComponent(workflowId)}/${encodeURIComponent(runId)}/decision`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            nodeId: gate.nodeId,
+            decision,
+            ...(comment.trim() ? { comment: comment.trim() } : {}),
+          }),
+        },
+      );
+      if (!res.ok) {
+        let detail = `${res.status}`;
+        try {
+          const data = (await res.json()) as { error?: string };
+          if (data?.error) detail = data.error;
+        } catch {
+          // best effort
+        }
+        throw new Error(detail);
+      }
+      // The matching node_human_decided event will clear the gate from
+      // `pendingGates` and unmount this panel — no local cleanup needed.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'submit failed');
+      setSubmitting(null);
+    }
+  };
+
+  return (
+    <section
+      className="run-view-gate"
+      aria-label={`manual gate ${gate.nodeId}`}
+      data-status="waiting_for_human"
+    >
+      <header className="run-view-gate-head">
+        <span className="pill" data-status="waiting_for_human">
+          <span className="dot" /> waiting_for_human
+        </span>
+        <span className="run-view-gate-id">{gate.nodeId}</span>
+      </header>
+      {gate.brief ? (
+        <pre className="run-view-gate-brief" aria-label="acceptance brief">
+          {gate.brief}
+        </pre>
+      ) : (
+        <p className="run-view-gate-brief run-view-gate-brief--empty">
+          (no brief — author left it blank)
+        </p>
+      )}
+      {gate.reviewerHint ? (
+        <p className="run-view-gate-hint">
+          Reviewer: <strong>{gate.reviewerHint}</strong>
+        </p>
+      ) : null}
+      <label className="run-view-gate-comment">
+        <span>Comment (optional)</span>
+        <textarea
+          aria-label="decision comment"
+          rows={2}
+          maxLength={4000}
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          disabled={submitting !== null}
+        />
+      </label>
+      <div className="run-view-gate-buttons">
+        {gate.decisions.map((decl) => {
+          const label =
+            decl.label ?? MANUAL_DECISION_DEFAULT_LABELS[decl.key] ?? decl.key;
+          return (
+            <button
+              key={decl.key}
+              type="button"
+              className="btn"
+              data-decision={decl.key}
+              aria-label={`submit ${decl.key}`}
+              onClick={() => submit(decl.key)}
+              disabled={submitting !== null}
+              title={decl.description ?? undefined}
+            >
+              {submitting === decl.key ? `${label}…` : label}
+            </button>
+          );
+        })}
+      </div>
+      {error && (
+        <p className="run-view-gate-error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
 

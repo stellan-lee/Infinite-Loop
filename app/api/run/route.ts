@@ -106,14 +106,28 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {
   const unauth = requireAuth(req);
   if (unauth) return unauth;
-  const runs = workflowEngine.list().map((c) => ({
-    runId: c.runId,
-    workflowId: c.workflow.id,
-    workflowName: c.workflow.name,
-    status: c.snapshot.status,
-    startedAt: c.snapshot.startedAt,
-    waitingFor: c.snapshot.waitingFor,
-  }));
+  const runs = workflowEngine.list().map((c) => {
+    // A run can be parked on more than one Manual gate at a time (e.g. two
+    // parallel branches each fan out a reviewer). `snapshot.waitingFor`
+    // only carries one of them — it's a single-slot field shared with
+    // lock/slot waits — so the canonical "is any human gate pending"
+    // signal lives on the controller's `pendingHumanDecisions()` list.
+    const pendingHuman = c.pendingHumanDecisions();
+    const waitingHuman =
+      c.snapshot.status === 'running' && pendingHuman.length > 0;
+    return {
+      runId: c.runId,
+      workflowId: c.workflow.id,
+      workflowName: c.workflow.name,
+      // Project waiting-for-human into a distinct status string so a CLI /
+      // dashboard reading this list can spot blocked runs without inspecting
+      // `waitingFor.kind`. Underlying snapshot.status stays 'running'.
+      status: waitingHuman ? 'waiting_for_human' : c.snapshot.status,
+      startedAt: c.snapshot.startedAt,
+      waitingFor: c.snapshot.waitingFor,
+      ...(waitingHuman ? { pendingHumanDecisions: pendingHuman } : {}),
+    };
+  });
   return NextResponse.json(
     {
       state: workflowEngine.getState(),

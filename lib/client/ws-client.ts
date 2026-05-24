@@ -17,6 +17,8 @@ const VALID_EVENT_TYPES = new Set<WorkflowEvent['type']>([
   'node_lock_acquired',
   'node_waiting_for_slot',
   'node_slot_acquired',
+  'node_waiting_for_human',
+  'node_human_decided',
   'trigger_enqueued',
   'trigger_started',
   'trigger_dropped',

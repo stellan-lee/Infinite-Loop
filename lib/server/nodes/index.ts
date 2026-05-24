@@ -10,6 +10,7 @@ import { subworkflowExecutor } from './subworkflow';
 import { judgeExecutor } from './judge';
 import { sidenoteExecutor } from './sidenote';
 import { scriptExecutor } from './script';
+import { manualExecutor } from './manual';
 
 export const nodeExecutors: Record<NodeType, NodeExecutor> = {
   start: startExecutor,
@@ -23,4 +24,5 @@ export const nodeExecutors: Record<NodeType, NodeExecutor> = {
   judge: judgeExecutor,
   sidenote: sidenoteExecutor,
   script: scriptExecutor,
+  manual: manualExecutor,
 };

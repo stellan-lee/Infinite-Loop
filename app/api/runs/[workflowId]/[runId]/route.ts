@@ -30,10 +30,21 @@ export async function GET(
   const ctrl = workflowEngine.getRun(runId);
   const snap = ctrl ? ctrl.getState() : workflowEngine.getState();
   if (snap.runId === runId && snap.workflowId === workflowId) {
+    // Promote a pending human gate into a top-level
+    // `status: 'waiting_for_human'` projection so a polling caller can
+    // distinguish "running but blocked on a reviewer" from "running"
+    // without a separate fetch. Multiple gates may be parked at once
+    // (e.g. parallel branches) — `snapshot.waitingFor` is single-slot,
+    // so the authoritative signal is the controller's
+    // `pendingHumanDecisions()` list. The underlying snapshot.status
+    // stays 'running' (the engine isn't done with the run); this is
+    // purely a wire-shape convenience for the GET endpoint.
+    const pendingHuman = ctrl ? ctrl.pendingHumanDecisions() : [];
+    const isWaitingHuman = snap.status === 'running' && pendingHuman.length > 0;
     const synthetic = {
       runId,
       workflowId,
-      status: snap.status,
+      status: isWaitingHuman ? 'waiting_for_human' : snap.status,
       startedAt: snap.startedAt,
       finishedAt: snap.finishedAt,
       errorMessage: snap.errorMessage,
@@ -42,6 +53,8 @@ export async function GET(
       // Partial scope while running; full on settle. A polling caller wants
       // to see node outputs as they land.
       scope: snap.scope,
+      waitingFor: snap.waitingFor,
+      ...(isWaitingHuman ? { pendingHumanDecisions: pendingHuman } : {}),
       // events intentionally omitted — the SSE bus at /api/events is the
       // canonical live event stream; this endpoint is a snapshot view.
     };

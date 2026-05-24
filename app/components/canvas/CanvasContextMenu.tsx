@@ -35,6 +35,7 @@ const STATIC_GROUPS: Array<{ heading: string; items: ContextMenuItem[] }> = [
       { type: 'loop', label: 'Loop' },
       { type: 'branch', label: 'If' },
       { type: 'condition', label: 'Condition' },
+      { type: 'manual', label: 'Manual' },
     ],
   },
   {

@@ -9,7 +9,11 @@
 
 import type {
   EdgeHandle,
+  HumanDecisionRecord,
   LoopConfig,
+  ManualConfig,
+  ManualDecisionDecl,
+  ManualDecisionKey,
   NodeExecutor,
   NodeExecutorContext,
   ParallelConfig,
@@ -23,6 +27,7 @@ import type {
   WorkflowEvent,
   WorkflowNode,
 } from '../shared/workflow';
+import { MANUAL_DECISION_KEYS } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { eventBus } from './event-bus';
 import { eventMemoryBudget, type EventMemoryBudget } from './event-memory-budget';
@@ -56,6 +61,10 @@ const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   // `inputs` is a Record<string,string> resolved per-value below in
   // `resolveConfigTemplates`.
   script: ['cwd'],
+  // Manual: brief and reviewerHint are the user-visible strings; templating
+  // them lets the gate quote outputs from upstream nodes
+  // ("Review {{agent-1.stdout}}").
+  manual: ['brief', 'reviewerHint'],
 };
 
 /**
@@ -83,6 +92,40 @@ interface ExecutionScope {
    * namespace event nodeIds so the UI can scope highlights per subworkflow.
    * Empty for top-level runs. */
   subworkflowStack?: string[];
+}
+
+/** Per-gate state held while a Manual node is parked. The `resolve` fn
+ *  finishes the executor's `awaitHumanDecision()` promise; the controller
+ *  removes the entry before invoking it so a duplicate submit cannot fire
+ *  the same gate twice. */
+interface ManualPendingDecision {
+  brief: string;
+  reviewerHint?: string;
+  decisions: ManualDecisionDecl[];
+  allowed: ManualDecisionKey[];
+  since: number;
+  resolve: (record: HumanDecisionRecord) => void;
+}
+
+export type SubmitDecisionResult =
+  | { ok: true; record: HumanDecisionRecord }
+  | {
+      ok: false;
+      reason:
+        | 'run-not-running'
+        | 'no-pending-decision'
+        | 'invalid-decision'
+        | 'decision-not-allowed';
+      /** Decisions the gate accepts. Present for the two `*-decision*`
+       *  reasons so the API can echo the right hint back. */
+      allowed?: ManualDecisionKey[];
+    };
+
+function isManualDecisionKey(value: unknown): value is ManualDecisionKey {
+  return (
+    typeof value === 'string' &&
+    (MANUAL_DECISION_KEYS as readonly string[]).includes(value)
+  );
 }
 
 /* ─── per-run event-buffer hard caps ─────────────────────────────────────────
@@ -261,6 +304,13 @@ export class RunController {
   private runStartedAt = 0;
   /** Set when a budget ceiling trips; reclassifies the run as failed. */
   private budgetExceededMessage?: string;
+
+  /** In-flight Manual-gate waiters keyed by namespaced node id (the same id
+   *  used in events / snapshot.currentNodeId). At most one wait is active
+   *  per node id at a time — the engine walks the graph serially per branch
+   *  — but the map shape makes the lookup uniform and lets a future
+   *  multi-gate workflow (e.g. parallel branches each parking) coexist. */
+  private pendingDecisions = new Map<string, ManualPendingDecision>();
 
   constructor(deps: RunControllerDeps) {
     this.runId = deps.runId;
@@ -798,6 +848,229 @@ export class RunController {
           '. Raise or disable INFLOOP_MAX_TOTAL_COST_USD.',
       );
     }
+  }
+
+  /**
+   * Submit a Manual-gate decision for a parked node. Called by the
+   * `/api/runs/[workflowId]/[runId]/decision` route. Returns a structured
+   * result so the API can map each failure mode to a distinct status code
+   * without throwing — invalid decisions, gates that never existed, and
+   * gates that already settled have very different meanings to the caller.
+   *
+   * The `actor` string is the credential kind (mirrors `audit-log`'s
+   * `actor` convention) and is persisted as `decidedBy`. We deliberately
+   * never store a person's identity: Infinite Loop is single-tenant and an
+   * authorized reviewer's identity lives upstream of this server.
+   */
+  submitDecision(opts: {
+    nodeId: string;
+    decision: string;
+    comment?: string;
+    actor: string;
+  }): SubmitDecisionResult {
+    if (this.snapshot.status !== 'running') {
+      return { ok: false, reason: 'run-not-running' };
+    }
+    const pending = this.pendingDecisions.get(opts.nodeId);
+    if (!pending) {
+      return { ok: false, reason: 'no-pending-decision' };
+    }
+    const decision = opts.decision as ManualDecisionKey;
+    if (!isManualDecisionKey(decision)) {
+      return {
+        ok: false,
+        reason: 'invalid-decision',
+        allowed: pending.allowed.slice(),
+      };
+    }
+    if (!pending.allowed.includes(decision)) {
+      return {
+        ok: false,
+        reason: 'decision-not-allowed',
+        allowed: pending.allowed.slice(),
+      };
+    }
+    const record: HumanDecisionRecord = {
+      decision,
+      decidedBy: opts.actor,
+      decidedAt: Date.now(),
+      ...(opts.comment ? { comment: opts.comment } : {}),
+    };
+    pending.resolve(record);
+    return { ok: true, record };
+  }
+
+  /**
+   * Park the run on a Manual gate, stamping `snapshot.waitingFor` and
+   * emitting `node_waiting_for_human` so the UI / API / MCP can render the
+   * gate. Resolves with the reviewer's decision (or a timeout-fabricated
+   * one) and rejects if the run is aborted while waiting — that path turns
+   * into a `cancelled` status via the existing executor error handling.
+   */
+  private awaitHumanDecision(opts: {
+    namespacedId: string;
+    brief: string;
+    reviewerHint?: string;
+    decisions: ManualDecisionDecl[];
+    timeoutMs?: number;
+    signal: AbortSignal;
+  }): Promise<HumanDecisionRecord> {
+    return new Promise<HumanDecisionRecord>((resolve, reject) => {
+      const since = Date.now();
+      const allowed = opts.decisions.map((d) => d.key);
+      let settled = false;
+
+      const cleanup = () => {
+        this.pendingDecisions.delete(opts.namespacedId);
+        if (this.snapshot.waitingFor?.kind === 'human' &&
+            this.snapshot.waitingFor?.nodeId === opts.namespacedId) {
+          // If another human gate is still pending (parallel branches each
+          // parked a reviewer), promote the next one into the single-slot
+          // `waitingFor` so the snapshot keeps reading as
+          // `waiting_for_human` rather than briefly flipping back to plain
+          // running between gates. The authoritative list lives on
+          // `pendingDecisions` / `pendingHumanDecisions()`; this is just
+          // the legacy single-slot mirror used by older consumers.
+          const next = this.pendingDecisions.values().next();
+          if (!next.done) {
+            const other = next.value;
+            const otherId = [...this.pendingDecisions.keys()].find(
+              (k) => this.pendingDecisions.get(k) === other,
+            );
+            this.snapshot = {
+              ...this.snapshot,
+              waitingFor: {
+                kind: 'human',
+                nodeId: otherId ?? opts.namespacedId,
+                brief: other.brief,
+                reviewerHint: other.reviewerHint,
+                decisions: other.decisions,
+                since: other.since,
+              },
+            };
+          } else {
+            this.snapshot = { ...this.snapshot, waitingFor: undefined };
+          }
+        }
+        opts.signal.removeEventListener('abort', onAbort);
+        if (timer) clearTimeout(timer);
+      };
+
+      const finish = (record: HumanDecisionRecord) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        this.emit({
+          type: 'node_human_decided',
+          nodeId: opts.namespacedId,
+          decision: record.decision,
+          decidedBy: record.decidedBy,
+          decidedAt: record.decidedAt,
+          ...(record.comment ? { comment: record.comment } : {}),
+          ...(record.timedOut ? { timedOut: true } : {}),
+        });
+        resolve(record);
+      };
+
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+
+      const onAbort = () => {
+        // Run cancelled or budget-tripped while parked. Reject so the
+        // executor's caller (executeNode) routes through the existing
+        // abort / signal-aware error path.
+        fail(new Error('manual gate aborted'));
+      };
+
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      if (opts.timeoutMs && opts.timeoutMs > 0) {
+        // Timeout falls back to `rejected` so a forgotten gate fails closed
+        // — the deploy/incident-response convention. The fabricated record
+        // is persisted exactly like a human submission, with `timedOut`
+        // set so audit / UI can distinguish.
+        timer = setTimeout(() => {
+          finish({
+            decision: 'rejected',
+            decidedBy: 'system:timeout',
+            decidedAt: Date.now(),
+            timedOut: true,
+          });
+        }, opts.timeoutMs);
+      }
+
+      if (opts.signal.aborted) {
+        // Already cancelled before we got here — fail synchronously without
+        // recording state. (`cleanup` is safe to call even if `pendingDecisions`
+        // never held an entry for this nodeId.)
+        fail(new Error('manual gate aborted'));
+        return;
+      }
+      opts.signal.addEventListener('abort', onAbort, { once: true });
+
+      this.pendingDecisions.set(opts.namespacedId, {
+        brief: opts.brief,
+        reviewerHint: opts.reviewerHint,
+        decisions: opts.decisions,
+        allowed,
+        since,
+        resolve: finish,
+      });
+
+      this.snapshot = {
+        ...this.snapshot,
+        waitingFor: {
+          kind: 'human',
+          nodeId: opts.namespacedId,
+          brief: opts.brief,
+          reviewerHint: opts.reviewerHint,
+          decisions: opts.decisions,
+          since,
+        },
+      };
+
+      this.emit({
+        type: 'node_waiting_for_human',
+        nodeId: opts.namespacedId,
+        brief: opts.brief,
+        ...(opts.reviewerHint ? { reviewerHint: opts.reviewerHint } : {}),
+        decisions: opts.decisions,
+      });
+    });
+  }
+
+  /**
+   * Snapshot every Manual-gate this run is currently parked on. The
+   * `/api/runs` list endpoint uses this so an operator can spot stuck gates
+   * across runs without polling every detail endpoint.
+   */
+  pendingHumanDecisions(): Array<{
+    nodeId: string;
+    brief: string;
+    reviewerHint?: string;
+    decisions: ManualDecisionDecl[];
+    since: number;
+  }> {
+    const out: Array<{
+      nodeId: string;
+      brief: string;
+      reviewerHint?: string;
+      decisions: ManualDecisionDecl[];
+      since: number;
+    }> = [];
+    for (const [nodeId, pending] of this.pendingDecisions) {
+      out.push({
+        nodeId,
+        brief: pending.brief,
+        reviewerHint: pending.reviewerHint,
+        decisions: pending.decisions,
+        since: pending.since,
+      });
+    }
+    return out;
   }
 
   /**
@@ -1354,6 +1627,15 @@ export class RunController {
       registerExempt: this.lockManager
         ? (canonical) => this.lockManager!.registerExempt(canonical, this.runId)
         : undefined,
+      awaitHumanDecision: (opts) =>
+        this.awaitHumanDecision({
+          namespacedId,
+          brief: opts.brief,
+          reviewerHint: opts.reviewerHint,
+          decisions: opts.decisions,
+          timeoutMs: opts.timeoutMs,
+          signal,
+        }),
     };
 
     let result;

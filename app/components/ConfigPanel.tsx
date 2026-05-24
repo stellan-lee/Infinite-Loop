@@ -41,6 +41,9 @@ import type {
   EndConfig,
   JudgeNodeConfig,
   LoopConfig,
+  ManualConfig,
+  ManualDecisionDecl,
+  ManualDecisionKey,
   ParallelConfig,
   ParallelMode,
   ParallelOnError,
@@ -53,7 +56,10 @@ import type {
   WorkflowNode,
   WorkflowSummary,
 } from '@/lib/shared/workflow';
-import { AGENT_RESERVED_OUTPUT_NAMES } from '@/lib/shared/workflow';
+import {
+  AGENT_RESERVED_OUTPUT_NAMES,
+  MANUAL_DECISION_KEYS,
+} from '@/lib/shared/workflow';
 
 /** Available `{{nodeId.stdout}}` template refs for a given node id. */
 function availableRefs(workflow: Workflow | null, selfId: string): string[] {
@@ -1875,6 +1881,286 @@ function CandidateRow({
   );
 }
 
+/* ─── manual / human-acceptance form ───────────────────────── */
+
+const MANUAL_DECISION_DEFAULT_LABELS: Record<ManualDecisionKey, string> = {
+  accepted: 'Accept',
+  needs_changes: 'Needs changes',
+  rejected: 'Reject',
+};
+
+function ManualForm({
+  config,
+  refs,
+  templateRefs,
+  selfId,
+  onPatch,
+}: {
+  config: ManualConfig;
+  refs: string[];
+  templateRefs: readonly TemplateRef[];
+  selfId: string;
+  onPatch: (next: ManualConfig) => void;
+}) {
+  const [brief, setBrief] = useDebouncedString(
+    config.brief ?? '',
+    (next) => onPatch({ ...config, brief: next }),
+  );
+  const [reviewerHint, setReviewerHint] = useDebouncedString(
+    config.reviewerHint ?? '',
+    (next) =>
+      onPatch({
+        ...config,
+        reviewerHint: next.trim() ? next : undefined,
+      }),
+  );
+
+  // Decisions: at least one entry is required at save-time. Render every
+  // conventional key as a row with an enable toggle so the author opts in
+  // by checkbox rather than typing key strings. The 'rejected' branch is
+  // the default fallback for timeouts; the form encourages keeping it on
+  // by labelling it the "timeout fallback" when timeoutMs > 0.
+  const declared = config.decisions ?? [];
+  const byKey = new Map(declared.map((d) => [d.key, d]));
+  const hasAny = declared.length > 0;
+
+  const timeoutMsCurrent = config.timeoutMs ?? 0;
+  const toggleDecision = (key: ManualDecisionKey) => {
+    if (byKey.has(key)) {
+      // Don't allow removing the last decision — the executor would have
+      // nothing to route to. Also don't allow removing `rejected` while a
+      // timeout is configured: the timeout path fabricates a `rejected`
+      // decision and needs that handle present (also enforced server-side
+      // in workflow-store validation). The checkbox is visually disabled
+      // when either guard would apply.
+      if (declared.length <= 1) return;
+      if (key === 'rejected' && timeoutMsCurrent > 0) return;
+      const next = declared.filter((d) => d.key !== key);
+      onPatch({ ...config, decisions: next });
+    } else {
+      const next = [...declared, { key }];
+      onPatch({ ...config, decisions: next });
+    }
+  };
+
+  const patchDecision = (key: ManualDecisionKey, patch: Partial<ManualDecisionDecl>) => {
+    const next = declared.map((d) => (d.key === key ? { ...d, ...patch } : d));
+    onPatch({ ...config, decisions: next });
+  };
+
+  const timeoutMsRaw = config.timeoutMs ?? 0;
+  const [timeoutUnit, setTimeoutUnit] = useState<TimeoutUnit>(() =>
+    pickInitialTimeoutUnit(timeoutMsRaw > 0 ? timeoutMsRaw : 60_000),
+  );
+  const timeoutDisplay =
+    timeoutMsRaw > 0
+      ? Number((timeoutMsRaw / TIMEOUT_UNIT_MS[timeoutUnit]).toFixed(2))
+      : 0;
+  const onTimeoutChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === '') {
+      onPatch({ ...config, timeoutMs: undefined });
+      return;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) return;
+    if (value === 0) {
+      onPatch({ ...config, timeoutMs: undefined });
+      return;
+    }
+    const ms = Math.max(1000, Math.round(value * TIMEOUT_UNIT_MS[timeoutUnit]));
+    // Auto-add the `rejected` decision when setting a timeout, since the
+    // timeout path fabricates a rejected decision and the workflow
+    // validator requires that handle to exist whenever timeoutMs > 0.
+    // Saves the user a save-time error round-trip.
+    const next: ManualConfig = { ...config, timeoutMs: ms };
+    const list = next.decisions ?? declared;
+    if (!list.some((d) => d.key === 'rejected')) {
+      next.decisions = [...list, { key: 'rejected' }];
+    }
+    onPatch(next);
+  };
+
+  return (
+    <>
+      <div className="field">
+        <span className="field-label">Acceptance brief</span>
+        <TemplateField
+          multiline
+          rows={5}
+          ariaLabel="Acceptance brief"
+          value={brief}
+          onChange={setBrief}
+          selfId={selfId}
+          refs={templateRefs}
+          fieldPath="brief"
+          placeholder="Summarize what to review, e.g. Approve PR {{agent-1.stdout}}?"
+        />
+        <RefChips refs={refs} />
+        <span className="field-hint">
+          Shown to the reviewer above the decision buttons. Templated against
+          upstream outputs.
+        </span>
+      </div>
+
+      <div className="field">
+        <span className="field-label">Reviewer hint</span>
+        <TemplateField
+          ariaLabel="Reviewer hint"
+          value={reviewerHint}
+          onChange={setReviewerHint}
+          selfId={selfId}
+          refs={templateRefs}
+          fieldPath="reviewerHint"
+          placeholder="who is expected to decide (e.g. on-call SRE)"
+        />
+        <span className="field-hint">
+          Free-form operator guidance — Infinite Loop is single-tenant so this
+          is descriptive, not an identity check.
+        </span>
+      </div>
+
+      <div className="field">
+        <span className="field-label">Decisions</span>
+        <div className="kv-rows">
+          {MANUAL_DECISION_KEYS.map((key) => {
+            const decl = byKey.get(key);
+            const enabled = decl !== undefined;
+            const onlyOne = enabled && declared.length <= 1;
+            const requiredByTimeout =
+              key === 'rejected' && timeoutMsCurrent > 0 && enabled;
+            const fallback = MANUAL_DECISION_DEFAULT_LABELS[key];
+            return (
+              <ManualDecisionRow
+                key={key}
+                decisionKey={key}
+                enabled={enabled}
+                onlyOne={onlyOne || requiredByTimeout}
+                label={decl?.label ?? ''}
+                description={decl?.description ?? ''}
+                fallback={fallback}
+                isTimeoutFallback={
+                  key === 'rejected' && timeoutMsCurrent > 0
+                }
+                onToggle={() => toggleDecision(key)}
+                onPatch={(patch) => patchDecision(key, patch)}
+              />
+            );
+          })}
+        </div>
+        {!hasAny && (
+          <span className="field-hint field-hint--error">
+            at least one decision must be enabled
+          </span>
+        )}
+        <span className="field-hint">
+          Each enabled decision becomes an outgoing edge on the canvas
+          (handles match the key).
+        </span>
+      </div>
+
+      <div className="field">
+        <span className="field-label">Timeout (optional)</span>
+        <div className="field-row">
+          <input
+            aria-label="Timeout"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="any"
+            value={timeoutDisplay}
+            onChange={onTimeoutChange}
+            className="no-spin"
+          />
+          <div className="seg-tight" role="group" aria-label="Timeout unit">
+            {TIMEOUT_UNITS.map((u) => (
+              <button
+                key={u}
+                type="button"
+                data-active={timeoutUnit === u}
+                aria-pressed={timeoutUnit === u}
+                onClick={() => setTimeoutUnit(u)}
+              >
+                {u}
+              </button>
+            ))}
+          </div>
+        </div>
+        <span className="field-hint">
+          0 (or blank) waits indefinitely. When set, an elapsed gate routes
+          through <code>rejected</code> with <code>timedOut: true</code> in
+          its scope outputs.
+        </span>
+      </div>
+    </>
+  );
+}
+
+function ManualDecisionRow({
+  decisionKey,
+  enabled,
+  onlyOne,
+  label,
+  description,
+  fallback,
+  isTimeoutFallback,
+  onToggle,
+  onPatch,
+}: {
+  decisionKey: ManualDecisionKey;
+  enabled: boolean;
+  onlyOne: boolean;
+  label: string;
+  description: string;
+  fallback: string;
+  isTimeoutFallback: boolean;
+  onToggle: () => void;
+  onPatch: (patch: Partial<ManualDecisionDecl>) => void;
+}) {
+  const [labelBuf, setLabelBuf] = useDebouncedString(label, (next) =>
+    onPatch({ label: next.trim() ? next : undefined }),
+  );
+  const [descBuf, setDescBuf] = useDebouncedString(description, (next) =>
+    onPatch({ description: next.trim() ? next : undefined }),
+  );
+  return (
+    <div className="kv-row" aria-label={`decision ${decisionKey}`}>
+      <label className="checkbox-row" style={{ gap: 6 }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={onlyOne}
+          onChange={onToggle}
+          aria-label={`enable decision ${decisionKey}`}
+          title={onlyOne ? 'at least one decision must remain' : undefined}
+        />
+        <code>{decisionKey}</code>
+        {isTimeoutFallback && (
+          <span className="field-hint">(timeout fallback)</span>
+        )}
+      </label>
+      <div className="kv-row-value">
+        <input
+          aria-label={`label for ${decisionKey}`}
+          type="text"
+          value={labelBuf}
+          onChange={(e) => setLabelBuf(e.target.value)}
+          placeholder={fallback}
+          disabled={!enabled}
+        />
+        <input
+          aria-label={`description for ${decisionKey}`}
+          type="text"
+          value={descBuf}
+          onChange={(e) => setDescBuf(e.target.value)}
+          placeholder="optional one-liner shown to the reviewer"
+          disabled={!enabled}
+        />
+      </div>
+    </div>
+  );
+}
+
 function JudgeForm({
   config,
   refs,
@@ -2493,6 +2779,15 @@ export default function ConfigPanel() {
         {node.type === 'script' && (
           <ScriptForm
             config={node.config as ScriptConfig}
+            refs={refs}
+            templateRefs={templateRefs}
+            selfId={node.id}
+            onPatch={patchConfig}
+          />
+        )}
+        {node.type === 'manual' && (
+          <ManualForm
+            config={node.config as ManualConfig}
             refs={refs}
             templateRefs={templateRefs}
             selfId={node.id}

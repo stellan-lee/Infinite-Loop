@@ -24,6 +24,7 @@ import type {
   EndConfig,
   JudgeNodeConfig,
   LoopConfig,
+  ManualConfig,
   NodeConfigByType,
   NodeType,
   ParallelConfig,
@@ -52,6 +53,7 @@ import ConditionNode from './nodes/ConditionNode';
 import EndNode from './nodes/EndNode';
 import JudgeNode from './nodes/JudgeNode';
 import LoopNode from './nodes/LoopNode';
+import ManualNode from './nodes/ManualNode';
 import ParallelNode from './nodes/ParallelNode';
 import ScriptNode from './nodes/ScriptNode';
 import SidenoteNode from './nodes/SidenoteNode';
@@ -130,6 +132,18 @@ const DEFAULT_CONFIG: { [K in NodeType]: () => NodeConfigByType[K] } = {
       '  return { output1: `echo: ${arg1} + ${arg2}` };\n' +
       '}\n',
     timeoutMs: 60_000,
+  }),
+  manual: (): ManualConfig => ({
+    // No brief by default — most authors will template upstream outputs into
+    // it. The three conventional decisions are filled in by the executor
+    // when `decisions` is omitted (see lib/server/nodes/manual.ts), so the
+    // node is usable straight from the palette.
+    brief: '',
+    decisions: [
+      { key: 'accepted' },
+      { key: 'needs_changes' },
+      { key: 'rejected' },
+    ],
   }),
 };
 
@@ -316,6 +330,7 @@ const NODE_TYPES = {
   judge: JudgeNode,
   sidenote: SidenoteNode,
   script: ScriptNode,
+  manual: ManualNode,
 } as const;
 
 function CanvasInner() {

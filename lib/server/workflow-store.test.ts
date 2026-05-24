@@ -291,6 +291,112 @@ describe('workflow-store', () => {
     expect(b.updatedAt).toBeGreaterThanOrEqual(a.updatedAt);
   });
 
+  describe('manual node validation', () => {
+    function withManualConfig(config: unknown): Workflow {
+      return makeWorkflow({
+        nodes: [
+          { id: 'start-1', type: 'start', position: { x: 0, y: 0 }, config: {} },
+          {
+            id: 'manual-1',
+            type: 'manual',
+            position: { x: 100, y: 0 },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            config: config as any,
+          },
+          {
+            id: 'end-1',
+            type: 'end',
+            position: { x: 200, y: 0 },
+            config: { outcome: 'succeeded' },
+          },
+        ],
+        edges: [
+          { id: 'e1', source: 'start-1', sourceHandle: 'next', target: 'manual-1' },
+          { id: 'e2', source: 'manual-1', sourceHandle: 'accepted', target: 'end-1' },
+        ],
+      });
+    }
+
+    it('accepts the default-ish shape (omitted decisions, blank brief)', async () => {
+      await expect(saveWorkflow(withManualConfig({ brief: '' }))).resolves.toBeDefined();
+    });
+
+    it('accepts a valid decisions array with the conventional keys', async () => {
+      await expect(
+        saveWorkflow(
+          withManualConfig({
+            decisions: [
+              { key: 'accepted', label: 'Ship' },
+              { key: 'rejected' },
+            ],
+          }),
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects a non-array decisions value', async () => {
+      await expect(
+        saveWorkflow(withManualConfig({ decisions: 'all-of-them' })),
+      ).rejects.toThrow(/decisions must be an array/);
+    });
+
+    it('rejects an empty decisions array', async () => {
+      await expect(
+        saveWorkflow(withManualConfig({ decisions: [] })),
+      ).rejects.toThrow(/at least one entry/);
+    });
+
+    it('rejects a decision key outside the conventional set', async () => {
+      await expect(
+        saveWorkflow(withManualConfig({ decisions: [{ key: 'maybe' }] })),
+      ).rejects.toThrow(/must be one of/);
+    });
+
+    it('rejects duplicate decision keys', async () => {
+      await expect(
+        saveWorkflow(
+          withManualConfig({ decisions: [{ key: 'accepted' }, { key: 'accepted' }] }),
+        ),
+      ).rejects.toThrow(/duplicate decision/);
+    });
+
+    it('rejects a negative timeoutMs', async () => {
+      await expect(
+        saveWorkflow(withManualConfig({ decisions: [{ key: 'accepted' }], timeoutMs: -1 })),
+      ).rejects.toThrow(/timeoutMs must be a non-negative number/);
+    });
+
+    it('rejects timeoutMs > 0 when the decisions array omits `rejected`', async () => {
+      await expect(
+        saveWorkflow(
+          withManualConfig({
+            decisions: [{ key: 'accepted' }, { key: 'needs_changes' }],
+            timeoutMs: 60_000,
+          }),
+        ),
+      ).rejects.toThrow(/requires a "rejected" decision/);
+    });
+
+    it('accepts timeoutMs > 0 when `rejected` is in the decisions array', async () => {
+      await expect(
+        saveWorkflow(
+          withManualConfig({
+            decisions: [{ key: 'accepted' }, { key: 'rejected' }],
+            timeoutMs: 60_000,
+          }),
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('accepts timeoutMs: 0 (treated as no timeout) without requiring `rejected`', async () => {
+      await expect(
+        saveWorkflow(
+          withManualConfig({ decisions: [{ key: 'accepted' }], timeoutMs: 0 }),
+        ),
+      ).resolves.toBeDefined();
+    });
+  });
+
   describe('agent outputs validation', () => {
     function withAgentOutputs(outputs: unknown): Workflow {
       return makeWorkflow({

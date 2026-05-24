@@ -14,7 +14,8 @@ export type NodeType =
   | 'subworkflow'
   | 'judge'
   | 'sidenote'
-  | 'script';
+  | 'script'
+  | 'manual';
 
 /** Edge handles. Workers MUST emit one of these from a node executor. */
 export type EdgeHandle =
@@ -28,7 +29,29 @@ export type EdgeHandle =
   | 'break'
   | 'all_done'
   | 'first_done'
-  | 'quorum_met';
+  | 'quorum_met'
+  // Manual / human-acceptance gate decision handles. Routed by the manual
+  // node executor based on the reviewer's submitted decision.
+  | 'accepted'
+  | 'needs_changes'
+  | 'rejected';
+
+/** Decision keys an authorized reviewer may pick on a Manual node. The
+ *  three conventional values double as their outgoing edge handles. */
+export type ManualDecisionKey = 'accepted' | 'needs_changes' | 'rejected';
+
+export const MANUAL_DECISION_KEYS: readonly ManualDecisionKey[] = [
+  'accepted',
+  'needs_changes',
+  'rejected',
+];
+
+/** Default decision set surfaced when a Manual node omits `decisions`. */
+export const MANUAL_DEFAULT_DECISIONS: readonly ManualDecisionKey[] = [
+  'accepted',
+  'needs_changes',
+  'rejected',
+];
 
 export type ConditionKind = 'sentinel' | 'command' | 'judge';
 
@@ -259,6 +282,83 @@ export interface ScriptConfig {
   timeoutMs?: number;
 }
 
+export interface ManualDecisionDecl {
+  /** Decision key — becomes the outgoing edge handle when chosen. Must be
+   *  one of the conventional `accepted` / `needs_changes` / `rejected`
+   *  values; the type stays narrow so workflow edges remain typeable. */
+  key: ManualDecisionKey;
+  /** Optional human-readable label shown to the reviewer (e.g. "Ship it",
+   *  "Send back"). Falls back to a title-cased version of `key`. */
+  label?: string;
+  /** Optional one-liner shown beneath the button. */
+  description?: string;
+}
+
+export interface ManualConfig {
+  /** Optional human-readable brief shown to the reviewer above the decision
+   *  buttons. Templated — typical use is summarizing the work upstream nodes
+   *  produced, e.g. "Review {{agent-1.stdout}} for correctness". */
+  brief?: string;
+  /** Optional one-line hint identifying who is expected to decide
+   *  (e.g. "on-call SRE", "release captain"). Free-form text, NOT identity:
+   *  Infinite Loop is single-tenant by design, so this is operator
+   *  guidance only — the API doesn't enforce it. */
+  reviewerHint?: string;
+  /** Decision set the reviewer may pick from. Defaults to all three
+   *  conventional decisions when omitted. Order is preserved for the UI. */
+  decisions?: ManualDecisionDecl[];
+  /** Optional ms cap on how long the gate may wait. When the budget is
+   *  exceeded, the node settles on the `rejected` handle with
+   *  `timedOut: true`. `0` or unset = wait forever (the run-level
+   *  duration budget still applies). */
+  timeoutMs?: number;
+}
+
+/** Validate a Manual node's decision list. Pure (no IO) so the UI can call
+ *  it for live form validation and the server calls it at workflow save.
+ *  Throws with stable, user-facing messages — tests assert on the wording. */
+export function validateManualDecisions(
+  decisions: unknown,
+  nodeId: string,
+): void {
+  if (decisions === undefined) return;
+  if (!Array.isArray(decisions)) {
+    throw new Error(
+      `invalid workflow: manual node "${nodeId}" decisions must be an array`,
+    );
+  }
+  if (decisions.length === 0) {
+    throw new Error(
+      `invalid workflow: manual node "${nodeId}" decisions must list at least one entry`,
+    );
+  }
+  const seen = new Set<string>();
+  const allowed = new Set<string>(MANUAL_DECISION_KEYS);
+  for (const decl of decisions as unknown[]) {
+    if (
+      !decl ||
+      typeof decl !== 'object' ||
+      typeof (decl as { key?: unknown }).key !== 'string'
+    ) {
+      throw new Error(
+        `invalid workflow: manual node "${nodeId}" decisions entries must be { key: string, label?: string, description?: string }`,
+      );
+    }
+    const key = (decl as { key: string }).key;
+    if (!allowed.has(key)) {
+      throw new Error(
+        `invalid workflow: manual node "${nodeId}" decision key "${key}" must be one of ${[...allowed].join(', ')}`,
+      );
+    }
+    if (seen.has(key)) {
+      throw new Error(
+        `invalid workflow: manual node "${nodeId}" declares duplicate decision "${key}"`,
+      );
+    }
+    seen.add(key);
+  }
+}
+
 export interface JudgeNodeConfig {
   /** Templated rubric / criteria text shown to the judge. */
   criteria: string;
@@ -284,6 +384,7 @@ export type NodeConfigByType = {
   judge: JudgeNodeConfig;
   sidenote: SidenoteConfig;
   script: ScriptConfig;
+  manual: ManualConfig;
 };
 
 export interface WorkflowNode<T extends NodeType = NodeType> {
@@ -397,14 +498,20 @@ export interface RunSnapshot {
    */
   events?: WorkflowEvent[];
   /**
-   * When a node is parked waiting for a directory lock or concurrency slot.
-   * Set when the wait begins (alongside the matching node_waiting_for_*
-   * event), cleared when the wait resolves (acquired) or aborts (cancelled
+   * When a node is parked waiting for an external signal: a directory lock,
+   * a concurrency slot, or a human acceptance decision. Set when the wait
+   * begins (alongside the matching node_waiting_for_* event), cleared when
+   * the wait resolves (acquired / decision submitted) or aborts (cancelled
    * or LockCycleError). The run's status stays 'running' throughout — this
    * field is the observability hook for "running, but not progressing".
+   *
+   * The `human` kind also surfaces the reviewer-facing brief / decision set
+   * so a polling client (UI / CLI / MCP) can render the gate without
+   * loading the workflow definition separately. The same wire shape is
+   * mirrored on the `node_waiting_for_human` event.
    */
   waitingFor?: {
-    kind: 'lock' | 'slot';
+    kind: 'lock' | 'slot' | 'human';
     nodeId: string;
     /** The canonical path the waiter wants. Present when `kind === 'lock'`. */
     path?: string;
@@ -414,6 +521,18 @@ export interface RunSnapshot {
     /** The canonical path the holder is locking. Distinct from `path` when
      *  the conflict is ancestor/descendant. */
     heldByPath?: string;
+    /** Template-resolved brief shown to the reviewer. Present when
+     *  `kind === 'human'`. */
+    brief?: string;
+    /** Optional template-resolved reviewer-audience hint. Present when
+     *  `kind === 'human'`. */
+    reviewerHint?: string;
+    /** Decisions the reviewer may pick from. Present when
+     *  `kind === 'human'`. */
+    decisions?: ManualDecisionDecl[];
+    /** Epoch-ms timestamp when the gate began waiting. Present when
+     *  `kind === 'human'`. */
+    since?: number;
   };
 }
 
@@ -545,6 +664,42 @@ export interface NodeSlotAcquiredEvent {
   nodeId: string;
 }
 
+// Manual / human-acceptance gate events. `node_waiting_for_human` fires when
+// a manual node parks (after `node_started`); `node_human_decided` fires when
+// an authorized reviewer submits a decision (just before `node_finished`).
+
+export interface NodeWaitingForHumanEvent {
+  type: 'node_waiting_for_human';
+  runId?: string;
+  correlationId?: string;
+  nodeId: string;
+  /** Template-resolved brief shown to the reviewer. */
+  brief: string;
+  /** Optional reviewer-audience hint, template-resolved. */
+  reviewerHint?: string;
+  /** Decisions the reviewer may pick. Mirrors `snapshot.waitingFor.decisions`
+   *  so SSE consumers can render without a separate workflow fetch. */
+  decisions: ManualDecisionDecl[];
+}
+
+export interface NodeHumanDecidedEvent {
+  type: 'node_human_decided';
+  runId?: string;
+  correlationId?: string;
+  nodeId: string;
+  decision: ManualDecisionKey;
+  /** Coarse actor that authenticated the decision submission (mirrors
+   *  audit-log conventions: 'api-token' | 'browser-session' | 'open'). */
+  decidedBy: string;
+  /** Epoch-ms timestamp the decision was recorded server-side. */
+  decidedAt: number;
+  /** Optional free-form reviewer comment. */
+  comment?: string;
+  /** True when the decision came from a timeout firing rather than a
+   *  human submitting. Carries `decision: 'rejected'` by convention. */
+  timedOut?: boolean;
+}
+
 // Queue-scoped events. Emitted directly from trigger-queue.ts (not via
 // RunController.emit), so each `eventBus.emit` call site sets `correlationId`
 // explicitly from the queued run. Optional on the type for uniformity with the
@@ -600,6 +755,8 @@ export type WorkflowEvent =
   | NodeLockAcquiredEvent
   | NodeWaitingForSlotEvent
   | NodeSlotAcquiredEvent
+  | NodeWaitingForHumanEvent
+  | NodeHumanDecidedEvent
   | TriggerEnqueuedEvent
   | TriggerStartedEvent
   | TriggerDroppedEvent
@@ -725,6 +882,39 @@ export interface NodeExecutorContext {
    * lock manager's bookkeeping.
    */
   registerExempt?: (canonicalPath: string) => () => void;
+  /**
+   * Park the run until an authorized reviewer submits a decision for this
+   * Manual gate. The controller stamps `snapshot.waitingFor.kind = 'human'`
+   * with the brief / decision set, emits `node_waiting_for_human`, and
+   * resolves the promise once a matching `controller.submitDecision()`
+   * arrives — or rejects if the run is aborted first. Implementations live
+   * in `RunController` (production) and test harnesses; node executors
+   * outside the manual node should not call this.
+   *
+   * Optional for back-compat with unit-test contexts that hand-build the
+   * ctx without an engine. The manual executor surfaces a clear error when
+   * the engine forgot to plumb it through.
+   */
+  awaitHumanDecision?: (opts: {
+    brief: string;
+    reviewerHint?: string;
+    decisions: ManualDecisionDecl[];
+    timeoutMs?: number;
+  }) => Promise<HumanDecisionRecord>;
+}
+
+/** Persisted record of one Manual-gate decision. Written to scope and
+ *  surfaced on `node_human_decided`; the run record's `scope` keeps it as
+ *  the node's outputs so a workflow author can reference downstream as
+ *  `{{<manual-id>.decision}}` etc. */
+export interface HumanDecisionRecord {
+  decision: ManualDecisionKey;
+  decidedBy: string;
+  decidedAt: number;
+  comment?: string;
+  /** True when the controller fabricated the decision because the gate's
+   *  timeout elapsed before a reviewer submitted. */
+  timedOut?: boolean;
 }
 
 export interface NodeExecutorResult {

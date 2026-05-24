@@ -14,14 +14,19 @@ export interface RunStatusResult {
   errorMessage?: string;
   error?: string;
   reason?: string;
-  /** Set when the run is parked waiting on a directory lock or concurrency
-   *  slot. Cleared once the wait resolves. */
+  /** Set when the run is parked waiting on a directory lock, concurrency
+   *  slot, or human acceptance decision. Cleared once the wait resolves. */
   waitingFor?: {
-    kind: 'lock' | 'slot';
+    kind: 'lock' | 'slot' | 'human';
     nodeId: string;
     path?: string;
     heldByRunId?: string;
     heldByPath?: string;
+    /** Reviewer-facing brief, present when `kind === 'human'`. */
+    brief?: string;
+    reviewerHint?: string;
+    decisions?: Array<{ key: string; label?: string; description?: string }>;
+    since?: number;
   };
 }
 

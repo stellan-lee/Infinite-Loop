@@ -94,6 +94,42 @@ describe('useEngineWebSocket (SSE)', () => {
     expect(es.closed).toBe(true);
   });
 
+  it('admits manual-gate events (node_waiting_for_human, node_human_decided) through the allowlist', async () => {
+    const { useWorkflowStore } = await import('./workflow-store-client');
+    const { useEngineWebSocket } = await import('./ws-client');
+
+    useWorkflowStore.getState().resetRun();
+    renderHook(() => useEngineWebSocket());
+    const es = FakeEventSource.instances[0];
+    act(() => es.triggerOpen());
+
+    act(() =>
+      es.triggerMessage(
+        JSON.stringify({
+          type: 'node_waiting_for_human',
+          nodeId: 'manual-1',
+          brief: 'review',
+          decisions: [{ key: 'accepted' }, { key: 'rejected' }],
+        }),
+      ),
+    );
+    act(() =>
+      es.triggerMessage(
+        JSON.stringify({
+          type: 'node_human_decided',
+          nodeId: 'manual-1',
+          decision: 'accepted',
+          decidedBy: 'api-token',
+          decidedAt: 1730000000000,
+        }),
+      ),
+    );
+
+    const events = useWorkflowStore.getState().runEvents.map((e) => e.type);
+    expect(events).toContain('node_waiting_for_human');
+    expect(events).toContain('node_human_decided');
+  });
+
   it('marks connection closed on transient error (EventSource auto-reconnects)', async () => {
     const { useWorkflowStore } = await import('./workflow-store-client');
     const { useEngineWebSocket } = await import('./ws-client');

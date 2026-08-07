@@ -298,6 +298,7 @@ export const agentExecutor: NodeExecutor = {
         signal: ctx.signal,
         onStdoutChunk: ctx.emitStdoutChunk,
         profile: cfg.profile,
+        model: cfg.model,
         agent: cfg.agent,
         mcpConfigPath,
         dangerouslySkipPermissions: cfg.dangerouslySkipPermissions === true,

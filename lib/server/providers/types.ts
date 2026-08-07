@@ -134,4 +134,6 @@ export interface ProviderInfo {
   health: ProviderHealth;
   /** True when the CLI manifest declares a `{profile}` placeholder. */
   manifestSupportsProfile?: boolean;
+  /** True when the CLI manifest declares a `{model}` placeholder. */
+  manifestSupportsModel?: boolean;
 }

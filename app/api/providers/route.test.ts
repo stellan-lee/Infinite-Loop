@@ -32,7 +32,7 @@ describe('GET /api/providers', () => {
         description: 'missing binary',
         transport: 'cli',
         bin: '__definitely_missing_infloop_cli__',
-        args: ['--profile', '{profile}', '{prompt}'],
+        args: ['--profile', '{profile}', '--model', '{model}', '{prompt}'],
         outputFormat: 'plain',
         promptVia: 'arg',
       },
@@ -58,6 +58,7 @@ describe('GET /api/providers', () => {
         transport: 'cli',
         available: false,
         manifestSupportsProfile: true,
+        manifestSupportsModel: true,
         health: {
           status: 'missing',
           resolvedBin: '__definitely_missing_infloop_cli__',

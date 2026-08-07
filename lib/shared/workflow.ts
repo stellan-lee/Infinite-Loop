@@ -86,6 +86,9 @@ export interface AgentConfig {
    * (falling back to the manifest's `defaultProfile`). CLI providers may use
    * it when their manifest declares a `{profile}` argument placeholder. */
   profile?: string;
+  /** Optional model name for CLI providers. Passed to the CLI only when its
+   * manifest declares a `{model}` argument placeholder. Leave blank to omit it. */
+  model?: string;
   /** Optional subagent name. Only meaningful for the Claude CLI provider — it
    * becomes `--agent <name>` on the spawned command. When unset, the flag is
    * omitted entirely. Other providers ignore this field. */

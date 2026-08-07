@@ -29,10 +29,14 @@ export interface RunnerOptions {
   timeoutMs: number;
   signal: AbortSignal;
   onStdoutChunk?: (line: string) => void;
-  /** Optional model/profile name. HTTP providers use it as the `model` field
+  /** Optional profile name. HTTP providers use it as the `model` field
    * in the request body (falling back to the manifest's `defaultProfile`).
    * CLI providers may substitute it into argv via a `{profile}` placeholder. */
   profile?: string;
+  /** Optional model name for CLI providers. CLI providers may substitute it
+   * into argv via a `{model}` placeholder; empty/undefined strips the flag pair.
+   * HTTP providers ignore. */
+  model?: string;
   /** Optional subagent name. CLI providers may substitute it into argv via
    * a `{agent}` placeholder; empty/undefined strips both the placeholder and
    * the immediately preceding arg (the flag name). HTTP providers ignore. */

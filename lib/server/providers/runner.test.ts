@@ -352,7 +352,7 @@ describe('runProvider', () => {
       expect(out).toEqual(['p']);
     });
 
-    it('expands and drops the Codex manifest profile placeholder', () => {
+    it('expands and drops the Codex manifest profile and model placeholders', () => {
       const manifest = JSON.parse(
         readFileSync(resolve(here, '../../../providers/codex.json'), 'utf8'),
       ) as CliProviderManifest;
@@ -363,6 +363,14 @@ describe('runProvider', () => {
       expect(
         resolveCliArgs(manifest.args, { prompt: 'p', profile: 'xxx', promptVia: 'arg' }),
       ).toEqual(['exec', '--profile', 'xxx', 'p']);
+      expect(
+        resolveCliArgs(manifest.args, {
+          prompt: 'p',
+          profile: 'xxx',
+          model: 'gpt-5',
+          promptVia: 'arg',
+        }),
+      ).toEqual(['exec', '--profile', 'xxx', '--model', 'gpt-5', 'p']);
     });
 
     it('substitutes {profile} when value is set', () => {
@@ -391,11 +399,53 @@ describe('runProvider', () => {
       expect(out).toEqual(['p']);
     });
 
-    it('handles {agent}, {profile}, and {mcpConfig} together', () => {
+    it('substitutes {model} when value is set', () => {
+      const out = resolveCliArgs(['--model', '{model}', '{prompt}'], {
+        prompt: 'p',
+        model: 'gpt-5',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['--model', 'gpt-5', 'p']);
+    });
+
+    it('strips the {model} flag pair when model is empty', () => {
+      const out = resolveCliArgs(['--model', '{model}', '{prompt}'], {
+        prompt: 'p',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['p']);
+    });
+
+    it('strips the {model} flag pair when model is whitespace', () => {
+      const out = resolveCliArgs(['--model', '{model}', '{prompt}'], {
+        prompt: 'p',
+        model: '   ',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['p']);
+    });
+
+    it('substitutes embedded {model} (--model={model}) and drops it when empty', () => {
+      const set = resolveCliArgs(['--model={model}', '{prompt}'], {
+        prompt: 'p',
+        model: 'gpt-5',
+        promptVia: 'arg',
+      });
+      expect(set).toEqual(['--model=gpt-5', 'p']);
+
+      const empty = resolveCliArgs(['--model={model}', '{prompt}'], {
+        prompt: 'p',
+        promptVia: 'arg',
+      });
+      expect(empty).toEqual(['p']);
+    });
+
+    it('handles {agent}, {profile}, {model}, and {mcpConfig} together', () => {
       const out = resolveCliArgs(
         [
           '--agent', '{agent}',
           '--profile', '{profile}',
+          '--model', '{model}',
           '--mcp-config', '{mcpConfig}',
           '{prompt}',
         ],
@@ -403,6 +453,7 @@ describe('runProvider', () => {
           prompt: 'p',
           agent: 'r',
           profile: 'xxx',
+          model: 'gpt-5',
           mcpConfigPath: '/tmp/m.json',
           promptVia: 'arg',
         },
@@ -410,6 +461,7 @@ describe('runProvider', () => {
       expect(out).toEqual([
         '--agent', 'r',
         '--profile', 'xxx',
+        '--model', 'gpt-5',
         '--mcp-config', '/tmp/m.json',
         'p',
       ]);

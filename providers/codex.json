@@ -4,7 +4,7 @@
   "description": "spawn codex exec",
   "glyph": "◈",
   "bin": "codex",
-  "args": ["exec", "--profile", "{profile}", "{prompt}"],
+  "args": ["exec", "--profile", "{profile}", "--model", "{model}", "{prompt}"],
   "envPassthrough": ["OPENAI_*", "CODEX_*"],
   "egressAllowlist": [
     "api.openai.com",

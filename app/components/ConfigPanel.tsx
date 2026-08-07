@@ -910,8 +910,14 @@ function AgentForm({
   const [profile, setProfile] = useDebouncedString(config.profile ?? '', (next) =>
     onPatch({ ...config, profile: next.trim() ? next.trim() : undefined }),
   );
+  const [model, setModel] = useDebouncedString(config.model ?? '', (next) =>
+    onPatch({ ...config, model: next.trim() ? next.trim() : undefined }),
+  );
   const onProfileChange = (e: ChangeEvent<HTMLInputElement>) => {
     setProfile(e.target.value);
+  };
+  const onModelChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setModel(e.target.value);
   };
   const [worktreeRef, setWorktreeRef] = useDebouncedString(
     config.worktreeRef ?? '',
@@ -925,6 +931,7 @@ function AgentForm({
   const providerId = config.providerId ?? 'claude';
   const isHttpProvider = providerInfo?.transport === 'http';
   const supportsCliProfile = providerInfo?.manifestSupportsProfile === true;
+  const supportsCliModel = providerInfo?.manifestSupportsModel === true;
   const useWorktree = config.useWorktree === true;
 
   // Fetch the CLI provider's available agents so the Agent field can
@@ -1030,6 +1037,22 @@ function AgentForm({
           />
           <span className="field-hint">
             Optional CLI profile passed through the provider manifest. Leave blank to omit it.
+          </span>
+        </div>
+      )}
+
+      {supportsCliModel && (
+        <div className="field">
+          <span className="field-label">Model</span>
+          <input
+            aria-label="Model"
+            type="text"
+            value={model}
+            onChange={onModelChange}
+            placeholder="optional model"
+          />
+          <span className="field-hint">
+            Optional CLI model passed through the provider manifest. Leave blank to omit it.
           </span>
         </div>
       )}
@@ -2658,7 +2681,7 @@ export default function ConfigPanel() {
   );
 
   // Provider list is needed by AgentForm to decide whether to show the
-  // profile field. We fetch it once at the panel level (instead of
+  // profile/model fields. We fetch it once at the panel level (instead of
   // per-AgentForm-mount) so a rapid provider switch can't race two separate
   // fetches mid-render. /api/providers is in-process cached on the server.
   const [providers, setProviders] = useState<ProviderInfo[]>([]);

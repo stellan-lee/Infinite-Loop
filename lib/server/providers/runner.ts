@@ -30,6 +30,9 @@ const SIGKILL_GRACE_MS = 2000;
  *   `{agent}` and `{mcpConfig}`. This lets a manifest declare
  *   `["--profile", "{profile}"]` and have the whole pair vanish when the
  *   user didn't pick one.
+ * - `{model}` follows the same optional flag-value placeholder pattern as
+ *   `{profile}`. This lets a manifest declare `["--model", "{model}"]`
+ *   and have the whole pair vanish when the user didn't pick a model.
  * - `{dangerousArgs}` is a standalone token that expands to ALL of
  *   `opts.dangerousArgs` (zero or more args) at its position. The runner
  *   supplies the manifest's `dangerousArgs` only when the node opted into
@@ -42,7 +45,7 @@ const SIGKILL_GRACE_MS = 2000;
  */
 export function resolveCliArgs(
   args: readonly string[],
-  opts: Pick<RunnerOptions, 'prompt' | 'agent' | 'profile' | 'mcpConfigPath'> & {
+  opts: Pick<RunnerOptions, 'prompt' | 'agent' | 'profile' | 'model' | 'mcpConfigPath'> & {
     promptVia: 'arg' | 'stdin';
     /** Args to expand `{dangerousArgs}` into. Empty/undefined → token drops. */
     dangerousArgs?: readonly string[];
@@ -53,6 +56,7 @@ export function resolveCliArgs(
   const mcpConfig =
     typeof opts.mcpConfigPath === 'string' ? opts.mcpConfigPath.trim() : '';
   const profile = typeof opts.profile === 'string' ? opts.profile.trim() : '';
+  const model = typeof opts.model === 'string' ? opts.model.trim() : '';
   const dropPrecedingFlag = () => {
     const prev = out[out.length - 1];
     if (typeof prev === 'string' && prev.startsWith('-')) {
@@ -106,6 +110,19 @@ export function resolveCliArgs(
     if (raw.includes('{profile}')) {
       if (profile.length === 0) continue;
       out.push(raw.replace(/\{profile\}/g, profile));
+      continue;
+    }
+    if (raw === '{model}') {
+      if (model.length === 0) {
+        dropPrecedingFlag();
+        continue;
+      }
+      out.push(model);
+      continue;
+    }
+    if (raw.includes('{model}')) {
+      if (model.length === 0) continue;
+      out.push(raw.replace(/\{model\}/g, model));
       continue;
     }
     if (opts.promptVia === 'arg' && raw.includes('{prompt}')) {
@@ -183,6 +200,7 @@ async function runCliProvider(
     prompt: opts.prompt,
     agent: opts.agent,
     profile: opts.profile,
+    model: opts.model,
     mcpConfigPath: opts.mcpConfigPath,
     dangerousArgs,
     promptVia,

@@ -80,6 +80,7 @@ type StubProvider = {
   label?: string;
   transport: 'cli' | 'http';
   manifestSupportsProfile?: boolean;
+  manifestSupportsModel?: boolean;
 };
 function mockProvidersFetch(providers: StubProvider[]) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -172,6 +173,63 @@ describe('ConfigPanel', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Profile')).toBeInTheDocument();
     });
+  });
+
+  it('renders the CLI model field only when the provider manifest supports it', async () => {
+    mockProvidersFetch([
+      { id: 'claude', transport: 'cli' },
+      { id: 'codex', transport: 'cli', manifestSupportsModel: true },
+    ]);
+    const wf = makeWorkflow([startNode, codexAgentNode]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('codex-1');
+    });
+
+    render(<ConfigPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Model')).toBeInTheDocument();
+    });
+  });
+
+  it('debounces edits to the Agent model and dispatches updateNode', async () => {
+    mockProvidersFetch([
+      { id: 'claude', transport: 'cli' },
+      { id: 'codex', transport: 'cli', manifestSupportsModel: true },
+    ]);
+    const wf = makeWorkflow([startNode, codexAgentNode]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('codex-1');
+    });
+
+    render(<ConfigPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Model')).toBeInTheDocument();
+    });
+
+    clock = FakeTimers.install();
+
+    const modelField = screen.getByLabelText('Model') as HTMLInputElement;
+    act(() => {
+      fireEvent.change(modelField, { target: { value: 'gpt-5' } });
+    });
+
+    let stored = useWorkflowStore.getState().currentWorkflow!.nodes.find(
+      (n) => n.id === 'codex-1',
+    )!.config as { model?: string };
+    expect(stored.model).toBeUndefined();
+
+    act(() => {
+      clock!.tick(300);
+    });
+
+    stored = useWorkflowStore.getState().currentWorkflow!.nodes.find(
+      (n) => n.id === 'codex-1',
+    )!.config as { model?: string };
+    expect(stored.model).toBe('gpt-5');
   });
 
   it('debounces edits to the Agent prompt and dispatches updateNode', () => {

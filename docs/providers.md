@@ -69,3 +69,10 @@ Two env vars override which binary actually runs:
 - **`INFLOOP_CLAUDE_BIN`** — legacy alias for the `claude` provider, kept for back-compat.
 
 See [configuration.md](configuration.md) for the full env-var reference.
+
+For the shipped Codex runner, make sure `codex` is on your `PATH` for local
+runs. If your Codex CLI lives somewhere else, start Infinite Loop with:
+
+```bash
+INFLOOP_PROVIDER_BIN_CODEX=/path/to/codex bun run dev
+```

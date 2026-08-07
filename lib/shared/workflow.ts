@@ -82,9 +82,9 @@ export interface AgentConfig {
   prompt: string;
   cwd: string;
   timeoutMs: number;
-  /** Optional model/profile name. Only meaningful for HTTP-transport providers
-   * (e.g. Hermes/OpenRouter). CLI providers ignore this field. When unset and
-   * the provider needs one, the manifest's `defaultProfile` is used. */
+  /** Optional model/profile name. HTTP providers use it as the request model
+   * (falling back to the manifest's `defaultProfile`). CLI providers may use
+   * it when their manifest declares a `{profile}` argument placeholder. */
   profile?: string;
   /** Optional subagent name. Only meaningful for the Claude CLI provider — it
    * becomes `--agent <name>` on the spawned command. When unset, the flag is

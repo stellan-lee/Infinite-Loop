@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveCliArgs, resolveEgressEnforcement, runProvider } from './runner';
@@ -349,6 +350,69 @@ describe('runProvider', () => {
         { prompt: 'p', promptVia: 'arg' },
       );
       expect(out).toEqual(['p']);
+    });
+
+    it('expands and drops the Codex manifest profile placeholder', () => {
+      const manifest = JSON.parse(
+        readFileSync(resolve(here, '../../../providers/codex.json'), 'utf8'),
+      ) as CliProviderManifest;
+
+      expect(
+        resolveCliArgs(manifest.args, { prompt: 'p', promptVia: 'arg' }),
+      ).toEqual(['exec', 'p']);
+      expect(
+        resolveCliArgs(manifest.args, { prompt: 'p', profile: 'xxx', promptVia: 'arg' }),
+      ).toEqual(['exec', '--profile', 'xxx', 'p']);
+    });
+
+    it('substitutes {profile} when value is set', () => {
+      const out = resolveCliArgs(['--profile', '{profile}', '{prompt}'], {
+        prompt: 'p',
+        profile: 'xxx',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['--profile', 'xxx', 'p']);
+    });
+
+    it('strips the {profile} flag pair when profile is empty', () => {
+      const out = resolveCliArgs(['--profile', '{profile}', '{prompt}'], {
+        prompt: 'p',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['p']);
+    });
+
+    it('strips the {profile} flag pair when profile is whitespace', () => {
+      const out = resolveCliArgs(['--profile', '{profile}', '{prompt}'], {
+        prompt: 'p',
+        profile: '   ',
+        promptVia: 'arg',
+      });
+      expect(out).toEqual(['p']);
+    });
+
+    it('handles {agent}, {profile}, and {mcpConfig} together', () => {
+      const out = resolveCliArgs(
+        [
+          '--agent', '{agent}',
+          '--profile', '{profile}',
+          '--mcp-config', '{mcpConfig}',
+          '{prompt}',
+        ],
+        {
+          prompt: 'p',
+          agent: 'r',
+          profile: 'xxx',
+          mcpConfigPath: '/tmp/m.json',
+          promptVia: 'arg',
+        },
+      );
+      expect(out).toEqual([
+        '--agent', 'r',
+        '--profile', 'xxx',
+        '--mcp-config', '/tmp/m.json',
+        'p',
+      ]);
     });
 
     it('expands {dangerousArgs} to every supplied arg in place', () => {

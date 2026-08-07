@@ -30,9 +30,10 @@ Each agent node picks a runner from `providers/*.json`. A manifest declares eith
 | `id` | Unique provider id. Referenced by Agent nodes as `providerId`. |
 | `label`, `glyph` | UI labels for palette and node title. |
 | `bin` | The binary to spawn. Override per-install via `INFLOOP_PROVIDER_BIN_<ID>` (id upper-cased). |
-| `args` | Argument template. `{prompt}` / `{agent}` are substituted at runtime. |
+| `args` | Argument template. `{prompt}` / `{agent}` / `{profile}` are substituted at runtime. |
 | `outputFormat` | `claude-stream-json` for token-by-token streaming, `plain` for end-of-process stdout. |
 | `promptVia` | `arg` (passed positionally) or `stdin`. |
+| `{profile}` placeholder | Optional flag-value placeholder, like `{agent}`. `["--profile", "{profile}"]` expands when the node sets `profile`, and drops to nothing when blank. |
 | `envPassthrough` | Host env var names / `PREFIX_*` wildcards the spawned child may see, on top of the scrubbed non-secret base allowlist. |
 | `egressAllowlist` | Hostnames the spawned child may reach — exact (`api.anthropic.com`) or leading-wildcard (`*.anthropic.com`, any subdomain, not the apex). Enforced per run via a loopback filtering proxy when `INFLOOP_EGRESS_ENFORCE=1`; absent or enforcement off → unrestricted egress. See [security.md](security.md#per-run-egress-allowlist). |
 
@@ -57,7 +58,7 @@ HTTP providers don't spawn a process; they POST to the declared host/port. The A
 | File | Provider |
 |---|---|
 | `providers/claude.json` | Claude CLI with `--print --output-format stream-json` for live token streaming |
-| `providers/codex.json` | Codex CLI (`codex exec <prompt>`) |
+| `providers/codex.json` | Codex CLI (`codex exec [--profile <profile>] <prompt>`) |
 | `providers/myhermes.hermes.local.json` | Sample Hermes HTTP runner |
 
 ## Binary overrides

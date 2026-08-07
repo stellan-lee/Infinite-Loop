@@ -907,6 +907,12 @@ function AgentForm({
   const [agent, setAgent] = useDebouncedString(config.agent ?? '', (next) =>
     onPatch({ ...config, agent: next.trim() ? next.trim() : undefined }),
   );
+  const [profile, setProfile] = useDebouncedString(config.profile ?? '', (next) =>
+    onPatch({ ...config, profile: next.trim() ? next.trim() : undefined }),
+  );
+  const onProfileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setProfile(e.target.value);
+  };
   const [worktreeRef, setWorktreeRef] = useDebouncedString(
     config.worktreeRef ?? '',
     (next) =>
@@ -918,6 +924,7 @@ function AgentForm({
 
   const providerId = config.providerId ?? 'claude';
   const isHttpProvider = providerInfo?.transport === 'http';
+  const supportsCliProfile = providerInfo?.manifestSupportsProfile === true;
   const useWorktree = config.useWorktree === true;
 
   // Fetch the CLI provider's available agents so the Agent field can
@@ -1011,10 +1018,21 @@ function AgentForm({
         </span>
       </div>
 
-      {/* No Profile field for HTTP providers — each Hermes palette card
-       * is already bound to a specific (host, port, model) tuple by the
-       * `.hermes.local.json` connection it came from, so there's nothing
-       * for the node author to override here. */}
+      {supportsCliProfile && (
+        <div className="field">
+          <span className="field-label">Profile</span>
+          <input
+            aria-label="Profile"
+            type="text"
+            value={profile}
+            onChange={onProfileChange}
+            placeholder="optional profile"
+          />
+          <span className="field-hint">
+            Optional CLI profile passed through the provider manifest. Leave blank to omit it.
+          </span>
+        </div>
+      )}
 
       <div className="field">
         <span className="field-label">Prompt</span>
@@ -2640,7 +2658,7 @@ export default function ConfigPanel() {
   );
 
   // Provider list is needed by AgentForm to decide whether to show the
-  // profile dropdown. We fetch it once at the panel level (instead of
+  // profile field. We fetch it once at the panel level (instead of
   // per-AgentForm-mount) so a rapid provider switch can't race two separate
   // fetches mid-render. /api/providers is in-process cached on the server.
   const [providers, setProviders] = useState<ProviderInfo[]>([]);

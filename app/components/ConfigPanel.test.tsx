@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import FakeTimers, { type InstalledClock } from '@sinonjs/fake-timers';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { useWorkflowStore } from '@/lib/client/workflow-store-client';
 import type { Workflow, WorkflowInputDecl, WorkflowNode } from '@/lib/shared/workflow';
 import { validateAgentOutputs } from '@/lib/shared/workflow';
@@ -32,6 +39,13 @@ const agentNode: WorkflowNode = {
   config: { providerId: 'claude', prompt: 'hello', cwd: '/tmp', timeoutMs: 60000 },
 };
 
+const codexAgentNode: WorkflowNode = {
+  id: 'codex-1',
+  type: 'agent',
+  position: { x: 0, y: 0 },
+  config: { providerId: 'codex', prompt: 'hello', cwd: '/tmp', timeoutMs: 60000 },
+};
+
 const conditionNode: WorkflowNode = {
   id: 'cond-1',
   type: 'condition',
@@ -61,7 +75,12 @@ function reset() {
  * specific transport (CLI vs HTTP) — without this, fetch fails with
  * NotSupportedError under happy-dom and `providerInfo` ends up `null`,
  * which collapses `isHttpProvider` to a false default. */
-type StubProvider = { id: string; label?: string; transport: 'cli' | 'http' };
+type StubProvider = {
+  id: string;
+  label?: string;
+  transport: 'cli' | 'http';
+  manifestSupportsProfile?: boolean;
+};
 function mockProvidersFetch(providers: StubProvider[]) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
@@ -135,6 +154,24 @@ describe('ConfigPanel', () => {
     expect(screen.getByLabelText('Provider')).toHaveTextContent('claude');
     // header shows id + type
     expect(screen.getByText(/agent-1 · agent/)).toBeInTheDocument();
+  });
+
+  it('renders the CLI profile field only when the provider manifest supports it', async () => {
+    mockProvidersFetch([
+      { id: 'claude', transport: 'cli' },
+      { id: 'codex', transport: 'cli', manifestSupportsProfile: true },
+    ]);
+    const wf = makeWorkflow([startNode, codexAgentNode]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('codex-1');
+    });
+
+    render(<ConfigPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Profile')).toBeInTheDocument();
+    });
   });
 
   it('debounces edits to the Agent prompt and dispatches updateNode', () => {

@@ -83,6 +83,8 @@ export async function GET(req: Request) {
           connectionLabel: m.connectionLabel,
           available: m.transport === 'http' ? true : health.status === 'available',
           health,
+          manifestSupportsProfile:
+            m.transport === 'cli' && m.args.includes('{profile}') ? true : undefined,
         };
       }),
     );

@@ -32,7 +32,7 @@ describe('GET /api/providers', () => {
         description: 'missing binary',
         transport: 'cli',
         bin: '__definitely_missing_infloop_cli__',
-        args: ['{prompt}'],
+        args: ['--profile', '{profile}', '{prompt}'],
         outputFormat: 'plain',
         promptVia: 'arg',
       },
@@ -51,18 +51,30 @@ describe('GET /api/providers', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.providers).toEqual([
-      expect.objectContaining({
+      {
         id: 'missing-cli',
+        label: 'Missing CLI',
+        description: 'missing binary',
         transport: 'cli',
         available: false,
-        health: expect.objectContaining({ status: 'missing' }),
-      }),
-      expect.objectContaining({
+        manifestSupportsProfile: true,
+        health: {
+          status: 'missing',
+          resolvedBin: '__definitely_missing_infloop_cli__',
+          message: 'CLI binary not found or not executable: __definitely_missing_infloop_cli__',
+        },
+      },
+      {
         id: 'http-provider',
+        label: 'HTTP Provider',
+        description: 'remote provider',
         transport: 'http',
         available: true,
-        health: expect.objectContaining({ status: 'unknown' }),
-      }),
+        health: {
+          status: 'unknown',
+          message: 'HTTP provider availability is checked when a run starts.',
+        },
+      },
     ]);
   });
 });

@@ -132,4 +132,6 @@ export interface ProviderInfo {
    * run time. */
   available: boolean;
   health: ProviderHealth;
+  /** True when the CLI manifest declares a `{profile}` placeholder. */
+  manifestSupportsProfile?: boolean;
 }

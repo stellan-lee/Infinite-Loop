@@ -75,6 +75,28 @@ describe('Palette', () => {
     expect(JSON.parse(payload)).toEqual({ type: 'agent', providerId: 'claude' });
   });
 
+  it('labels an unavailable runner within its palette row', async () => {
+    globalThis.fetch = mock(async () =>
+      new Response(JSON.stringify({
+        providers: [{
+          id: 'claude',
+          label: 'Claude',
+          description: 'spawn claude --print',
+          available: false,
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    ) as unknown as typeof fetch;
+
+    render(<Palette />);
+
+    const claudeItem = await waitFor(() =>
+      screen.getByRole('button', { name: 'add claude agent node' }),
+    );
+    expect(claudeItem).toBeDisabled();
+    expect(claudeItem).toHaveTextContent('Not available');
+    expect(claudeItem).not.toHaveTextContent('missing');
+  });
+
   it('keeps every palette item in the natural tab order', () => {
     render(<Palette />);
 
@@ -84,5 +106,46 @@ describe('Palette', () => {
       const tabIndex = item.getAttribute('tabindex');
       expect(tabIndex === null || Number(tabIndex) >= 0).toBe(true);
     }
+  });
+
+  it('filters node rows and focuses search with the displayed keyboard shortcut', () => {
+    render(<Palette />);
+
+    const search = screen.getByRole('searchbox', { name: 'Search nodes' });
+    fireEvent.change(search, { target: { value: 'condition' } });
+
+    expect(screen.getByRole('button', { name: 'add condition node' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'add start node' })).toBeNull();
+
+    (search as HTMLInputElement).blur();
+    fireEvent.keyDown(window, { key: 'k', metaKey: true });
+    expect(document.activeElement).toBe(search);
+  });
+
+  it('includes Hermes-backed runners in search results', async () => {
+    globalThis.fetch = mock(async () =>
+      new Response(JSON.stringify({
+        providers: [{
+          id: 'hermes-edge',
+          label: 'Edge planner',
+          description: 'plan through Hermes',
+          kind: 'hermes-local',
+          connectionId: 'hermes-dev',
+          connectionLabel: 'Development Hermes',
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    ) as unknown as typeof fetch;
+
+    render(<Palette />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'add hermes-edge agent node' })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Hermes$/i }));
+    const search = screen.getByRole('searchbox', { name: 'Search nodes' });
+    fireEvent.change(search, { target: { value: 'edge planner' } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'add hermes-edge agent node' })).toBeInTheDocument();
+    });
   });
 });

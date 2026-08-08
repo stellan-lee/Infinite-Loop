@@ -33,11 +33,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {/*
          * Pre-paint theme application — must run before <body> renders to
          * avoid a flash of the wrong theme. Reads the user's saved choice
-         * (`infinite_loop:theme`), falling back to OS preference.
+         * (`infinite_loop:theme`), falling back to the editor's light
+         * workspace theme. The toggle still provides an explicit dark mode.
          */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var s=localStorage.getItem('infinite_loop:theme');var t=s||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='dark';}})();`,
+            __html: `(function(){try{var s=localStorage.getItem('infinite_loop:theme');document.documentElement.dataset.theme=s==='dark'?'dark':'light';}catch(e){document.documentElement.dataset.theme='light';}})();`,
           }}
         />
       </head>

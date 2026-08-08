@@ -25,6 +25,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from 'react';
+import { Input as HeroInput, TextArea as HeroTextArea } from '@heroui/react';
 import type { TemplateLintWarning, TemplateRef } from '@/lib/shared/template-refs';
 import { lintField } from '@/lib/shared/template-refs';
 import { useWorkflowStore } from '@/lib/client/workflow-store-client';
@@ -39,6 +40,7 @@ interface BaseProps {
   /** Field name for accessibility + lint reporting. */
   fieldPath: string;
   ariaLabel?: string;
+  required?: boolean;
   placeholder?: string;
   /** Optional className forwarded to the underlying element. */
   className?: string;
@@ -93,7 +95,7 @@ export function findTemplateSlot(
 const MAX_VISIBLE = 8;
 
 export default function TemplateField(props: Props) {
-  const { value, onChange, selfId, refs, fieldPath, ariaLabel, placeholder, className, style } = props;
+  const { value, onChange, selfId, refs, fieldPath, ariaLabel, placeholder, className, style, required } = props;
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const [caret, setCaret] = useState<number | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -222,6 +224,7 @@ export default function TemplateField(props: Props) {
     onKeyDown: handleKeyDown,
     onFocus: handleSelect,
     'aria-label': ariaLabel,
+    required,
     placeholder,
     className,
     style,
@@ -232,9 +235,9 @@ export default function TemplateField(props: Props) {
   return (
     <div className="template-field" style={{ position: 'relative' }}>
       {props.multiline ? (
-        <textarea {...inputCommon} rows={props.rows ?? 4} />
+        <HeroTextArea {...inputCommon} rows={props.rows ?? 4} variant="secondary" />
       ) : (
-        <input {...inputCommon} type="text" />
+        <HeroInput {...inputCommon} type="text" variant="secondary" />
       )}
       {slot && filtered.length > 0 && (
         <TemplatePickerPanel

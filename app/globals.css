@@ -6,6 +6,8 @@
  * colors do the work. Light theme is a calmer Tokyo Day analogue.
  */
 
+@import "tailwindcss";
+@import "@heroui/styles";
 @import '@xyflow/react/dist/style.css';
 
 :root,
@@ -469,6 +471,11 @@ body {
   border-right: none;
   border-top: 0;
   border-bottom: 0;
+}
+.config-stub {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Empty-config-panel placeholder — terminal prompt with a blinking cursor.
@@ -1107,26 +1114,26 @@ button.event-card-head-toggle:focus-visible {
  * a soft left-edge stripe in its own color, so a workflow reads as a
  * keyboard of distinct instruments rather than a sea of identical blocks.
  * Tokens live in :root (--node-*). */
-.wf-node[data-node-type='start'] { border-left: 2px solid var(--node-start); }
+.wf-node[data-node-type='start'] { border-color: var(--node-start); }
 .wf-node[data-node-type='start'] .wf-node-title { color: var(--node-start); }
-.wf-node[data-node-type='end'] { border-left: 2px solid var(--node-end); }
+.wf-node[data-node-type='end'] { border-color: var(--node-end); }
 .wf-node[data-node-type='end'] .wf-node-title { color: var(--node-end); }
-.wf-node[data-node-type='agent'] { border-left: 2px solid var(--node-agent); }
+.wf-node[data-node-type='agent'] { border-color: var(--node-agent); }
 .wf-node[data-node-type='agent'] .wf-node-title { color: var(--node-agent); }
-.wf-node[data-node-type='condition'] { border-left: 2px solid var(--node-condition); }
+.wf-node[data-node-type='condition'] { border-color: var(--node-condition); }
 .wf-node[data-node-type='condition'] .wf-node-title { color: var(--node-condition); }
-.wf-node[data-node-type='loop'] { border-left: 2px solid var(--node-loop); }
+.wf-node[data-node-type='loop'] { border-color: var(--node-loop); }
 .wf-node[data-node-type='loop'] .wf-node-title { color: var(--node-loop); }
-.wf-node[data-node-type='branch'] { border-left: 2px solid var(--node-branch); }
+.wf-node[data-node-type='branch'] { border-color: var(--node-branch); }
 .wf-node[data-node-type='branch'] .wf-node-title { color: var(--node-branch); }
-.wf-node[data-node-type='script'] { border-left: 2px solid var(--node-script); }
+.wf-node[data-node-type='script'] { border-color: var(--node-script); }
 .wf-node[data-node-type='script'] .wf-node-title { color: var(--node-script); }
 /* Run state still wins over the type color when the run is active, so the
  * user can spot which nodes are not-started / running / already-run. */
-.wf-node[data-state='pending'] { border-left-color: var(--fg-muted); }
-.wf-node[data-state='live'] { border-left-color: var(--accent-live); }
-.wf-node[data-state='succeeded'] { border-left-color: var(--accent-ok); }
-.wf-node[data-state='failed'] { border-left-color: var(--accent-err); }
+.wf-node[data-state='pending'] { border-color: var(--fg-muted); }
+.wf-node[data-state='live'] { border-color: var(--accent-live); }
+.wf-node[data-state='succeeded'] { border-color: var(--accent-ok); }
+.wf-node[data-state='failed'] { border-color: var(--accent-err); }
 .wf-node[data-state='pending'] .wf-node-title { color: var(--fg-dim); }
 .wf-node[data-state='live'] .wf-node-title { color: var(--accent-live); }
 .wf-node[data-state='succeeded'] .wf-node-title { color: var(--accent-ok); }
@@ -1740,9 +1747,6 @@ button.event-card-head-toggle:focus-visible {
   font-family: var(--serif);
 }
 
-.field input[type='text'],
-.field input[type='number'],
-.field textarea,
 .field select {
   font-family: var(--mono);
   font-size: 16px;
@@ -1756,21 +1760,12 @@ button.event-card-head-toggle:focus-visible {
   box-sizing: border-box;
 }
 
-.field textarea {
-  resize: vertical;
-  line-height: 1.5;
-}
-
-.field input:focus,
-.field textarea:focus,
 .field select:focus {
   border-color: var(--accent-live);
   background: var(--bg-input-focus);
   box-shadow: 0 0 0 1px var(--accent-live-glow);
 }
 
-.field input:disabled,
-.field textarea:disabled,
 .field select:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -3167,31 +3162,10 @@ input[type='number'].no-spin {
   color: var(--fg-dim);
   font-family: var(--mono);
 }
-.bni-row input[type='text'],
-.bni-row input[type='number'],
-.bni-row textarea {
-  font-family: var(--mono);
-  font-size: 14px;
-  color: var(--fg);
-  background: var(--bg-input);
-  border: 1px solid var(--border-strong);
-  padding: 8px 10px;
-  outline: none;
-  text-transform: none;
-  letter-spacing: normal;
-  transition: border-color 120ms ease, background 120ms ease;
-}
 .bni-type-label {
   display: block;
   margin-bottom: 4px;
 }
-.bni-row textarea {
-  resize: vertical;
-  line-height: 1.5;
-  min-height: 64px;
-}
-.bni-row input:focus,
-.bni-row textarea:focus,
 .bni-row select:focus {
   border-color: var(--accent-live);
   background: var(--bg-input-focus);
@@ -4119,7 +4093,12 @@ input[type='number'].no-spin {
   cursor: pointer;
   user-select: none;
 }
-.checkbox-box {
+.checkbox__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.checkbox__control {
   width: 16px;
   height: 16px;
   display: inline-flex;
@@ -4135,19 +4114,19 @@ input[type='number'].no-spin {
   line-height: 1;
   transition: background 0.1s, border-color 0.1s;
 }
-.checkbox-box:hover:not(:disabled) {
+.checkbox__control:hover:not([data-disabled='true']) {
   border-color: var(--accent);
 }
-.checkbox-box[data-checked='true'] {
+.checkbox[data-selected='true'] .checkbox__control {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--bg);
 }
-.checkbox-box:disabled {
+.checkbox[data-disabled='true'] {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.checkbox-mark {
+.checkbox__indicator {
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
@@ -4164,6 +4143,299 @@ input[type='number'].no-spin {
   width: 100%;
   height: 100%;
   position: relative;
+}
+
+/* ─── workflow editor refresh ───────────────────────────────────────────
+ * A quiet, light-first visual language inspired by a planning board: white
+ * surfaces, hairline blue-grey structure, and colour reserved for action
+ * and workflow state. These overrides retain the existing component API and
+ * state selectors so the editor's behaviour remains unchanged. */
+:root,
+[data-theme='light'] {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-deep: #ffffff;
+  --bg-input-focus: #f8fbff;
+  --surface-overlay: rgba(255, 255, 255, 0.82);
+  --border: #e4e9f1;
+  --border-strong: #d6dde9;
+  --border-bright: #aab8ce;
+  --fg: #182235;
+  --fg-soft: #3c4a60;
+  --fg-dim: #718098;
+  --fg-muted: #9aa6b8;
+  --fg-faint: #d2d9e4;
+  --accent-live: #3156d8;
+  --accent-live-glow: rgba(49, 86, 216, 0.18);
+  --accent-on-live: #ffffff;
+  --accent-on-live-soft: rgba(255, 255, 255, 0.7);
+  --accent-ok: #20a34a;
+  --accent-ok-glow: rgba(32, 163, 74, 0.15);
+  --accent-err: #e33a3a;
+  --accent-err-glow: rgba(227, 58, 58, 0.14);
+  --accent-warn: #c57615;
+  --accent-info: #168da8;
+  --accent-soft: #edf2ff;
+  --node-start: #20a34a;
+  --node-end: #20a34a;
+  --node-agent: #168da8;
+  --node-condition: #df8a11;
+  --node-loop: #8154e8;
+  --node-branch: #8154e8;
+  --node-script: #1b9f72;
+  --hover-tint: #f2f5f9;
+  --top-bar-h: 68px;
+  --palette-w: 282px;
+}
+
+[data-theme='dark'] {
+  --bg: #141a26;
+  --panel: #1b2331;
+  --bg-elevated: #202a3a;
+  --bg-input: #1c2534;
+  --bg-deep: #161f2d;
+  --bg-input-focus: #253149;
+  --surface-overlay: rgba(20, 26, 38, 0.82);
+  --border: #2d394c;
+  --border-strong: #43516a;
+  --border-bright: #7a8ba7;
+  --fg: #edf2fa;
+  --fg-soft: #c6d0e0;
+  --fg-dim: #8e9bb0;
+  --fg-muted: #66748c;
+  --fg-faint: #37445a;
+  --accent-live: #6f8dff;
+  --accent-live-glow: rgba(111, 141, 255, 0.25);
+  --accent-on-live: #ffffff;
+  --accent-on-live-soft: rgba(255, 255, 255, 0.7);
+  --accent-ok: #51c878;
+  --accent-ok-glow: rgba(81, 200, 120, 0.18);
+  --accent-err: #fa6d72;
+  --accent-err-glow: rgba(250, 109, 114, 0.16);
+  --accent-warn: #e8aa51;
+  --accent-info: #5dcde4;
+  --accent-soft: #243252;
+  --node-start: #51c878;
+  --node-end: #51c878;
+  --node-agent: #5dcde4;
+  --node-condition: #e8aa51;
+  --node-loop: #b695ff;
+  --node-branch: #b695ff;
+  --node-script: #51c89d;
+  --hover-tint: #243045;
+}
+
+.grain { opacity: 0; }
+.top-bar {
+  background: var(--panel);
+  border-bottom-color: var(--border);
+  box-shadow: 0 1px 0 rgba(24, 34, 53, 0.02);
+}
+.brand { border-right: 0; padding-inline: 24px; gap: 9px; }
+.brand-mark { width: 9px; height: 9px; border-radius: 50%; border: 0; background: var(--accent-live); }
+.brand-text { color: var(--fg); font-size: 21px; letter-spacing: 0.12em; }
+.brand-text em { display: none; }
+.crumbs { padding-inline: 18px; }
+.actions { padding-inline: 20px; gap: 12px; }
+.btn, .theme-toggle, .pill {
+  height: 40px;
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.btn { padding-inline: 15px; background: var(--accent-live); border-color: var(--accent-live); box-shadow: 0 3px 8px var(--accent-live-glow); }
+.btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-live) 90%, white); border-color: var(--accent-live); }
+.btn-toggle, .theme-toggle, .btn-ghost, .pill { background: var(--panel); border-style: solid; border-color: var(--border-strong); color: var(--fg-soft); box-shadow: none; }
+.btn-toggle[aria-pressed='true'] { color: var(--accent-live); border-color: var(--accent-live); background: var(--accent-soft); }
+.theme-toggle { padding-inline: 11px; gap: 6px; }
+.theme-toggle-label { font-size: 12px; }
+.pill { padding-inline: 12px; font-weight: 600; }
+.pill .dot, .wf-node-state-dot { border-radius: 50%; }
+.workspace { background: var(--bg); }
+.workspace-tri { grid-template-columns: var(--palette-w) minmax(360px, 1fr) 5px var(--right-w); }
+.resize-gutter { background: var(--border); }
+.resize-gutter:hover, .resize-gutter:focus-visible { background: var(--accent-live); }
+.canvas-shell { background-color: var(--bg); background-image: radial-gradient(var(--border-strong) 1px, transparent 1.2px); background-size: 18px 18px; }
+.react-flow { background: var(--bg) !important; }
+.canvas-empty { border-radius: 12px; border-style: solid; background: var(--panel); box-shadow: 0 10px 30px rgba(38, 56, 86, 0.08); }
+.wf-node {
+  width: 220px;
+  min-height: 82px;
+  padding: 13px 14px;
+  background: var(--panel);
+  border-color: var(--border-strong);
+  border-radius: 7px;
+  box-shadow: 0 4px 12px rgba(38, 56, 86, 0.09);
+}
+.wf-node::before, .wf-node::after { display: none; }
+.wf-node[data-selected='true'] { border-color: var(--accent-live); box-shadow: 0 0 0 2px var(--accent-soft), 0 6px 16px rgba(38, 56, 86, 0.13); }
+.wf-node[data-state='live'] { border-color: var(--accent-live); box-shadow: 0 0 0 2px var(--accent-soft), 0 6px 16px rgba(49, 86, 216, 0.16); }
+.wf-node[data-state='succeeded'] { border-color: color-mix(in srgb, var(--accent-ok) 65%, var(--border)); }
+.wf-node[data-state='failed'] { border-color: color-mix(in srgb, var(--accent-err) 65%, var(--border)); }
+.wf-node-head { margin-bottom: 7px; }
+.wf-node-title, .wf-node-title-text { font-size: 14px; letter-spacing: 0; text-transform: none; }
+.wf-node-body, .wf-node-body-italic { font-size: 12.5px; line-height: 1.45; color: var(--fg-soft); }
+.react-flow__edge-path { stroke: #9da9ba; stroke-opacity: 0.92; stroke-width: 1.6; }
+.react-flow__connection-path { stroke: var(--accent-live); }
+.react-flow__handle { width: 10px; height: 10px; border: 2px solid var(--panel); background: var(--accent-ok); }
+.react-flow__handle[id='error'] { background: var(--accent-err); }
+.react-flow__controls { border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; box-shadow: 0 6px 18px rgba(38, 56, 86, 0.10); }
+.react-flow__controls { left: 18px; bottom: 18px; }
+.react-flow__controls-button { width: 38px; height: 38px; background: var(--panel); border-bottom-color: var(--border); color: var(--fg-soft); }
+.react-flow__controls-button:hover { background: var(--accent-soft); color: var(--accent-live); }
+
+/* Keep configuration copy technical and utilitarian. The editorial italic
+ * treatment is reserved for prose elsewhere, so form guidance scans as part
+ * of the control rather than reading like assistant-generated commentary. */
+.config-stub .field-hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-style: normal;
+  letter-spacing: 0.015em;
+  line-height: 1.55;
+}
+.field-label-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+}
+.field-label-required {
+  margin-left: 4px;
+  color: var(--accent-err);
+  font-size: 13px;
+  line-height: 1;
+}
+.field-label-help-trigger {
+  display: inline-grid;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--fg-muted);
+  cursor: help;
+  font: 700 9px/1 var(--mono);
+}
+.field-label-help-trigger:hover,
+.field-label-help-trigger:focus-visible {
+  border-color: var(--accent-live);
+  color: var(--accent-live);
+  outline: none;
+}
+.field-label-tooltip {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 7px);
+  left: 50%;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 48px));
+  padding: 8px 10px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 6px 18px rgba(38, 56, 86, 0.16);
+  color: var(--fg-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+.field-label-help:hover .field-label-tooltip,
+.field-label-help:focus-within .field-label-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+/* Later fields otherwise paint over a tooltip because each flex item follows
+ * normal document stacking. Raise the active field as a whole. */
+.config-stub .field:has(.field-label-help:hover),
+.config-stub .field:has(.field-label-help:focus-within) {
+  position: relative;
+  z-index: 2;
+}
+.checkbox-row-with-help {
+  display: flex;
+  align-items: center;
+}
+.checkbox-row-with-help .field-label-help {
+  margin-left: 8px;
+}
+
+/* HeroUI fields inherit the editor's technical palette rather than the
+ * library's neutral default theme. This keeps the component behavior while
+ * matching the rest of the configuration rail. */
+.config-stub {
+  --field-border-width: 1px;
+  --field-radius: 7px;
+  --field-background: var(--panel);
+  --field-foreground: var(--fg);
+  --field-placeholder: var(--fg-muted);
+  --field-border: var(--border-strong);
+  --field-border-hover: var(--border-bright);
+  --field-border-focus: var(--accent-live);
+  --field-focus: var(--bg-input-focus);
+  --default: var(--bg-input);
+  --default-hover: var(--bg-input-focus);
+  --accent: var(--accent-live);
+  --accent-foreground: var(--accent-on-live);
+  --focus: var(--accent-live);
+}
+.config-stub .input,
+.config-stub .textarea {
+  width: 100%;
+  font-family: var(--mono);
+  font-size: 14px;
+}
+.config-stub .textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+.config-stub .field-row > .input {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* The Agent autocomplete and directory picker are custom controls, but use
+ * the same field metrics as HeroUI inputs in the configuration rail. */
+.config-stub .agent-picker > input,
+.config-stub .cwd-preview {
+  box-sizing: border-box;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: var(--panel);
+  border-color: var(--border-strong);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 20px;
+}
+.config-stub .agent-picker > input:focus,
+.config-stub .cwd-preview:focus-visible {
+  border-color: var(--accent-live);
+  background: var(--bg-input-focus);
+  box-shadow: 0 0 0 1px var(--accent-live-glow);
+}
+.config-stub .checkbox__content {
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-soft);
+}
+.config-stub .checkbox {
+  align-items: flex-start;
+}
+.config-stub .checkbox__control {
+  border-color: var(--border-strong);
 }
 
 
@@ -4304,12 +4576,6 @@ input[type='number'].no-spin {
  * workflows" placeholder. */
 .agent-picker-row--inert { cursor: default; }
 
-/* Read-only provider-id chip in the Agent config panel. */
-.provider-id-readonly {
-  font-family: var(--mono);
-  color: var(--fg-soft);
-}
-
 /* Code-block textarea — script node body. */
 .code-textarea {
   font-family: var(--mono);
@@ -4321,12 +4587,26 @@ input[type='number'].no-spin {
  * never drift apart. Named after the existing `.config-stub` shell so
  * the namespace stays cohesive. */
 .config-stub-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--fg-soft);
   margin-bottom: 18px;
+}
+.config-stub-section-head .provider-icon-mask {
+  color: var(--accent-live);
+}
+
+/* Configuration titles use readable title case; all-caps remains reserved
+ * for global navigation and canvas status marks. */
+.config-stub .field-label,
+.config-stub .checkbox-label,
+.config-stub-section-head {
+  text-transform: capitalize;
 }
 
 /* ── Login screen ──────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Background,
   ConnectionLineType,
   Controls,
   ReactFlow,
@@ -355,14 +356,11 @@ function CanvasInner() {
   // `document.documentElement.dataset.theme` by the pre-paint script in
   // `app/layout.tsx`, kept in sync by `ThemeToggle`).
   //
-  // Gate on `mounted` so the first client render matches SSR (which has no
-  // access to the user's stored theme): otherwise a user with light mode
-  // saved in localStorage hydrates with `light` while the server emitted
-  // `dark`, producing a hydration mismatch on the ReactFlow root className.
-  const [mounted, setMounted] = useState(false);
-  const [docTheme, setDocTheme] = useState<'light' | 'dark'>('dark');
+  // The editor is light-first, matching the application's pre-paint default.
+  // A mutation observer keeps ReactFlow's own colour-mode class in sync when
+  // the user switches to the optional dark theme.
+  const [docTheme, setDocTheme] = useState<'light' | 'dark'>('light');
   useEffect(() => {
-    setMounted(true);
     const html = document.documentElement;
     const read = (): 'light' | 'dark' =>
       html.dataset.theme === 'light' ? 'light' : 'dark';
@@ -373,7 +371,7 @@ function CanvasInner() {
     obs.observe(html, { attributes: true, attributeFilter: ['data-theme'] });
     return () => obs.disconnect();
   }, []);
-  const colorMode: ColorMode = mounted && docTheme === 'light' ? 'light' : 'dark';
+  const colorMode: ColorMode = docTheme;
 
   // Fit the viewport to the workflow once per loaded workflow. Without this
   // an opened workflow whose nodes sit at large x/y may render partially
@@ -652,8 +650,7 @@ function CanvasInner() {
           '.react-flow__node,' +
             '.react-flow__edge,' +
             '.react-flow__handle,' +
-            '.react-flow__controls,' +
-            '.react-flow__minimap',
+            '.react-flow__controls',
         )
       ) {
         return;
@@ -711,6 +708,7 @@ function CanvasInner() {
         defaultEdgeOptions={{ type: 'default', style: { strokeWidth: 2 } }}
         proOptions={{ hideAttribution: true }}
       >
+        <Background gap={18} size={1.15} />
         <Controls showInteractive={false} />
       </ReactFlow>
       {!currentWorkflow && (

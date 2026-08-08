@@ -7,16 +7,16 @@ type Theme = 'dark' | 'light';
 const STORAGE_KEY = 'infinite_loop:theme';
 
 function readCurrentTheme(): Theme {
-  if (typeof document === 'undefined') return 'dark';
+  if (typeof document === 'undefined') return 'light';
   const t = document.documentElement.dataset.theme;
   return t === 'light' ? 'light' : 'dark';
 }
 
 export default function ThemeToggle() {
-  // Start in 'dark' on the server render so the markup is stable; the
+  // Start in 'light' on the server render so the markup is stable; the
   // pre-paint script in layout.tsx has already set the actual dataset.theme,
   // and we sync from it after mount.
-  const [theme, setTheme] = useState<Theme>('dark');
+  const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
     setTheme(readCurrentTheme());

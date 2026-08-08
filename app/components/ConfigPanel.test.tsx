@@ -149,12 +149,39 @@ describe('ConfigPanel', () => {
     expect(screen.getByLabelText('Prompt')).toBeInTheDocument();
     expect(screen.getByLabelText('Working directory')).toBeInTheDocument();
     expect(screen.getByLabelText('Iteration timeout')).toBeInTheDocument();
+    expect(screen.getByLabelText('Prompt')).toBeRequired();
+    expect(screen.getByLabelText('Working directory')).toHaveAttribute(
+      'aria-required',
+      'true',
+    );
     expect(
       screen.getByRole('group', { name: 'Iteration timeout unit' }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText('Provider')).toHaveTextContent('claude');
+    expect(screen.getByRole('img', { name: 'Claude' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Provider')).not.toBeInTheDocument();
     // header shows id + type
     expect(screen.getByText(/agent-1 · agent/)).toBeInTheDocument();
+  });
+
+  it('moves Agent field guidance into an accessible tooltip', () => {
+    const wf = makeWorkflow([startNode, agentNode]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('agent-1');
+    });
+
+    render(<ConfigPanel />);
+
+    const trigger = screen.getByRole('button', {
+      name: 'More information about Display name',
+    });
+    const tooltip = screen.getByRole('tooltip', {
+      name: /shown on the canvas card/i,
+    });
+    expect(trigger).toHaveAttribute('aria-describedby', tooltip.id);
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Escape' });
+    expect(trigger).not.toHaveFocus();
   });
 
   it('renders the CLI profile field only when the provider manifest supports it', async () => {

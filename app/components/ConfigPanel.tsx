@@ -2,15 +2,19 @@
 
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ChangeEvent,
+  type ReactNode,
 } from 'react';
+import { Input as HeroInput, TextArea as HeroTextArea } from '@heroui/react';
 import { useWorkflowStore } from '@/lib/client/workflow-store-client';
 import Checkbox from './Checkbox';
 import FolderPicker from './FolderPicker';
+import ProviderIcon from './icons/ProviderIcon';
 import SelectMenu from './SelectMenu';
 import TemplateField from './TemplateField';
 import { TriggersPanel } from './TriggersPanel';
@@ -69,6 +73,54 @@ function availableRefs(workflow: Workflow | null, selfId: string): string[] {
     .map((id) => `{{${id}.stdout}}`);
 }
 
+/** Keyboard-accessible explanatory copy, shown beside a control's title. */
+function FieldHelp({ label, children }: { label: string; children: ReactNode }) {
+  const tooltipId = useId();
+  return (
+    <span className="field-label-help">
+      <button
+        type="button"
+        className="field-label-help-trigger"
+        aria-label={`More information about ${label}`}
+        aria-describedby={tooltipId}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.currentTarget.blur();
+          }
+        }}
+      >
+        ?
+      </button>
+      <span id={tooltipId} role="tooltip" className="field-label-tooltip">
+        {children}
+      </span>
+    </span>
+  );
+}
+
+/** A compact field title with keyboard-accessible explanatory copy. */
+function FieldLabel({
+  children,
+  help,
+  required = false,
+}: {
+  children: string;
+  help?: ReactNode;
+  required?: boolean;
+}) {
+  return (
+    <span className="field-label">
+      {children}
+      {required ? (
+        <span className="field-label-required" aria-label="required">
+          *
+        </span>
+      ) : null}
+      {help ? <FieldHelp label={children}>{help}</FieldHelp> : null}
+    </span>
+  );
+}
+
 /* ─── display-name field ────────────────────────────────────── */
 /* Lets the user rename the canvas card's title independent of the node's
  * underlying id/type. Empty / whitespace-only commits clear the label so
@@ -85,17 +137,17 @@ function DisplayNameField({
   const [v, setV] = useDebouncedString(value, onCommit);
   return (
     <div className="field">
-      <span className="field-label">Display name</span>
-      <input
+      <FieldLabel help="Shown on the canvas card. Leave blank to use the default.">
+        Display name
+      </FieldLabel>
+      <HeroInput
+        variant="secondary"
         aria-label="Display name"
         type="text"
         value={v}
         placeholder={fallback}
         onChange={(e) => setV(e.target.value)}
       />
-      <span className="field-hint">
-        Shown on the canvas card. Leave blank to use the default.
-      </span>
     </div>
   );
 }
@@ -169,7 +221,8 @@ function StartForm({ workflow }: { workflow: Workflow | null }) {
             <div className="bni-row-head">
               <label className="bni-name">
                 name
-                <input
+                <HeroInput
+        variant="secondary"
                   type="text"
                   value={row.name}
                   placeholder="name"
@@ -209,7 +262,8 @@ function StartForm({ workflow }: { workflow: Workflow | null }) {
 
             <label className="bni-description">
               description
-              <input
+              <HeroInput
+        variant="secondary"
                 type="text"
                 value={row.description ?? ''}
                 placeholder="optional"
@@ -262,7 +316,8 @@ function DefaultEditor({
   switch (row.type) {
     case 'string':
       return (
-        <input
+        <HeroInput
+        variant="secondary"
           type="text"
           value={typeof row.default === 'string' ? row.default : ''}
           onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
@@ -270,7 +325,8 @@ function DefaultEditor({
       );
     case 'text':
       return (
-        <textarea
+        <HeroTextArea
+        variant="secondary"
           value={typeof row.default === 'string' ? row.default : ''}
           onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
         />
@@ -278,7 +334,8 @@ function DefaultEditor({
     case 'number': {
       const v = typeof row.default === 'number' ? row.default : '';
       return (
-        <input
+        <HeroInput
+        variant="secondary"
           type="number"
           value={v}
           onChange={(e) => {
@@ -344,17 +401,17 @@ function SidenoteForm({
   );
   return (
     <div className="field">
-      <span className="field-label">Note</span>
-      <textarea
+      <FieldLabel help="Static text. No templating, no execution — purely for documentation.">
+        Note
+      </FieldLabel>
+      <HeroTextArea
+        variant="secondary"
         aria-label="Note text"
         rows={6}
         value={text}
         placeholder="Write a free-form note — pinned to the canvas, not run by the engine."
         onChange={(e) => setText(e.target.value)}
       />
-      <span className="field-hint">
-        Static text. No templating, no execution — purely for documentation.
-      </span>
     </div>
   );
 }
@@ -639,7 +696,7 @@ function CwdField({
 
   return (
     <div className="field field--relative">
-      <span className="field-label">Working directory</span>
+      <FieldLabel required>Working directory</FieldLabel>
       <div
         ref={ref}
         role="button"
@@ -647,6 +704,7 @@ function CwdField({
         aria-label="Working directory"
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-required="true"
         aria-invalid={invalid || undefined}
         title={value || undefined}
         data-tooltip={value || undefined}
@@ -770,7 +828,8 @@ function AgentOutputRow({
   );
   return (
     <div className="kv-row">
-      <input
+      <HeroInput
+        variant="secondary"
         aria-label={`agent output name ${index}`}
         type="text"
         value={name}
@@ -778,7 +837,8 @@ function AgentOutputRow({
         placeholder="PR_LINK"
       />
       <div className="kv-row-value">
-        <input
+        <HeroInput
+        variant="secondary"
           aria-label={`agent output description ${index}`}
           type="text"
           value={description}
@@ -1015,50 +1075,40 @@ function AgentForm({
 
   return (
     <>
-      <div className="field">
-        <span className="field-label">Provider</span>
-        <span
-          className="field-hint provider-id-readonly"
-          aria-label="Provider"
-        >
-          {providerId}
-        </span>
-      </div>
-
       {supportsCliProfile && (
         <div className="field">
-          <span className="field-label">Profile</span>
-          <input
+          <FieldLabel help="Optional CLI profile passed through the provider manifest. Leave blank to omit it.">
+            Profile
+          </FieldLabel>
+          <HeroInput
+        variant="secondary"
             aria-label="Profile"
             type="text"
             value={profile}
             onChange={onProfileChange}
             placeholder="optional profile"
           />
-          <span className="field-hint">
-            Optional CLI profile passed through the provider manifest. Leave blank to omit it.
-          </span>
         </div>
       )}
 
       {supportsCliModel && (
         <div className="field">
-          <span className="field-label">Model</span>
-          <input
+          <FieldLabel help="Optional CLI model passed through the provider manifest. Leave blank to omit it.">
+            Model
+          </FieldLabel>
+          <HeroInput
+        variant="secondary"
             aria-label="Model"
             type="text"
             value={model}
             onChange={onModelChange}
             placeholder="optional model"
           />
-          <span className="field-hint">
-            Optional CLI model passed through the provider manifest. Leave blank to omit it.
-          </span>
         </div>
       )}
 
       <div className="field">
-        <span className="field-label">Prompt</span>
+        <FieldLabel required>Prompt</FieldLabel>
         <TemplateField
           multiline
           rows={5}
@@ -1068,6 +1118,7 @@ function AgentForm({
           selfId={selfId}
           refs={templateRefs}
           fieldPath="prompt"
+          required
         />
         <RefChips refs={refs} />
       </div>
@@ -1076,50 +1127,61 @@ function AgentForm({
 
       {!isHttpProvider && (
         <div className="field">
-          <span className="field-label">Agent</span>
+          <FieldLabel
+            help={
+              <>
+                Adds <code>--agent &lt;name&gt;</code> to the spawned command. Leave blank to omit the flag.
+              </>
+            }
+          >
+            Agent
+          </FieldLabel>
           <AgentPicker
             value={agent}
             onChange={setAgent}
             choices={agentChoices}
           />
-          <span className="field-hint">
-            Adds <code>--agent &lt;name&gt;</code> to the spawned command. Leave blank to omit the flag.
-          </span>
         </div>
       )}
 
       {!isHttpProvider && (
         <div className="field">
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
+          <div className="checkbox-row-with-help">
+            <Checkbox
+              className="checkbox-row"
+              label="Run in isolated git worktree"
               checked={useWorktree}
-              onChange={(e) =>
+              onChange={(next) =>
                 onPatch({
                   ...config,
-                  useWorktree: e.target.checked ? true : undefined,
-                  ...(e.target.checked ? {} : { worktreeRef: undefined }),
+                  useWorktree: next ? true : undefined,
+                  ...(next ? {} : { worktreeRef: undefined }),
                 })
               }
             />
-            <span>Run in isolated git worktree</span>
-          </label>
-          <span className="field-hint">
-            Creates a fresh worktree off <code>cwd</code> so parallel agents don&apos;t collide. Uncommitted edits in <code>cwd</code> are NOT included — commit or stash first.
-          </span>
+            <FieldHelp label="Run in isolated git worktree">
+              Creates a fresh worktree off <code>cwd</code> so parallel agents don&apos;t collide. Uncommitted edits in <code>cwd</code> are NOT included — commit or stash first.
+            </FieldHelp>
+          </div>
           {useWorktree && (
             <div className="field" style={{ marginTop: 8 }}>
-              <span className="field-label">Worktree base ref</span>
-              <input
+              <FieldLabel
+                help={
+                  <>
+                    Branch, tag, or commit. Blank = HEAD of <code>cwd</code>. Supports <code>{'{{…}}'}</code> templating.
+                  </>
+                }
+              >
+                Worktree base ref
+              </FieldLabel>
+              <HeroInput
+        variant="secondary"
                 aria-label="Worktree base ref"
                 type="text"
                 value={worktreeRef}
                 onChange={(e) => setWorktreeRef(e.target.value)}
                 placeholder="HEAD"
               />
-              <span className="field-hint">
-                Branch, tag, or commit. Blank = HEAD of <code>cwd</code>. Supports <code>&#123;&#123;…&#125;&#125;</code> templating.
-              </span>
             </div>
           )}
         </div>
@@ -1127,39 +1189,36 @@ function AgentForm({
 
       {!isHttpProvider && (
         <div className="field">
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
+          <div className="checkbox-row-with-help">
+            <Checkbox
+              className="checkbox-row"
+              label="Skip permission prompts (dangerous)"
               checked={config.dangerouslySkipPermissions === true}
-              onChange={(e) =>
+              onChange={(next) =>
                 onPatch({
                   ...config,
-                  dangerouslySkipPermissions: e.target.checked
-                    ? true
-                    : undefined,
+                  dangerouslySkipPermissions: next ? true : undefined,
                 })
               }
             />
-            <span>Skip permission prompts (dangerous)</span>
-          </label>
-          <span className="field-hint">
-            Runs the agent with every tool-permission prompt disabled — full
-            autonomous file, shell, and network access. Leave off unless you
-            trust the prompt and run inside the sandboxed container. Applies to
-            providers that support it (Claude).
-          </span>
+            <FieldHelp label="Skip permission prompts (dangerous)">
+              Runs the agent with every tool-permission prompt disabled — full autonomous file, shell, and network access. Leave off unless you trust the prompt and run inside the sandboxed container. Applies to providers that support it (Claude).
+            </FieldHelp>
+          </div>
         </div>
       )}
 
       <div className="field">
-        <span className="field-label">Iteration timeout</span>
+        <FieldLabel required>Iteration timeout</FieldLabel>
         <div className="field-row">
-          <input
+          <HeroInput
+        variant="secondary"
             aria-label="Iteration timeout"
             type="number"
             inputMode="decimal"
             min={0}
             step="any"
+            required
             value={timeoutDisplay}
             onChange={onTimeoutChange}
             className="no-spin"
@@ -1191,17 +1250,17 @@ function AgentForm({
        * back doesn't drop the user's declared list. */}
       {!isHttpProvider && (
         <div className="field">
-          <span className="field-label">Outputs</span>
+          <FieldLabel
+            help={
+              <>
+                Declared keys the agent emits via the injected <code>set_output</code> MCP tool. Reference downstream as{' '}
+                <code>{'{{'}{selfId || '<node>'}.&lt;name&gt;{'}}'}</code>.
+              </>
+            }
+          >
+            Outputs
+          </FieldLabel>
           <AgentOutputsEditor config={config} onPatch={onPatch} />
-          <span className="field-hint">
-            Declared keys the agent emits via the injected{' '}
-            <code>set_output</code> MCP tool. Reference downstream as{' '}
-            <code>
-              {'{{'}
-              {selfId || '<node>'}.&lt;name&gt;{'}}'}
-            </code>
-            .
-          </span>
         </div>
       )}
     </>
@@ -1270,7 +1329,8 @@ function ConditionForm({
         <>
           <div className="field">
             <span className="field-label">Pattern</span>
-            <input
+            <HeroInput
+        variant="secondary"
               aria-label="Pattern"
               type="text"
               value={pattern}
@@ -1313,7 +1373,8 @@ function ConditionForm({
       {kind === 'command' && (
         <div className="field">
           <span className="field-label">Command</span>
-          <input
+          <HeroInput
+        variant="secondary"
             aria-label="Command"
             type="text"
             value={cmd}
@@ -1326,7 +1387,8 @@ function ConditionForm({
         <>
           <div className="field">
             <span className="field-label">Rubric</span>
-            <textarea
+            <HeroTextArea
+        variant="secondary"
               aria-label="Rubric"
               rows={4}
               value={rubric}
@@ -1334,14 +1396,16 @@ function ConditionForm({
             />
           </div>
           <div className="field">
-            <span className="field-label">Model</span>
-            <input
+            <FieldLabel help="Leave blank to use the Claude Code default.">
+              Model
+            </FieldLabel>
+            <HeroInput
+        variant="secondary"
               aria-label="Model"
               type="text"
               value={model}
               onChange={(e) => setModel(e.target.value)}
             />
-            <span className="field-hint">blank = claude code default</span>
           </div>
         </>
       )}
@@ -1396,7 +1460,8 @@ function LoopForm({
       {!infinite && (
         <div className="field">
           <span className="field-label">Max iterations</span>
-          <input
+          <HeroInput
+        variant="secondary"
             aria-label="Max iterations"
             type="number"
             min={1}
@@ -1537,15 +1602,17 @@ function ParallelForm({
 
       {mode === 'quorum' && (
         <div className="field">
-          <span className="field-label">Quorum N</span>
-          <input
+          <FieldLabel help="Must be between 1 and the number of children.">
+            Quorum N
+          </FieldLabel>
+          <HeroInput
+        variant="secondary"
             aria-label="Quorum N"
             type="number"
             min={1}
             value={quorumStr}
             onChange={(e) => setQuorumStr(e.target.value)}
           />
-          <span className="field-hint">1 ≤ quorumN ≤ children.length</span>
         </div>
       )}
 
@@ -1648,7 +1715,8 @@ function KvRow({
   );
   return (
     <div className="kv-row">
-      <input
+      <HeroInput
+        variant="secondary"
         aria-label={`${nameLabel} ${index}`}
         type="text"
         value={name}
@@ -1667,7 +1735,8 @@ function KvRow({
             placeholder={valuePlaceholder}
           />
         ) : (
-          <input
+          <HeroInput
+        variant="secondary"
             aria-label={`${valueLabel} ${index}`}
             type="text"
             value={value}
@@ -1845,16 +1914,15 @@ function SubworkflowForm({
       </div>
 
       <div className="field">
-        <span className="field-label">Outputs</span>
+        <FieldLabel help="Maps each exposed output name to a dotted path in the child workflow's terminal scope, for example judge-1.winner.">
+          Outputs
+        </FieldLabel>
         <KvRowsEditor
           rows={outputRows}
           onChange={commitOutputs}
           nameLabel="name"
           valueLabel="child path"
           valuePlaceholder="judge-1.winner"
-          valueDescription={
-            'dotted path into the child workflow\'s terminal scope, e.g. "judge-1.winner"'
-          }
           addLabel="add output"
         />
       </div>
@@ -1911,7 +1979,8 @@ function CandidateRow({
           fieldPath={`candidates.${index}`}
         />
       ) : (
-        <textarea
+        <HeroTextArea
+        variant="secondary"
           aria-label={`candidate ${index}`}
           rows={2}
           value={v}
@@ -2025,7 +2094,9 @@ function ManualForm({
   return (
     <>
       <div className="field">
-        <span className="field-label">Acceptance brief</span>
+        <FieldLabel help="Shown to the reviewer above the decision buttons. Templated against upstream outputs.">
+          Acceptance brief
+        </FieldLabel>
         <TemplateField
           multiline
           rows={5}
@@ -2038,14 +2109,12 @@ function ManualForm({
           placeholder="Summarize what to review, e.g. Approve PR {{agent-1.stdout}}?"
         />
         <RefChips refs={refs} />
-        <span className="field-hint">
-          Shown to the reviewer above the decision buttons. Templated against
-          upstream outputs.
-        </span>
       </div>
 
       <div className="field">
-        <span className="field-label">Reviewer hint</span>
+        <FieldLabel help="Free-form operator guidance — Infinite Loop is single-tenant so this is descriptive, not an identity check.">
+          Reviewer hint
+        </FieldLabel>
         <TemplateField
           ariaLabel="Reviewer hint"
           value={reviewerHint}
@@ -2055,14 +2124,12 @@ function ManualForm({
           fieldPath="reviewerHint"
           placeholder="who is expected to decide (e.g. on-call SRE)"
         />
-        <span className="field-hint">
-          Free-form operator guidance — Infinite Loop is single-tenant so this
-          is descriptive, not an identity check.
-        </span>
       </div>
 
       <div className="field">
-        <span className="field-label">Decisions</span>
+        <FieldLabel help="Each enabled decision becomes an outgoing edge on the canvas (handles match the key).">
+          Decisions
+        </FieldLabel>
         <div className="kv-rows">
           {MANUAL_DECISION_KEYS.map((key) => {
             const decl = byKey.get(key);
@@ -2094,16 +2161,15 @@ function ManualForm({
             at least one decision must be enabled
           </span>
         )}
-        <span className="field-hint">
-          Each enabled decision becomes an outgoing edge on the canvas
-          (handles match the key).
-        </span>
       </div>
 
       <div className="field">
-        <span className="field-label">Timeout (optional)</span>
+        <FieldLabel help={<>0 (or blank) waits indefinitely. When set, an elapsed gate routes through <code>rejected</code> with <code>timedOut: true</code> in its scope outputs.</>}>
+          Timeout (optional)
+        </FieldLabel>
         <div className="field-row">
-          <input
+          <HeroInput
+        variant="secondary"
             aria-label="Timeout"
             type="number"
             inputMode="decimal"
@@ -2127,11 +2193,6 @@ function ManualForm({
             ))}
           </div>
         </div>
-        <span className="field-hint">
-          0 (or blank) waits indefinitely. When set, an elapsed gate routes
-          through <code>rejected</code> with <code>timedOut: true</code> in
-          its scope outputs.
-        </span>
       </div>
     </>
   );
@@ -2166,22 +2227,24 @@ function ManualDecisionRow({
   );
   return (
     <div className="kv-row" aria-label={`decision ${decisionKey}`}>
-      <label className="checkbox-row" style={{ gap: 6 }}>
-        <input
-          type="checkbox"
-          checked={enabled}
-          disabled={onlyOne}
-          onChange={onToggle}
-          aria-label={`enable decision ${decisionKey}`}
-          title={onlyOne ? 'at least one decision must remain' : undefined}
-        />
-        <code>{decisionKey}</code>
-        {isTimeoutFallback && (
-          <span className="field-hint">(timeout fallback)</span>
-        )}
-      </label>
+      <Checkbox
+        className="checkbox-row"
+        label={
+          <>
+            <code>{decisionKey}</code>
+            {isTimeoutFallback && (
+              <span className="field-hint">(timeout fallback)</span>
+            )}
+          </>
+        }
+        checked={enabled}
+        disabled={onlyOne}
+        onChange={onToggle}
+        ariaLabel={`enable decision ${decisionKey}`}
+      />
       <div className="kv-row-value">
-        <input
+        <HeroInput
+        variant="secondary"
           aria-label={`label for ${decisionKey}`}
           type="text"
           value={labelBuf}
@@ -2189,7 +2252,8 @@ function ManualDecisionRow({
           placeholder={fallback}
           disabled={!enabled}
         />
-        <input
+        <HeroInput
+        variant="secondary"
           aria-label={`description for ${decisionKey}`}
           type="text"
           value={descBuf}
@@ -2338,19 +2402,22 @@ function JudgeForm({
       )}
 
       <div className="field">
-        <span className="field-label">Model</span>
-        <input
+        <FieldLabel help="Leave blank to use the provider default.">
+          Model
+        </FieldLabel>
+        <HeroInput
+        variant="secondary"
           aria-label="Model"
           type="text"
           value={model}
           onChange={(e) => setModel(e.target.value)}
         />
-        <span className="field-hint">blank = provider default</span>
       </div>
 
       <div className="field">
         <span className="field-label">Provider</span>
-        <input
+        <HeroInput
+        variant="secondary"
           aria-label="Provider"
           type="text"
           value={providerId}
@@ -2380,7 +2447,8 @@ function OutputNameRow({
   const [v, setV] = useDebouncedString(value, onCommit);
   return (
     <div className="script-output-row">
-      <input
+      <HeroInput
+        variant="secondary"
         aria-label={`agent output name ${index}`}
         type="text"
         value={v}
@@ -2514,7 +2582,9 @@ function ScriptForm({
       </div>
 
       <div className="field">
-        <span className="field-label">Outputs</span>
+        <FieldLabel help="The function returns an object; each declared name is copied into this node’s scope under the same key.">
+          Outputs
+        </FieldLabel>
         <div className="script-output-list">
           {outputs.map((name, i) => (
             <OutputNameRow
@@ -2533,15 +2603,22 @@ function ScriptForm({
             + add output
           </button>
         </div>
-        <span className="field-hint">
-          The function returns an object; each declared name is copied into
-          this node&apos;s scope under the same key.
-        </span>
       </div>
 
       <div className="field">
-        <span className="field-label">Code</span>
-        <textarea
+        <FieldLabel
+          help={
+            <>
+              <code>{sigHint}</code>
+              <br />
+              Not templated. Define <code>run(…)</code> taking the inputs as positional args; return an object with the declared output keys.
+            </>
+          }
+        >
+          Code
+        </FieldLabel>
+        <HeroTextArea
+        variant="secondary"
           aria-label="Code"
           rows={12}
           spellCheck={false}
@@ -2549,13 +2626,6 @@ function ScriptForm({
           value={code}
           onChange={(e) => setCode(e.target.value)}
         />
-        <span className="field-hint field-hint--mono-block">
-          {sigHint}
-        </span>
-        <span className="field-hint">
-          Not templated. Define <code>run(…)</code> taking the inputs as
-          positional args; return an object with the declared output keys.
-        </span>
       </div>
 
       <CwdField value={cwd} onChange={setCwd} />
@@ -2563,7 +2633,8 @@ function ScriptForm({
       <div className="field">
         <span className="field-label">Timeout</span>
         <div className="field-row">
-          <input
+          <HeroInput
+        variant="secondary"
             aria-label="Timeout"
             type="number"
             inputMode="decimal"
@@ -2726,7 +2797,13 @@ export default function ConfigPanel() {
   return (
     <aside aria-label="config panel" className="config-stub">
       <header className="serif config-stub-section-head">
-        {node.id} · {node.type}
+        {node.type === 'agent' ? (
+          <ProviderIcon
+            providerId={(node.config as AgentConfig).providerId ?? 'claude'}
+            size={22}
+          />
+        ) : null}
+        <span>{node.id} · {node.type}</span>
       </header>
 
       <form className="task-form" onSubmit={(e) => e.preventDefault()}>

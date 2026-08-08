@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { IconType } from 'react-icons';
 import {
   LuCode,
@@ -11,6 +11,7 @@ import {
   LuLayers,
   LuPlay,
   LuRepeat,
+  LuSearch,
   LuScale,
   LuSquare,
   LuStickyNote,
@@ -185,6 +186,8 @@ function handlePaletteItemClick(item: PaletteItem): void {
 export default function Palette() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
   // Open by default; clicking the Hermes subgroup header toggles it.
   const [hermesOpen, setHermesOpen] = useState(true);
 
@@ -224,25 +227,89 @@ export default function Palette() {
     items: topLevelProviderItems,
   };
   const categories: PaletteCategory[] = [...STATIC_CATEGORIES, modelRunners];
+  const normalizedQuery = query.trim().toLowerCase();
   // Total count across all connections, shown next to the Hermes
   // subgroup header so it matches the flat count the user expects.
   const hermesItemCount = hermesGroups.reduce(
     (n, g) => n + g.items.length,
     0,
   );
+  const visibleHermesGroups = normalizedQuery
+    ? hermesGroups
+        .map((group) => {
+          const groupMatches = group.connectionLabel
+            .toLowerCase()
+            .includes(normalizedQuery);
+          return {
+            ...group,
+            items: groupMatches
+              ? group.items
+              : group.items.filter((item) =>
+                  `${item.name} ${item.description} ${item.providerId ?? ''}`
+                    .toLowerCase()
+                    .includes(normalizedQuery),
+                ),
+          };
+        })
+        .filter((group) => group.items.length > 0)
+    : hermesGroups;
+  const visibleCategories = normalizedQuery
+    ? categories
+        .map((category) => ({
+          ...category,
+          items: category.items.filter((item) =>
+            `${item.name} ${item.description} ${item.type}`
+              .toLowerCase()
+              .includes(normalizedQuery),
+          ),
+        }))
+        .filter(
+          (category) =>
+            category.items.length > 0 ||
+            (category.id === 'model-runners' && visibleHermesGroups.length > 0),
+        )
+    : categories;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return;
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return;
+      event.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
     <>
       <style>{paletteCss}</style>
       <aside aria-label="palette" className="palette">
-      {categories.map((category) => (
+      <label className="palette-search">
+        <LuSearch aria-hidden="true" size={16} />
+        <input
+          ref={searchRef}
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search nodes..."
+          aria-label="Search nodes"
+        />
+        <kbd>⌘K</kbd>
+      </label>
+      {visibleCategories.length === 0 ? (
+        <p className="palette-no-results">No matching nodes</p>
+      ) : visibleCategories.map((category) => (
         <section key={category.heading} className="palette-section">
           <h3 className="section-eyebrow">{category.heading}</h3>
           <ul className="palette-list">
             {category.items.length === 0 ? (
-              <li className="palette-empty serif-italic">
-                no providers in /providers
-              </li>
+              category.id === 'model-runners' && visibleHermesGroups.length > 0
+                ? null
+                : <li className="palette-empty serif-italic">
+                    no providers in /providers
+                  </li>
             ) : (
               category.items.map((item) => (
                 <li key={`${item.type}:${item.providerId ?? ''}:${item.name}`}>
@@ -277,6 +344,11 @@ export default function Palette() {
                       )}
                     </span>
                     <span className="palette-name">{item.name}</span>
+                    {item.available === false && (
+                      <span className="palette-status" aria-hidden="true">
+                        Not available
+                      </span>
+                    )}
                   </button>
                 </li>
               ))
@@ -305,17 +377,17 @@ export default function Palette() {
                   </span>
                 )}
               </button>
-              {hermesOpen && (
+              {(hermesOpen || !!normalizedQuery) && (
                 <div
                   id="palette-subgroup-hermes"
                   className="palette-subgroup-body"
                 >
-                  {hermesGroups.length === 0 ? (
+                  {visibleHermesGroups.length === 0 ? (
                     <p className="palette-empty serif-italic">
-                      no connections yet
+                      {normalizedQuery ? 'no matching connections' : 'no connections yet'}
                     </p>
                   ) : (
-                    hermesGroups.map((group) => (
+                    visibleHermesGroups.map((group) => (
                       <div
                         key={group.connectionId}
                         className="palette-conn-group"
@@ -378,6 +450,14 @@ export default function Palette() {
                                 <span className="palette-name">
                                   {item.name}
                                 </span>
+                                {item.available === false && (
+                                  <span
+                                    className="palette-status"
+                                    aria-hidden="true"
+                                  >
+                                    Not available
+                                  </span>
+                                )}
                               </button>
                             </li>
                           ))}
@@ -413,14 +493,45 @@ export default function Palette() {
 const paletteCss = `
 .palette {
   border-right: 1px solid var(--border);
-  padding: 20px 14px 80px;
+  padding: 16px 14px 32px;
   height: calc(100vh - var(--top-bar-h));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  background: var(--bg);
+  gap: 18px;
+  background: var(--panel);
 }
+.palette-search {
+  height: 40px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--fg-muted);
+}
+.palette-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font: 500 13px/1 var(--mono);
+}
+.palette-search input::placeholder { color: var(--fg-muted); }
+.palette-search:focus-within { border-color: var(--accent-live); box-shadow: 0 0 0 3px var(--accent-soft); }
+.palette-search kbd {
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-muted);
+  font: 600 10px/1 var(--mono);
+}
+.palette-no-results { margin: 0; color: var(--fg-muted); font: 500 13px/1.4 var(--mono); }
 .palette-section {
   display: flex;
   flex-direction: column;
@@ -449,12 +560,13 @@ const paletteCss = `
   -webkit-appearance: none;
   width: 100%;
   display: grid;
-  grid-template-columns: 12px 22px 1fr;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  background: transparent;
-  border: 0;
-  padding: 6px 10px 6px 6px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
   color: var(--fg-soft);
   font-family: var(--mono);
   cursor: grab;
@@ -462,22 +574,10 @@ const paletteCss = `
   transition: color 120ms ease, background 120ms ease;
   position: relative;
 }
-.palette-item::before {
-  content: '·';
-  color: var(--fg-faint);
-  font-size: 12.5px;
-  text-align: center;
-  width: 12px;
-}
 .palette-item:hover {
   color: var(--accent-live);
-  background: var(--hover-tint);
-  text-shadow: var(--crt-glow);
-}
-.palette-item:hover::before {
-  content: '›';
-  color: var(--accent-live);
-  text-shadow: var(--crt-glow);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent-live) 45%, var(--border));
 }
 .palette-item:active {
   cursor: grabbing;
@@ -487,16 +587,16 @@ const paletteCss = `
   color: var(--fg-faint);
   opacity: 0.58;
 }
-.palette-item[data-unavailable='true']::after {
-  content: 'missing';
+.palette-status {
   justify-self: end;
   font-size: 10px;
   letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--accent-err);
 }
 .palette-item:focus-visible {
-  outline: 1px dashed var(--accent-live);
-  outline-offset: -2px;
+  outline: 2px solid var(--accent-live);
+  outline-offset: 2px;
 }
 .palette-icon {
   display: inline-flex;
@@ -505,12 +605,12 @@ const paletteCss = `
   font-family: var(--mono);
   font-size: 17px;
   line-height: 1;
-  color: var(--fg-dim);
+  color: var(--accent-info);
   /* Pull the icon closer to the arrow/pip column without touching the
    * uniform grid gap (which would also tighten icon→text). Negative
    * margin shifts only this column's visual edge; the grid track itself
    * stays the same width. */
-  margin-left: -6px;
+  margin-left: 0;
 }
 .palette-icon svg {
   display: block;
@@ -531,8 +631,9 @@ const paletteCss = `
 .palette-name {
   font-family: var(--mono);
   font-size: 13px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
   color: inherit;
   min-width: 0;
   overflow: hidden;

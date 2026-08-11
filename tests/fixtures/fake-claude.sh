@@ -9,15 +9,6 @@
 #   FAKE_EXIT_CODE              Numeric exit code (default 0).
 #   FAKE_STDERR                 Optional stderr line.
 #
-# Judge mode (lib/server/nodes/judge.ts). When any of these are set, the
-# script emits a single JSON line on stdout and ignores FAKE_STDOUT_LINES:
-#   FAKE_CLAUDE_JUDGE_WINNER    Winner index (e.g. "2"). Triggers judge mode.
-#   FAKE_CLAUDE_JUDGE_SCORES    Optional comma-separated scores override
-#                               (e.g. "5,7,9"). Length need not match.
-#   FAKE_CLAUDE_JUDGE_BAD       When set non-empty, emit malformed JSON
-#                               (e.g. "not json") instead. Forces the judge
-#                               executor's retry / error path.
-#
 # CLI args (e.g. --print and the prompt) are intentionally ignored.
 
 ms_to_s() {
@@ -40,44 +31,6 @@ if [ -n "${FAKE_STDERR:-}" ]; then
   printf '%s\n' "$FAKE_STDERR" >&2
 fi
 
-# Judge mode short-circuits everything else — emit one line and exit.
-if [ -n "${FAKE_CLAUDE_JUDGE_BAD:-}" ]; then
-  printf '%s\n' "not json"
-  exit "${FAKE_EXIT_CODE:-0}"
-fi
-if [ -n "${FAKE_CLAUDE_JUDGE_WINNER:-}" ]; then
-  winner="$FAKE_CLAUDE_JUDGE_WINNER"
-  if [ -n "${FAKE_CLAUDE_JUDGE_SCORES:-}" ]; then
-    # Build "[a, b, c]" from "a,b,c".
-    scores_json="[$(printf '%s' "$FAKE_CLAUDE_JUDGE_SCORES" | sed 's/,/, /g')]"
-  else
-    # Default: scores of length max(winner+1, 3), filled with 5, with 9 at winner.
-    len="$winner"
-    if [ "$len" -lt 2 ]; then
-      len=2
-    fi
-    len=$((len + 1))
-    parts=""
-    i=0
-    while [ "$i" -lt "$len" ]; do
-      if [ "$i" -eq "$winner" ]; then
-        v=9
-      else
-        v=5
-      fi
-      if [ -z "$parts" ]; then
-        parts="$v"
-      else
-        parts="$parts, $v"
-      fi
-      i=$((i + 1))
-    done
-    scores_json="[$parts]"
-  fi
-  printf '{"winner_index": %s, "scores": %s, "reasoning": "fake"}\n' \
-    "$winner" "$scores_json"
-  exit "${FAKE_EXIT_CODE:-0}"
-fi
 
 between_s="$(ms_to_s "$BETWEEN_MS")"
 first=1

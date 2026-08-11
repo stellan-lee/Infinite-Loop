@@ -60,7 +60,6 @@ const baseExecutors = (overrides: Partial<Record<string, NodeExecutor>> = {}) =>
   loop: constExec('next'),
   parallel: constExec('next'),
   subworkflow: constExec('next'),
-  judge: constExec('next'),
   branch: constExec('next'),
   ...overrides,
 });

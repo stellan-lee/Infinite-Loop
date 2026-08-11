@@ -262,7 +262,7 @@ async function runAgent(node, ctx) {
 }
 ```
 
-Non-agent nodes (Condition, Branch, Script, Loop, Parallel, Subworkflow, Judge) do not interact with the lock manager. Script nodes that shell out into `cwd` are an open question — currently they do not lock and that matches today's behavior; flagged in Risks below.
+Non-agent nodes (Condition, Branch, Script, Loop, Parallel, Subworkflow) do not interact with the lock manager. Script nodes that shell out into `cwd` are an open question — currently they do not lock and that matches today's behavior; flagged in Risks below.
 
 ### TriggerQueue retains its role
 

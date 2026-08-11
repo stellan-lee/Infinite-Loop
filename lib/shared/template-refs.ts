@@ -87,13 +87,6 @@ function staticOutputs(type: WorkflowNode['type']): Array<{ field: string; descr
         { field: 'winner', description: 'race mode: winning branch id' },
         { field: 'winners', description: 'quorum mode: winning branch ids' },
       ];
-    case 'judge':
-      return [
-        { field: 'winner_index', description: 'index of the picked candidate' },
-        { field: 'winner', description: 'text of the winning candidate' },
-        { field: 'scores', description: 'per-candidate score map' },
-        { field: 'reasoning', description: "judge's reasoning text" },
-      ];
     case 'subworkflow':
       return [
         { field: 'status', description: 'succeeded / failed / cancelled' },
@@ -318,13 +311,12 @@ export function isKnownRef(workflow: Workflow | null, ref: string): boolean {
  * mirrors lib/server/workflow-engine.ts TEXT_CONFIG_FIELDS. Kept here as a
  * separate constant so the lint pass can be run client-side without
  * dragging in the engine. Compound fields (script.inputs / subworkflow.inputs
- * / judge.candidates) are handled out-of-band below. */
+ * / subworkflow.inputs) are handled out-of-band below. */
 const TEMPLATED_FIELDS: Partial<Record<WorkflowNode['type'], string[]>> = {
   agent: ['prompt', 'cwd'],
   condition: ['against'],
   branch: ['lhs', 'rhs'],
   script: ['cwd'],
-  judge: ['criteria', 'judgePrompt'],
   manual: ['brief', 'reviewerHint'],
 };
 
@@ -454,14 +446,6 @@ export function lintWorkflowTemplates(
             out.push(...lintField(workflow, n.id, `inputs.${name}`, value));
           }
         }
-      }
-      // judge.candidates — string[]
-      if (n.type === 'judge' && Array.isArray(cfg.candidates)) {
-        cfg.candidates.forEach((c, i) => {
-          if (typeof c === 'string') {
-            out.push(...lintField(workflow, n.id, `candidates.${i}`, c));
-          }
-        });
       }
     }
     if (n.children && n.children.length > 0) {

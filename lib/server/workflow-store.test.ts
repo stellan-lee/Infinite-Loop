@@ -142,6 +142,28 @@ describe('workflow-store', () => {
     await expect(saveWorkflow(bad)).rejects.toThrow(/ghost-node/);
   });
 
+  it('rejects a legacy standalone judge node on save', async () => {
+    const bad = makeWorkflow({
+      nodes: [
+        {
+          id: 'start-1',
+          type: 'start',
+          position: { x: 0, y: 0 },
+          config: {},
+        },
+        {
+          id: 'judge-1',
+          type: 'judge',
+          position: { x: 100, y: 0 },
+          config: { criteria: '', candidates: [] },
+        },
+      ],
+      edges: [],
+    } as unknown as Partial<Workflow>);
+
+    await expect(saveWorkflow(bad)).rejects.toThrow(/judge node .* has been removed/i);
+  });
+
   it('saveWorkflow accepts edges that reference container children', async () => {
     const wf = makeWorkflow({
       id: 'wf-loop',

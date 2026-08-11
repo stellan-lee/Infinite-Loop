@@ -313,11 +313,11 @@ function loadWorkflow(path: string): ProbeWorkflow {
   return w as unknown as ProbeWorkflow;
 }
 
-/** Distinct provider ids referenced by the workflow's agent / judge nodes. */
+/** Distinct provider ids referenced by the workflow's agent nodes. */
 function providerIds(workflow: ProbeWorkflow): string[] {
   const ids = new Set<string>();
   for (const node of workflow.nodes) {
-    if (node.type !== 'agent' && node.type !== 'judge') continue;
+    if (node.type !== 'agent') continue;
     const id = node.config?.providerId;
     if (typeof id === 'string' && id.length > 0) ids.add(id);
   }
@@ -431,7 +431,7 @@ async function preflight(
   // 3. The probe workflow's provider CLI is on PATH.
   const wanted = providerIds(workflow);
   if (wanted.length === 0) {
-    throw new Error('probe workflow has no agent/judge node — it would incur no cost');
+    throw new Error('probe workflow has no agent node — it would incur no cost');
   }
   const providers = await apiCall(opts, token, '/api/providers');
   if (providers.status !== 200 || !providers.json || typeof providers.json !== 'object') {

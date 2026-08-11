@@ -12,7 +12,6 @@ import {
   LuPlay,
   LuRepeat,
   LuSearch,
-  LuScale,
   LuSquare,
   LuStickyNote,
 } from 'react-icons/lu';
@@ -86,7 +85,6 @@ const STATIC_CATEGORIES: PaletteCategory[] = [
     items: [
       { type: 'parallel', name: 'Parallel', Icon: LuColumns3, glyph: '⫲', description: 'fan out concurrent branches' },
       { type: 'subworkflow', name: 'Subworkflow', Icon: LuLayers, glyph: '⊞', description: 'call another workflow' },
-      { type: 'judge', name: 'Judge', Icon: LuScale, glyph: '⚖', description: 'pick best of N candidates' },
     ],
   },
   {

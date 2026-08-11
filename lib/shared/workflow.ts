@@ -12,7 +12,6 @@ export type NodeType =
   | 'branch'
   | 'parallel'
   | 'subworkflow'
-  | 'judge'
   | 'sidenote'
   | 'script'
   | 'manual';
@@ -247,7 +246,7 @@ export interface SubworkflowConfig {
    * scope. Inside the child run, these surface under scope.__inputs.<name>. */
   inputs: Record<string, string>;
   /** Output bindings: parentName → dotted child-scope path (e.g.
-   * "judge-1.winner"). Each value is copied from the child's terminal scope
+   * "agent-1.stdout"). Each value is copied from the child's terminal scope
    * back into parent scope under this subworkflow node's id. */
   outputs: Record<string, string>;
 }
@@ -362,19 +361,6 @@ export function validateManualDecisions(
   }
 }
 
-export interface JudgeNodeConfig {
-  /** Templated rubric / criteria text shown to the judge. */
-  criteria: string;
-  /** Templated candidate texts. Resolved per-call. */
-  candidates: string[];
-  /** Optional override of the judge's system prompt. */
-  judgePrompt?: string;
-  /** Optional model override; defaults to the provider's default model. */
-  model?: string;
-  /** Optional provider id (defaults to 'claude'). */
-  providerId?: string;
-}
-
 export type NodeConfigByType = {
   start: StartConfig;
   end: EndConfig;
@@ -384,7 +370,6 @@ export type NodeConfigByType = {
   branch: BranchConfig;
   parallel: ParallelConfig;
   subworkflow: SubworkflowConfig;
-  judge: JudgeNodeConfig;
   sidenote: SidenoteConfig;
   script: ScriptConfig;
   manual: ManualConfig;

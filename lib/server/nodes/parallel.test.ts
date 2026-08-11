@@ -65,7 +65,6 @@ const baseExecutors = () => ({
   loop: constExec('next'),
   parallel: constExec('next'),
   subworkflow: constExec('next'),
-  judge: constExec('next'),
   branch: constExec('next'),
 });
 

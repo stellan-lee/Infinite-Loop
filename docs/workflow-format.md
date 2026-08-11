@@ -50,7 +50,6 @@ Each workflow lives as one JSON file in `workflows/`. Saves are atomic and bump 
 | **Branch** | Structured `lhs op rhs` predicate (`==`, `!=`, `contains`, `matches`) on templated values. | `result`, `lhs`, `rhs`, `op` | `true` / `false` / `error` |
 | **Parallel** | Runs N children concurrently. Modes: `wait-all`, `race`, `quorum`. Error policy: `fail-fast` or `best-effort`. | `mode`, `completed`, `failed`, `children`, `winner?`, `winners?` | `all_done` / `first_done` / `quorum_met` / `error` |
 | **Subworkflow** | Calls another workflow as a single step with isolated I/O. Inputs are templated in; named outputs are copied back. | declared output names, plus `status`, `errorMessage?` | `next` / `error` |
-| **Judge** | Reads N candidate texts and lets a model pick a winner with structured scoring. | `winner_index`, `winner`, `scores`, `reasoning` | `next` / `error` |
 | **Sidenote** | A free-form sticky note on the canvas. No effect at runtime. | — | — |
 
 ## Conditions
@@ -74,7 +73,6 @@ Reserved scopes:
 
 `workflows/library/` holds repo-shipped, read-only presets. They appear in the workflow menu with a `[library]` tag — open, run, or duplicate them into your own `workflows/` for editing, but they can never be overwritten in place.
 
-The **Team** preset (`workflows/library/team.json`) fans three Claudes out in parallel (idiomatic, contrarian, conservative) and lets a Judge pick the winner. Open it from the menu, fill in `__inputs.task` and `__inputs.criteria`, and run.
 
 ## Run history
 

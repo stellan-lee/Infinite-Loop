@@ -2372,8 +2372,8 @@ input[type='number'].no-spin {
   outline-offset: 2px;
 }
 
-/* Checkbox row used in ConfigPanel forms (e.g. JudgeForm "Override
- * judge prompt"). Lays the native checkbox next to its label inline. */
+/* Checkbox row used in ConfigPanel forms. Lays the native checkbox next to
+ * its label inline. */
 .field-checkbox {
   display: inline-flex;
   align-items: center;

@@ -19,7 +19,7 @@ const jetbrains = JetBrains_Mono({
 
 export const metadata = {
   title: 'Infinite Loop · Console',
-  description: 'Visual orchestration for AI agents — loop, branch, fan out, judge, and replay.',
+  description: 'Visual orchestration for AI agents — loop, branch, fan out, and replay.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -32,7 +32,7 @@
 
 ## What is Infinite Loop?
 
-Infinite Loop is a **local visual canvas for orchestrating AI agents**. You compose workflows out of typed nodes — Agent, Loop, Branch, Parallel, Subworkflow, Judge, Script — and watch every token stream as the model generates it. Workflows are plain JSON files you can version in git, share with a teammate, and trigger from the UI, an MCP client, or a webhook.
+Infinite Loop is a **local visual canvas for orchestrating AI agents**. You compose workflows out of typed nodes — Agent, Loop, Branch, Parallel, Subworkflow, Script — and watch every token stream as the model generates it. Workflows are plain JSON files you can version in git, share with a teammate, and trigger from the UI, an MCP client, or a webhook.
 
 ## Why Infinite Loop
 
@@ -80,7 +80,6 @@ A workflow is a directed graph of typed nodes. Each node writes outputs into a f
 | **Branch** | `lhs op rhs` predicate routing to `true` / `false` / `error`. |
 | **Parallel** | Fans children out — `wait-all`, `race`, or `quorum:N`. |
 | **Subworkflow** | Calls another workflow as a single step with isolated inputs and outputs. |
-| **Judge** | Reads N candidates and picks a winner with structured scoring. |
 | **Script** | Inline TypeScript (Bun) or Python (`python3`) with typed named inputs. |
 | **Start / End** | Entry and exit. Start declares the workflow's caller-supplied `inputs`. |
 
@@ -116,7 +115,7 @@ run_finished    succeeded
 ## Examples — what you can build
 
 - **Iterate until tests pass.** Loop an agent over a codebase with a `command` condition running `pytest -q`. Stops the moment **ground truth** says done.
-- **Multi-agent debate.** Fan three prompts (idiomatic, contrarian, conservative) out to Claude in parallel; let a Judge node read all three and **pick a winner**. The shipped **Team** preset does exactly this — see `workflows/library/team.json`.
+- **Parallel exploration.** Fan out several independent approaches and inspect each branch's result together when the parallel step completes.
 - **Self-grading drafts.** One agent drafts, a second grades against a rubric, **loop until the grade clears a threshold**.
 - **GitHub-driven review.** A webhook trigger on `pull_request: opened` queues a review workflow that **posts a comment back**.
 - **Agents calling Infinite Loop.** Expose your workflows as MCP tools so Claude Code, Cursor, Cline, or Zed can call them by name — **discovery for free**.

@@ -3,7 +3,6 @@ import path from 'node:path';
 import { dataDir, triggersDir } from './paths';
 import type {
   AgentConfig,
-  JudgeNodeConfig,
   ManualConfig,
   ParallelConfig,
   SubworkflowConfig,
@@ -77,6 +76,16 @@ function libraryFileFor(id: string): string {
 }
 
 function validateNodeConfig(n: WorkflowNode): void {
+  // Workflow JSON is external input, so older files can still contain node
+  // types that have been removed from the TypeScript contract. Reject the
+  // retired standalone Judge node on save instead of persisting a workflow
+  // that the runtime can no longer execute. Existing files remain readable
+  // so authors can delete the node and reconnect its edges in the canvas.
+  if ((n as { type?: unknown }).type === 'judge') {
+    throw new Error(
+      `invalid workflow: judge node "${n.id}" has been removed; delete it and reconnect its edges`,
+    );
+  }
   if (n.type === 'parallel') {
     const cfg = n.config as ParallelConfig;
     if (cfg.mode === 'quorum') {
@@ -99,14 +108,6 @@ function validateNodeConfig(n: WorkflowNode): void {
     if (typeof cfg.workflowId !== 'string' || cfg.workflowId.length === 0) {
       throw new Error(
         `invalid workflow: subworkflow node "${n.id}" workflowId must be a non-empty string`,
-      );
-    }
-  }
-  if (n.type === 'judge') {
-    const cfg = n.config as JudgeNodeConfig;
-    if (!Array.isArray(cfg.candidates) || cfg.candidates.length < 2) {
-      throw new Error(
-        `invalid workflow: judge node "${n.id}" requires at least 2 candidates`,
       );
     }
   }

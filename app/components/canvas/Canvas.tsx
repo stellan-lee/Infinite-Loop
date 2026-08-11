@@ -23,7 +23,6 @@ import type {
   ConditionConfig,
   EdgeHandle,
   EndConfig,
-  JudgeNodeConfig,
   LoopConfig,
   ManualConfig,
   NodeConfigByType,
@@ -52,7 +51,6 @@ import AgentNode from './nodes/AgentNode';
 import BranchNode from './nodes/BranchNode';
 import ConditionNode from './nodes/ConditionNode';
 import EndNode from './nodes/EndNode';
-import JudgeNode from './nodes/JudgeNode';
 import LoopNode from './nodes/LoopNode';
 import ManualNode from './nodes/ManualNode';
 import ParallelNode from './nodes/ParallelNode';
@@ -113,11 +111,6 @@ const DEFAULT_CONFIG: { [K in NodeType]: () => NodeConfigByType[K] } = {
     workflowId: '',
     inputs: {},
     outputs: {},
-  }),
-  judge: (): JudgeNodeConfig => ({
-    criteria: '',
-    candidates: [],
-    providerId: 'claude',
   }),
   sidenote: (): SidenoteConfig => ({ text: '' }),
   script: (): ScriptConfig => ({
@@ -328,7 +321,6 @@ const NODE_TYPES = {
   branch: BranchNode,
   parallel: ParallelNode,
   subworkflow: SubworkflowNode,
-  judge: JudgeNode,
   sidenote: SidenoteNode,
   script: ScriptNode,
   manual: ManualNode,

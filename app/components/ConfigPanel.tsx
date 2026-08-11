@@ -43,7 +43,6 @@ import type {
   ConditionConfig,
   ConditionKind,
   EndConfig,
-  JudgeNodeConfig,
   LoopConfig,
   ManualConfig,
   ManualDecisionDecl,
@@ -1914,7 +1913,7 @@ function SubworkflowForm({
       </div>
 
       <div className="field">
-        <FieldLabel help="Maps each exposed output name to a dotted path in the child workflow's terminal scope, for example judge-1.winner.">
+        <FieldLabel help="Maps each exposed output name to a dotted path in the child workflow's terminal scope, for example agent-1.stdout.">
           Outputs
         </FieldLabel>
         <KvRowsEditor
@@ -1922,72 +1921,11 @@ function SubworkflowForm({
           onChange={commitOutputs}
           nameLabel="name"
           valueLabel="child path"
-          valuePlaceholder="judge-1.winner"
+          valuePlaceholder="agent-1.stdout"
           addLabel="add output"
         />
       </div>
     </>
-  );
-}
-
-/* ── one judge-candidate textarea row ──────────────────────────
- * Pulled out so each candidate has its own `useDebouncedString` buffer.
- * Caller still keys these rows by array index (see `candidates.map((c, i)
- * => <CandidateRow key={i} … />`); the hook re-syncs to the new `value`
- * when an upstream insert/delete shifts indices, which keeps focus on
- * the same row position but DOES leak the typed-but-uncommitted text of
- * a removed middle row into its successor. A stable per-row id would be
- * the cleaner fix but requires a parallel rowId state since
- * `candidates: string[]` is the persisted shape — tracked as a
- * follow-up. */
-function CandidateRow({
-  index,
-  value,
-  template,
-  onCommit,
-  onRemove,
-}: {
-  index: number;
-  value: string;
-  template?: { selfId: string; refs: readonly TemplateRef[] };
-  onCommit: (next: string) => void;
-  onRemove: () => void;
-}) {
-  const [v, setV] = useDebouncedString(value, onCommit);
-  return (
-    <div className="candidate-row">
-      <div className="candidate-row-head">
-        <span className="candidate-row-index">[{index}]</span>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={onRemove}
-          aria-label={`remove candidate ${index}`}
-        >
-          remove
-        </button>
-      </div>
-      {template ? (
-        <TemplateField
-          multiline
-          rows={2}
-          ariaLabel={`candidate ${index}`}
-          value={v}
-          onChange={setV}
-          selfId={template.selfId}
-          refs={template.refs}
-          fieldPath={`candidates.${index}`}
-        />
-      ) : (
-        <HeroTextArea
-        variant="secondary"
-          aria-label={`candidate ${index}`}
-          rows={2}
-          value={v}
-          onChange={(e) => setV(e.target.value)}
-        />
-      )}
-    </div>
   );
 }
 
@@ -2263,169 +2201,6 @@ function ManualDecisionRow({
         />
       </div>
     </div>
-  );
-}
-
-function JudgeForm({
-  config,
-  refs,
-  templateRefs,
-  selfId,
-  onPatch,
-}: {
-  config: JudgeNodeConfig;
-  refs: string[];
-  templateRefs: readonly TemplateRef[];
-  selfId: string;
-  onPatch: (next: JudgeNodeConfig) => void;
-}) {
-  const [criteria, setCriteria] = useDebouncedString(
-    config.criteria ?? '',
-    (next) => onPatch({ ...config, criteria: next }),
-  );
-  const [judgePrompt, setJudgePrompt] = useDebouncedString(
-    config.judgePrompt ?? '',
-    (next) =>
-      onPatch({
-        ...config,
-        judgePrompt: next.length > 0 ? next : undefined,
-      }),
-  );
-  const [model, setModel] = useDebouncedString(config.model ?? '', (next) =>
-    onPatch({ ...config, model: next.length > 0 ? next : undefined }),
-  );
-  const [providerId, setProviderId] = useDebouncedString(
-    config.providerId ?? '',
-    (next) =>
-      onPatch({
-        ...config,
-        providerId: next.length > 0 ? next : undefined,
-      }),
-  );
-
-  // judgePrompt is collapsed by default; the checkbox is the user-facing
-  // commit point. Toggling off clears the override; toggling on opens an
-  // empty textarea (the user-typed value is lost on collapse — that's
-  // intentional, since "override off" means "use the default").
-  const [overridePrompt, setOverridePrompt] = useState<boolean>(
-    () => (config.judgePrompt ?? '').length > 0,
-  );
-
-  const candidates = config.candidates ?? [];
-
-  const updateCandidate = (idx: number, next: string) => {
-    const arr = candidates.slice();
-    arr[idx] = next;
-    onPatch({ ...config, candidates: arr });
-  };
-  const removeCandidate = (idx: number) => {
-    const arr = candidates.slice();
-    arr.splice(idx, 1);
-    onPatch({ ...config, candidates: arr });
-  };
-  const addCandidate = () => {
-    onPatch({ ...config, candidates: [...candidates, ''] });
-  };
-
-  return (
-    <>
-      <div className="field">
-        <span className="field-label">Criteria</span>
-        <TemplateField
-          multiline
-          rows={4}
-          ariaLabel="Criteria"
-          value={criteria}
-          onChange={setCriteria}
-          selfId={selfId}
-          refs={templateRefs}
-          fieldPath="criteria"
-        />
-        <RefChips refs={refs} />
-      </div>
-
-      <div className="field">
-        <span className="field-label">Candidates</span>
-        <div className="candidate-list">
-          {candidates.map((c, i) => (
-            // Index-keyed: useDebouncedString re-syncs when the upstream
-            // value reference changes, so focus on unaffected rows is
-            // preserved when another row is added or removed.
-            <CandidateRow
-              key={i}
-              index={i}
-              value={c}
-              template={{ selfId, refs: templateRefs }}
-              onCommit={(next) => updateCandidate(i, next)}
-              onRemove={() => removeCandidate(i)}
-            />
-          ))}
-          <button
-            type="button"
-            className="btn btn-ghost kv-add"
-            onClick={addCandidate}
-          >
-            + add candidate
-          </button>
-        </div>
-      </div>
-
-      <Checkbox
-        className="field-checkbox"
-        label="Override judge prompt"
-        checked={overridePrompt}
-        onChange={(next) => {
-          setOverridePrompt(next);
-          if (!next) {
-            // Clear both the local buffer and the stored override so the
-            // engine falls back to the provider default.
-            setJudgePrompt('');
-            onPatch({ ...config, judgePrompt: undefined });
-          }
-        }}
-      />
-
-      {overridePrompt && (
-        <div className="field">
-          <span className="field-label">Judge prompt</span>
-          <TemplateField
-            multiline
-            rows={4}
-            ariaLabel="Judge prompt"
-            value={judgePrompt}
-            onChange={setJudgePrompt}
-            selfId={selfId}
-            refs={templateRefs}
-            fieldPath="judgePrompt"
-          />
-        </div>
-      )}
-
-      <div className="field">
-        <FieldLabel help="Leave blank to use the provider default.">
-          Model
-        </FieldLabel>
-        <HeroInput
-        variant="secondary"
-          aria-label="Model"
-          type="text"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-        />
-      </div>
-
-      <div className="field">
-        <span className="field-label">Provider</span>
-        <HeroInput
-        variant="secondary"
-          aria-label="Provider"
-          type="text"
-          value={providerId}
-          placeholder="claude"
-          onChange={(e) => setProviderId(e.target.value)}
-        />
-      </div>
-    </>
   );
 }
 
@@ -2874,15 +2649,6 @@ export default function ConfigPanel() {
         {node.type === 'subworkflow' && (
           <SubworkflowForm
             config={node.config as SubworkflowConfig}
-            templateRefs={templateRefs}
-            selfId={node.id}
-            onPatch={patchConfig}
-          />
-        )}
-        {node.type === 'judge' && (
-          <JudgeForm
-            config={node.config as JudgeNodeConfig}
-            refs={refs}
             templateRefs={templateRefs}
             selfId={node.id}
             onPatch={patchConfig}

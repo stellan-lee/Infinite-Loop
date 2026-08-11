@@ -166,6 +166,7 @@ function RefChips({ refs }: { refs: string[] }) {
 
 function StartForm({ workflow }: { workflow: Workflow | null }) {
   const setWorkflowInputs = useWorkflowStore((s) => s.setWorkflowInputs);
+  const setWorkflowCwd = useWorkflowStore((s) => s.setWorkflowCwd);
   const declared = workflow?.inputs ?? [];
 
   const update = (next: WorkflowInputDecl[]) => {
@@ -199,6 +200,13 @@ function StartForm({ workflow }: { workflow: Workflow | null }) {
 
   return (
     <div className="bni-panel" aria-label="workflow inputs">
+      <CwdField
+        value={workflow?.cwd ?? ''}
+        onChange={setWorkflowCwd}
+        label="Global working directory"
+        help="Used by every agent without its own working-directory override. If blank, agents run in /tmp."
+        emptyDisplay="/tmp (fallback — click to choose)"
+      />
       <p className="field-hint bni-blurb">
         Inputs supplied per run. Reference them in templates as{' '}
         <code className="bni-code">{'{{inputs.NAME}}'}</code>
@@ -642,16 +650,24 @@ function WorkflowPicker({
 }
 
 /* ─── working-directory field ───────────────────────────────
- * Shared between AgentForm (CLI providers) and ScriptForm. Renders the
+ * Shared by workflow settings, AgentForm (CLI providers), and ScriptForm. Renders the
  * read-only tail-truncated preview backed by FolderPicker. The truncation
  * math + invalid-path warning live here so any future cwd consumer gets
  * the same behavior without re-implementing it. */
 function CwdField({
   value,
   onChange,
+  label = 'Working directory',
+  required = false,
+  help,
+  emptyDisplay = '(no folder selected — click to choose)',
 }: {
   value: string;
   onChange: (next: string) => void;
+  label?: string;
+  required?: boolean;
+  help?: ReactNode;
+  emptyDisplay?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -695,15 +711,15 @@ function CwdField({
 
   return (
     <div className="field field--relative">
-      <FieldLabel required>Working directory</FieldLabel>
+      <FieldLabel required={required} help={help}>{label}</FieldLabel>
       <div
         ref={ref}
         role="button"
         tabIndex={0}
-        aria-label="Working directory"
+        aria-label={label}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-required="true"
+        aria-required={required || undefined}
         aria-invalid={invalid || undefined}
         title={value || undefined}
         data-tooltip={value || undefined}
@@ -716,7 +732,7 @@ function CwdField({
           }
         }}
       >
-        {value ? display : '(no folder selected — click to choose)'}
+        {value ? display : emptyDisplay}
       </div>
       {invalid && (
         <span className="field-hint field-hint--error">
@@ -943,6 +959,7 @@ function AgentForm({
   refs,
   templateRefs,
   selfId,
+  workflowCwd,
   providerInfo,
   onPatch,
 }: {
@@ -950,6 +967,7 @@ function AgentForm({
   refs: string[];
   templateRefs: readonly TemplateRef[];
   selfId: string;
+  workflowCwd?: string;
   /** Provider metadata for `config.providerId`, fetched once at the panel
    * level. `null` while the panel-level fetch is in flight, or if the id
    * doesn't match any known provider. */
@@ -991,7 +1009,12 @@ function AgentForm({
   const isHttpProvider = providerInfo?.transport === 'http';
   const supportsCliProfile = providerInfo?.manifestSupportsProfile === true;
   const supportsCliModel = providerInfo?.manifestSupportsModel === true;
+  // Keep the field visible while provider metadata is loading. Once a CLI
+  // manifest is known, it is shown only when that manifest accepts {agent}.
+  const supportsCliAgent =
+    providerInfo === null || providerInfo.manifestSupportsAgent === true;
   const useWorktree = config.useWorktree === true;
+  const effectiveCwd = cwd || workflowCwd || '/tmp';
 
   // Fetch the CLI provider's available agents so the Agent field can
   // suggest them. The cwd is part of the probe because `claude agents`
@@ -1002,19 +1025,19 @@ function AgentForm({
   // has to re-pick; built-in / user-global agents survive the change.
   const [agentChoices, setAgentChoices] = useState<AgentChoice[]>([]);
   useEffect(() => {
-    if (isHttpProvider) {
+    if (isHttpProvider || !supportsCliAgent) {
       setAgentChoices([]);
       return;
     }
     // Only probe once an absolute cwd is set; relative cwds would resolve
     // against the server, not the workflow's intended directory.
-    if (!cwd || !cwd.startsWith('/')) {
+    if (!effectiveCwd.startsWith('/')) {
       setAgentChoices([]);
       return;
     }
     let cancelled = false;
     fetch(
-      `/api/providers/${encodeURIComponent(providerId)}/agents?cwd=${encodeURIComponent(cwd)}`,
+      `/api/providers/${encodeURIComponent(providerId)}/agents?cwd=${encodeURIComponent(effectiveCwd)}`,
     )
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { agents?: AgentChoice[] } | null) => {
@@ -1043,7 +1066,7 @@ function AgentForm({
     // on every config keystroke would thrash. We read `config.agent` once
     // when the new listing arrives, which is the only place it's needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providerId, isHttpProvider, cwd]);
+  }, [providerId, isHttpProvider, supportsCliAgent, effectiveCwd]);
 
   // Timeout: millisecond is the wire format (kept as `timeoutMs` on the
   // workflow), but a human entering "60000" was a paper cut. We let the
@@ -1122,9 +1145,17 @@ function AgentForm({
         <RefChips refs={refs} />
       </div>
 
-      {!isHttpProvider && <CwdField value={cwd} onChange={setCwd} />}
-
       {!isHttpProvider && (
+        <CwdField
+          value={cwd}
+          onChange={setCwd}
+          label="Working directory override"
+          help="Optional. Overrides the workflow-wide working directory; when both are blank, this agent runs in /tmp."
+          emptyDisplay="(uses global workdir or /tmp — click to choose)"
+        />
+      )}
+
+      {!isHttpProvider && supportsCliAgent && (
         <div className="field">
           <FieldLabel
             help={
@@ -2608,6 +2639,7 @@ export default function ConfigPanel() {
             refs={refs}
             templateRefs={templateRefs}
             selfId={node.id}
+            workflowCwd={currentWorkflow?.cwd}
             providerInfo={
               providers.find(
                 (p) => p.id === ((node.config as AgentConfig).providerId ?? 'claude'),

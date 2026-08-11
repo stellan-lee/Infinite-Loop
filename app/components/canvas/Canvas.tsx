@@ -94,11 +94,6 @@ const DEFAULT_CONFIG: { [K in NodeType]: () => NodeConfigByType[K] } = {
     // take longer than a few seconds; 1 min was a paper cut for any real
     // task. The user can still narrow it per-node in the inspector.
     timeoutMs: 30 * 60 * 1000,
-    // Default new agent nodes to an isolated git worktree so directory
-    // isolation isn't something the author has to remember to switch on.
-    // Existing saved workflows are untouched (their config carries no
-    // `useWorktree`); the inspector checkbox turns it off for a non-git cwd.
-    useWorktree: true,
   }),
   condition: (): ConditionConfig => ({
     kind: 'sentinel',

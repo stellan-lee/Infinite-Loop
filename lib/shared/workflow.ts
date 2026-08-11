@@ -79,7 +79,9 @@ export interface AgentConfig {
   /** Provider id resolved against `providers/*.json`, e.g. "claude" or "codex". */
   providerId: string;
   prompt: string;
-  cwd: string;
+  /** Optional node-specific working-directory override. Falls back to the
+   * workflow's `cwd`, then `/tmp`. */
+  cwd?: string;
   timeoutMs: number;
   /** Optional model/profile name. HTTP providers use it as the request model
    * (falling back to the manifest's `defaultProfile`). CLI providers may use
@@ -430,6 +432,9 @@ export interface Workflow {
   edges: WorkflowEdge[];
   createdAt: number;
   updatedAt: number;
+  /** Optional workflow-wide working directory. Nodes with their own `cwd`
+   * override this; when neither is set, execution falls back to `/tmp`. */
+  cwd?: string;
   /** Workflow-level custom globals. Each entry's value is a literal
    * string (NOT templated — globals don't reference each other). At run
    * time the engine merges them into the scope under the `globals` key,

@@ -87,6 +87,8 @@ export async function GET(req: Request) {
             m.transport === 'cli' && m.args.includes('{profile}') ? true : undefined,
           manifestSupportsModel:
             m.transport === 'cli' && m.args.includes('{model}') ? true : undefined,
+          manifestSupportsAgent:
+            m.transport === 'cli' && m.args.includes('{agent}') ? true : undefined,
         };
       }),
     );

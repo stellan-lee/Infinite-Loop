@@ -54,6 +54,10 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.length > 0;
 }
 
+function hasConfiguredCwd(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
 function declaredOutputs(cfg: AgentConfig): AgentOutputDecl[] {
   if (!Array.isArray(cfg.outputs)) return [];
   return cfg.outputs.filter(
@@ -119,17 +123,6 @@ export const agentExecutor: NodeExecutor = {
       };
     }
 
-    // cwd is only meaningful for CLI providers — they spawn a process there.
-    // HTTP providers (Hermes etc.) just POST to a remote API, so we don't
-    // require it; fall back to the engine's defaultCwd to satisfy the
-    // RunnerOptions contract.
-    if (provider.transport === 'cli' && !isNonEmptyString(cfg.cwd)) {
-      return {
-        outputs: { errorMessage: 'invalid agent config' },
-        branch: 'error',
-      };
-    }
-
     // Surface the permission posture. An agent running without the dangerous
     // flag cannot perform tool calls that need approval in non-interactive
     // mode — emit once so a user isn't mystified by an agent that "did
@@ -148,7 +141,7 @@ export const agentExecutor: NodeExecutor = {
       );
     }
 
-    const baseCwd = isNonEmptyString(cfg.cwd) ? cfg.cwd : ctx.defaultCwd;
+    const baseCwd = hasConfiguredCwd(cfg.cwd) ? cfg.cwd.trim() : ctx.defaultCwd;
     let spawnCwd = baseCwd;
     let worktreePath: string | undefined;
 

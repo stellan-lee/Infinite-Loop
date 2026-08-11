@@ -100,6 +100,26 @@ describe('agentExecutor', () => {
     }
   });
 
+  it('uses the context working directory when the agent has no override', async () => {
+    process.env.INFLOOP_PROVIDER_BIN_CLAUDE = FAKE_BIN;
+    process.env.FAKE_STDOUT_LINES = 'ok';
+    try {
+      const out = await agentExecutor.execute({
+        ...ctx({
+          providerId: 'claude',
+          prompt: 'p',
+          cwd: '',
+          timeoutMs: 5000,
+        }),
+        defaultCwd: '/tmp',
+      });
+      expect(out.branch).toBe('next');
+    } finally {
+      delete process.env.INFLOOP_PROVIDER_BIN_CLAUDE;
+      delete process.env.FAKE_STDOUT_LINES;
+    }
+  });
+
   describe('useWorktree', () => {
     let repoDir: string;
 

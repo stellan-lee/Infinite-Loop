@@ -64,6 +64,9 @@ export interface WorkflowStoreState {
   /** Replace the current workflow's `globals` map. Pass an empty object
    * to clear all globals. Tracked in undo history. */
   setGlobals: (next: Record<string, string>) => void;
+  /** Set the workflow-wide working directory. Undefined uses the `/tmp`
+   * execution fallback unless a node provides its own cwd. */
+  setWorkflowCwd: (next: string | undefined) => void;
   /** Replace the current workflow's `inputs` array. Pass an empty
    * array to clear all declared inputs. Tracked in undo history. */
   setWorkflowInputs: (next: WorkflowInputDecl[]) => void;
@@ -323,6 +326,17 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
       if (!s.currentWorkflow) return {};
       return {
         currentWorkflow: bumpUpdated({ ...s.currentWorkflow, globals: next }),
+        isDirty: true,
+        ...pushPast(s, s.currentWorkflow),
+      };
+    }),
+
+  setWorkflowCwd: (next) =>
+    set((s) => {
+      if (!s.currentWorkflow) return {};
+      const cwd = next?.trim() || undefined;
+      return {
+        currentWorkflow: bumpUpdated({ ...s.currentWorkflow, cwd }),
         isDirty: true,
         ...pushPast(s, s.currentWorkflow),
       };

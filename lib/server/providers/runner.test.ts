@@ -359,10 +359,10 @@ describe('runProvider', () => {
 
       expect(
         resolveCliArgs(manifest.args, { prompt: 'p', promptVia: 'arg' }),
-      ).toEqual(['exec', 'p']);
+      ).toEqual(['exec', '--skip-git-repo-check', 'p']);
       expect(
         resolveCliArgs(manifest.args, { prompt: 'p', profile: 'xxx', promptVia: 'arg' }),
-      ).toEqual(['exec', '--profile', 'xxx', 'p']);
+      ).toEqual(['exec', '--skip-git-repo-check', '--profile', 'xxx', 'p']);
       expect(
         resolveCliArgs(manifest.args, {
           prompt: 'p',
@@ -370,7 +370,15 @@ describe('runProvider', () => {
           model: 'gpt-5',
           promptVia: 'arg',
         }),
-      ).toEqual(['exec', '--profile', 'xxx', '--model', 'gpt-5', 'p']);
+      ).toEqual([
+        'exec',
+        '--skip-git-repo-check',
+        '--profile',
+        'xxx',
+        '--model',
+        'gpt-5',
+        'p',
+      ]);
     });
 
     it('substitutes {profile} when value is set', () => {

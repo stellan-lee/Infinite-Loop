@@ -81,6 +81,7 @@ type StubProvider = {
   transport: 'cli' | 'http';
   manifestSupportsProfile?: boolean;
   manifestSupportsModel?: boolean;
+  manifestSupportsAgent?: boolean;
 };
 function mockProvidersFetch(providers: StubProvider[]) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -104,7 +105,7 @@ describe('ConfigPanel', () => {
   beforeEach(() => {
     reset();
     // Default: claude is a CLI provider. Tests that need HTTP override.
-    mockProvidersFetch([{ id: 'claude', transport: 'cli' }]);
+    mockProvidersFetch([{ id: 'claude', transport: 'cli', manifestSupportsAgent: true }]);
   });
 
   afterEach(() => {
@@ -147,10 +148,10 @@ describe('ConfigPanel', () => {
     render(<ConfigPanel />);
 
     expect(screen.getByLabelText('Prompt')).toBeInTheDocument();
-    expect(screen.getByLabelText('Working directory')).toBeInTheDocument();
+    expect(screen.getByLabelText('Working directory override')).toBeInTheDocument();
     expect(screen.getByLabelText('Iteration timeout')).toBeInTheDocument();
     expect(screen.getByLabelText('Prompt')).toBeRequired();
-    expect(screen.getByLabelText('Working directory')).toHaveAttribute(
+    expect(screen.getByLabelText('Working directory override')).not.toHaveAttribute(
       'aria-required',
       'true',
     );
@@ -218,6 +219,24 @@ describe('ConfigPanel', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Model')).toBeInTheDocument();
     });
+  });
+
+  it('hides the Agent selector when a CLI provider does not support it', async () => {
+    mockProvidersFetch([
+      { id: 'codex', transport: 'cli', manifestSupportsProfile: true },
+    ]);
+    const wf = makeWorkflow([startNode, codexAgentNode]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('codex-1');
+    });
+
+    render(<ConfigPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Profile')).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText('Agent')).not.toBeInTheDocument();
   });
 
   it('debounces edits to the Agent model and dispatches updateNode', async () => {
@@ -598,7 +617,7 @@ describe('ConfigPanel', () => {
     expect(stored2.infinite).toBe(false);
   });
 
-  it('Start node shows the workflow inputs editor', () => {
+  it('Start node shows the workflow inputs editor and global workdir', () => {
     const wf = makeWorkflow([startNode]);
     act(() => {
       useWorkflowStore.getState().loadWorkflow(wf);
@@ -609,6 +628,7 @@ describe('ConfigPanel', () => {
 
     // The inputs editor is rendered for the Begin node.
     expect(screen.getByRole('button', { name: /add input/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Global working directory')).toHaveTextContent('/tmp');
     // Display name (renames the canvas card title) is shared across all node types.
     expect(screen.getByLabelText('Display name')).toBeInTheDocument();
     // With no declared inputs, no extra textboxes beyond Display name.
@@ -637,7 +657,7 @@ describe('ConfigPanel', () => {
     expect(screen.getByLabelText('Prompt')).toHaveValue('inner');
     // cwd field is a read-only div now (so CSS can truncate from the start
     // and show the tail of long paths) — assert text content, not value.
-    expect(screen.getByLabelText('Working directory')).toHaveTextContent(
+    expect(screen.getByLabelText('Working directory override')).toHaveTextContent(
       '/work',
     );
   });

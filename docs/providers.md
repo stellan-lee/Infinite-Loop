@@ -59,7 +59,7 @@ HTTP providers don't spawn a process; they POST to the declared host/port. The A
 | File | Provider |
 |---|---|
 | `providers/claude.json` | Claude CLI with `--print --output-format stream-json` for live token streaming |
-| `providers/codex.json` | Codex CLI (`codex exec [--profile <profile>] [--model <model>] <prompt>`) |
+| `providers/codex.json` | Codex CLI (`codex exec --skip-git-repo-check [--profile <profile>] [--model <model>] <prompt>`) |
 | `providers/myhermes.hermes.local.json` | Sample Hermes HTTP runner |
 
 ## Binary overrides

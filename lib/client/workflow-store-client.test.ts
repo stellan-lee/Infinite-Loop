@@ -681,3 +681,27 @@ describe('setGlobals', () => {
     expect(useWorkflowStore.getState().isDirty).toBe(true);
   });
 });
+
+describe('setWorkflowCwd', () => {
+  it('stores a global cwd, trims it, and marks the workflow dirty', () => {
+    useWorkflowStore.getState().loadWorkflow(makeWorkflow());
+    useWorkflowStore.setState({ isDirty: false });
+
+    useWorkflowStore.getState().setWorkflowCwd('  /workspace/project  ');
+
+    const current = useWorkflowStore.getState().currentWorkflow;
+    expect(current?.cwd).toBe('/workspace/project');
+    expect(useWorkflowStore.getState().isDirty).toBe(true);
+  });
+
+  it('clears blank global cwd values so execution uses /tmp', () => {
+    useWorkflowStore.getState().loadWorkflow({
+      ...makeWorkflow(),
+      cwd: '/workspace/project',
+    });
+
+    useWorkflowStore.getState().setWorkflowCwd('   ');
+
+    expect(useWorkflowStore.getState().currentWorkflow?.cwd).toBeUndefined();
+  });
+});

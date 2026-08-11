@@ -42,6 +42,7 @@ mock.module('./run-store', () => ({
 }));
 
 const { WorkflowEngine } = await import('./workflow-engine');
+const { DEFAULT_WORKFLOW_CWD, resolveExecutionCwd } = await import('./run-controller');
 const { eventBus } = await import('./event-bus');
 
 afterAll(() => {
@@ -95,6 +96,15 @@ const endNode: WorkflowNode = {
   position: { x: 0, y: 0 },
   config: {},
 };
+
+describe('resolveExecutionCwd', () => {
+  it('uses the node cwd, then the workflow cwd, then /tmp', () => {
+    expect(resolveExecutionCwd('/workflow', '/agent')).toBe('/agent');
+    expect(resolveExecutionCwd('/workflow', '')).toBe('/workflow');
+    expect(resolveExecutionCwd('  /workflow  ', '   ')).toBe('/workflow');
+    expect(resolveExecutionCwd(undefined, undefined)).toBe(DEFAULT_WORKFLOW_CWD);
+  });
+});
 
 function edge(
   id: string,

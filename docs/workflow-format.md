@@ -11,6 +11,7 @@ Each workflow lives as one JSON file in `workflows/`. Saves are atomic and bump 
   "version": 1,
   "createdAt": 1777359000000,
   "updatedAt": 1777359000000,
+  "cwd": "/workspace/my-project",
   "nodes": [
     { "id": "start-1", "type": "start", "position": { "x": 80, "y": 200 }, "config": {} },
     {
@@ -20,7 +21,7 @@ Each workflow lives as one JSON file in `workflows/`. Saves are atomic and bump 
       "config": { "maxIterations": 5, "mode": "while-not-met" },
       "children": [
         { "id": "agent-1", "type": "agent", "position": { "x": 40, "y": 60 },
-          "config": { "providerId": "claude", "prompt": "…", "cwd": "/tmp", "timeoutMs": 60000 } },
+          "config": { "providerId": "claude", "prompt": "…", "timeoutMs": 60000 } },
         { "id": "cond-1", "type": "condition", "position": { "x": 320, "y": 60 },
           "config": { "kind": "sentinel", "against": "{{agent-1.stdout}}",
                       "sentinel": { "pattern": "DONE", "isRegex": false } } }
@@ -36,6 +37,10 @@ Each workflow lives as one JSON file in `workflows/`. Saves are atomic and bump 
   ]
 }
 ```
+
+The optional root-level `cwd` is the workflow's global working directory. An
+Agent node's own `cwd` overrides it; when neither is configured, execution
+uses `/tmp`.
 
 ## Nodes
 

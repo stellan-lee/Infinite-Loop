@@ -136,4 +136,6 @@ export interface ProviderInfo {
   manifestSupportsProfile?: boolean;
   /** True when the CLI manifest declares a `{model}` placeholder. */
   manifestSupportsModel?: boolean;
+  /** True when the CLI manifest declares an `{agent}` placeholder. */
+  manifestSupportsAgent?: boolean;
 }

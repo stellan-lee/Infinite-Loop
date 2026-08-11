@@ -84,6 +84,25 @@ const CRITICAL_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   agent: ['prompt'],
 };
 
+/** Final working-directory fallback for every executor. Kept explicit rather
+ * than using the server process directory so workflows are portable. */
+export const DEFAULT_WORKFLOW_CWD = '/tmp';
+
+/** Resolve execution cwd with node-specific settings taking precedence over
+ * the workflow-wide default. JSON workflows are external input, so blank or
+ * whitespace-only values deliberately count as unset. */
+export function resolveExecutionCwd(
+  workflowCwd: unknown,
+  nodeCwd: unknown,
+): string {
+  for (const value of [nodeCwd, workflowCwd]) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return DEFAULT_WORKFLOW_CWD;
+}
+
 interface ExecutionScope {
   parentNode?: WorkflowNode;
   /** Iteration index for the nearest enclosing Loop. */
@@ -1121,7 +1140,7 @@ export class RunController {
         continue;
       }
 
-      const branch = await this.executeNode(current, exec, scope, signal);
+      const branch = await this.executeNode(current, exec, scope, workflow, signal);
 
       if (current.type === 'end') {
         const cfg = current.config as { outcome?: 'succeeded' | 'failed' };
@@ -1576,6 +1595,7 @@ export class RunController {
     node: WorkflowNode,
     exec: ExecutionScope,
     scope: Scope,
+    workflow: Workflow,
     signal: AbortSignal,
   ): Promise<EdgeHandle> {
     const executor = this.executors[node.type];
@@ -1593,10 +1613,10 @@ export class RunController {
       loopIteration: exec.loopIteration,
     });
 
-    const cwd =
-      typeof (resolvedConfig as { cwd?: unknown }).cwd === 'string'
-        ? ((resolvedConfig as { cwd: string }).cwd as string)
-        : process.cwd();
+    const cwd = resolveExecutionCwd(
+      workflow.cwd,
+      (resolvedConfig as { cwd?: unknown }).cwd,
+    );
 
     const startedAt = Date.now();
     const ctx: NodeExecutorContext = {

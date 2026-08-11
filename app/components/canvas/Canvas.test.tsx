@@ -96,7 +96,6 @@ describe('defaultConfigFor', () => {
       prompt: '',
       cwd: '',
       timeoutMs: 30 * 60 * 1000,
-      useWorktree: true,
     });
     const condition = defaultConfigFor('condition') as ConditionConfig;
     expect(condition.kind).toBe('sentinel');

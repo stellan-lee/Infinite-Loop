@@ -7,6 +7,7 @@ import { loopExecutor } from './loop';
 import { branchExecutor } from './branch';
 import { parallelExecutor } from './parallel';
 import { subworkflowExecutor } from './subworkflow';
+import { structuredOutputExecutor } from './structured-output';
 import { sidenoteExecutor } from './sidenote';
 import { scriptExecutor } from './script';
 import { manualExecutor } from './manual';
@@ -20,6 +21,7 @@ export const nodeExecutors: Record<NodeType, NodeExecutor> = {
   branch: branchExecutor,
   parallel: parallelExecutor,
   subworkflow: subworkflowExecutor,
+  'structured-output': structuredOutputExecutor,
   sidenote: sidenoteExecutor,
   script: scriptExecutor,
   manual: manualExecutor,

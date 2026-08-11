@@ -1120,6 +1120,8 @@ button.event-card-head-toggle:focus-visible {
 .wf-node[data-node-type='end'] .wf-node-title { color: var(--node-end); }
 .wf-node[data-node-type='agent'] { border-color: var(--node-agent); }
 .wf-node[data-node-type='agent'] .wf-node-title { color: var(--node-agent); }
+.wf-node[data-node-type='structured-output'] { border-color: var(--node-agent); }
+.wf-node[data-node-type='structured-output'] .wf-node-title { color: var(--node-agent); }
 .wf-node[data-node-type='condition'] { border-color: var(--node-condition); }
 .wf-node[data-node-type='condition'] .wf-node-title { color: var(--node-condition); }
 .wf-node[data-node-type='loop'] { border-color: var(--node-loop); }

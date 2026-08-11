@@ -46,6 +46,13 @@ const codexAgentNode: WorkflowNode = {
   config: { providerId: 'codex', prompt: 'hello', cwd: '/tmp', timeoutMs: 60000 },
 };
 
+const structuredOutputNode: WorkflowNode = {
+  id: 'structured-output-1',
+  type: 'structured-output',
+  position: { x: 0, y: 0 },
+  config: { providerId: '', prompt: 'extract fields', schema: {}, timeoutMs: 60000 },
+};
+
 const conditionNode: WorkflowNode = {
   id: 'cond-1',
   type: 'condition',
@@ -86,6 +93,12 @@ type StubProvider = {
 function mockProvidersFetch(providers: StubProvider[]) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString();
+    if (url.includes('/profiles')) {
+      return new Response(JSON.stringify({ profiles: [{ id: 'model-a', label: 'Model A' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.includes('/api/providers')) {
       return new Response(JSON.stringify({ providers }), {
         status: 200,
@@ -162,6 +175,64 @@ describe('ConfigPanel', () => {
     expect(screen.queryByLabelText('Provider')).not.toBeInTheDocument();
     // header shows id + type
     expect(screen.getByText(/agent-1 · agent/)).toBeInTheDocument();
+  });
+
+  it('renders the structured-output form with HTTP provider, model, prompt, and schema import controls', async () => {
+    mockProvidersFetch([
+      { id: 'cli-provider', label: 'CLI provider', transport: 'cli' },
+      { id: 'http-provider', label: 'HTTP provider', transport: 'http' },
+    ]);
+    const wf = makeWorkflow([startNode, structuredOutputNode]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('structured-output-1');
+    });
+    render(<ConfigPanel />);
+
+    const provider = await screen.findByLabelText('Provider');
+    expect(provider).toBeInTheDocument();
+    expect(screen.getByLabelText('Prompt')).toHaveValue('extract fields');
+    expect(screen.getByLabelText('JSON Schema')).toHaveValue('{}');
+    expect(screen.getByLabelText('Import JSON Schema')).toBeInTheDocument();
+
+    fireEvent.click(provider);
+    expect(screen.queryByRole('option', { name: 'CLI provider' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'HTTP provider' }));
+    await waitFor(() => expect(screen.getByLabelText('Model')).toHaveTextContent('Provider default'));
+
+    fireEvent.change(screen.getByLabelText('JSON Schema'), {
+      target: { value: '{"type":"object"}' },
+    });
+    await waitFor(() => {
+      const node = useWorkflowStore.getState().currentWorkflow?.nodes.find((n) => n.id === 'structured-output-1');
+      expect(node?.config).toMatchObject({
+        providerId: 'http-provider',
+        schema: { type: 'object' },
+      });
+    });
+
+    const schemaFile = new File(['{"type":"object","properties":{"name":{"type":"string"}}}'], 'schema.json', {
+      type: 'application/json',
+    });
+    fireEvent.change(screen.getByLabelText('Import JSON Schema'), {
+      target: { files: [schemaFile] },
+    });
+    await waitFor(() => {
+      const node = useWorkflowStore.getState().currentWorkflow?.nodes.find((n) => n.id === 'structured-output-1');
+      expect(node?.config).toMatchObject({
+        schema: { type: 'object', properties: { name: { type: 'string' } } },
+      });
+    });
+
+    const invalidSchema = new File(['not json'], 'invalid-schema.json', { type: 'application/json' });
+    fireEvent.change(screen.getByLabelText('Import JSON Schema'), {
+      target: { files: [invalidSchema] },
+    });
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/JSON Parse error/i));
+    const node = useWorkflowStore.getState().currentWorkflow?.nodes.find((n) => n.id === 'structured-output-1');
+    expect(node?.config).toMatchObject({
+      schema: { type: 'object', properties: { name: { type: 'string' } } },
+    });
   });
 
   it('moves Agent field guidance into an accessible tooltip', () => {

@@ -14,6 +14,7 @@ import {
   LuSearch,
   LuSquare,
   LuStickyNote,
+  LuBraces,
 } from 'react-icons/lu';
 import type { NodeType } from '@/lib/shared/workflow';
 import type { ProviderInfo } from '@/lib/server/providers/types';
@@ -85,6 +86,7 @@ const STATIC_CATEGORIES: PaletteCategory[] = [
     items: [
       { type: 'parallel', name: 'Parallel', Icon: LuColumns3, glyph: '⫲', description: 'fan out concurrent branches' },
       { type: 'subworkflow', name: 'Subworkflow', Icon: LuLayers, glyph: '⊞', description: 'call another workflow' },
+      { type: 'structured-output', name: 'Structured Output', Icon: LuBraces, glyph: '{}', description: 'one strict JSON Schema completion' },
     ],
   },
   {

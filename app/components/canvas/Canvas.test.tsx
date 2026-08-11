@@ -4,6 +4,7 @@ import type {
   AgentConfig,
   ConditionConfig,
   LoopConfig,
+  StructuredOutputConfig,
   Workflow,
   WorkflowEvent,
   WorkflowNode,
@@ -102,6 +103,9 @@ describe('defaultConfigFor', () => {
     expect(condition.sentinel).toEqual({ pattern: '', isRegex: false });
     const loop = defaultConfigFor('loop') as LoopConfig;
     expect(loop).toEqual({ maxIterations: 5, mode: 'while-not-met' });
+    expect(defaultConfigFor('structured-output')).toEqual({
+      providerId: '', prompt: '', schema: {}, timeoutMs: 30 * 60 * 1000,
+    } satisfies StructuredOutputConfig);
   });
 });
 
@@ -170,6 +174,14 @@ describe('buildDroppedNode', () => {
       [],
     );
     expect((node.config as AgentConfig).providerId).toBe('codex');
+  });
+
+  it('builds a structured-output node with its strict-response defaults', () => {
+    const node = buildDroppedNode({ type: 'structured-output' }, { x: 0, y: 0 }, []);
+    expect(node.id).toBe('structured-output-1');
+    expect(node.config).toEqual({
+      providerId: '', prompt: '', schema: {}, timeoutMs: 30 * 60 * 1000,
+    });
   });
 
   it('avoids id collisions by reading existing nodes', () => {

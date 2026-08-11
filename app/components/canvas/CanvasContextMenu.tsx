@@ -39,6 +39,10 @@ const STATIC_GROUPS: Array<{ heading: string; items: ContextMenuItem[] }> = [
     ],
   },
   {
+    heading: 'AI',
+    items: [{ type: 'structured-output', label: 'Structured Output' }],
+  },
+  {
     heading: 'Scripts',
     items: [{ type: 'script', label: 'Script' }],
   },

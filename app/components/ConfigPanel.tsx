@@ -53,6 +53,7 @@ import type {
   ScriptConfig,
   ScriptLanguage,
   SidenoteConfig,
+  StructuredOutputConfig,
   SubworkflowConfig,
   Workflow,
   WorkflowInputDecl,
@@ -1293,6 +1294,246 @@ function AgentForm({
           <AgentOutputsEditor config={config} onPatch={onPatch} />
         </div>
       )}
+    </>
+  );
+}
+
+function isJsonSchema(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function formatSchema(schema: Record<string, unknown> | undefined): string {
+  return JSON.stringify(schema ?? {}, null, 2);
+}
+
+function StructuredOutputForm({
+  config,
+  providers,
+  refs,
+  templateRefs,
+  selfId,
+  onPatch,
+}: {
+  config: StructuredOutputConfig;
+  providers: ProviderInfo[];
+  refs: string[];
+  templateRefs: readonly TemplateRef[];
+  selfId: string;
+  onPatch: (next: StructuredOutputConfig) => void;
+}) {
+  const httpProviders = providers.filter((provider) => provider.transport === 'http');
+  const currentProvider = config.providerId ?? '';
+  const providerOptions = httpProviders.map((provider) => ({ value: provider.id, label: provider.label }));
+  const providerValue = providerOptions.some((option) => option.value === currentProvider)
+    ? currentProvider
+    : '';
+  const [profiles, setProfiles] = useState<Array<{ id: string; label?: string }>>([]);
+  const [profilesError, setProfilesError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!providerValue) {
+      setProfiles([]);
+      setProfilesError(null);
+      return;
+    }
+    let cancelled = false;
+    setProfiles([]);
+    setProfilesError(null);
+    fetch(`/api/providers/${encodeURIComponent(providerValue)}/profiles`)
+      .then(async (response) => {
+        const body = await response.json() as { profiles?: Array<{ id?: unknown; label?: unknown }>; error?: string };
+        if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+        return Array.isArray(body.profiles)
+          ? body.profiles.filter((profile): profile is { id: string; label?: string } =>
+              typeof profile?.id === 'string' && profile.id.length > 0,
+            )
+          : [];
+      })
+      .then((next) => {
+        if (!cancelled) setProfiles(next);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setProfilesError(err instanceof Error ? err.message : 'failed to load models');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [providerValue]);
+
+  const [prompt, setPrompt] = useDebouncedString(config.prompt ?? '', (next) =>
+    onPatch({ ...config, prompt: next }),
+  );
+  const [schemaText, setSchemaText] = useState(() => formatSchema(config.schema));
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const schemaTextRef = useRef(schemaText);
+  useEffect(() => {
+    const next = formatSchema(config.schema);
+    if (next !== schemaTextRef.current) {
+      schemaTextRef.current = next;
+      setSchemaText(next);
+      setSchemaError(null);
+    }
+  }, [config.schema]);
+
+  const commitSchema = (next: string) => {
+    schemaTextRef.current = next;
+    setSchemaText(next);
+    try {
+      const parsed: unknown = JSON.parse(next);
+      if (!isJsonSchema(parsed)) throw new Error('JSON Schema must be an object');
+      setSchemaError(null);
+      onPatch({ ...config, schema: parsed });
+    } catch (err) {
+      setSchemaError(err instanceof Error ? err.message : 'invalid JSON Schema');
+    }
+  };
+
+  const onImportSchema = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      if (!isJsonSchema(parsed)) throw new Error('JSON Schema must be an object');
+      commitSchema(JSON.stringify(parsed, null, 2));
+    } catch (err) {
+      setSchemaError(err instanceof Error ? err.message : 'invalid JSON Schema file');
+    }
+  };
+
+  const timeoutMs = config.timeoutMs ?? 30 * 60 * 1000;
+  const [timeoutUnit, setTimeoutUnit] = useState<TimeoutUnit>(() =>
+    pickInitialTimeoutUnit(timeoutMs),
+  );
+  const timeoutDisplay = Number((timeoutMs / TIMEOUT_UNIT_MS[timeoutUnit]).toFixed(2));
+  const onTimeoutChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = Number(event.target.value);
+    if (Number.isFinite(value) && value > 0) {
+      onPatch({ ...config, timeoutMs: Math.max(1000, Math.round(value * TIMEOUT_UNIT_MS[timeoutUnit])) });
+    }
+  };
+
+  const profileOptions = [
+    { value: '', label: 'Provider default' },
+    ...profiles.map((profile) => ({ value: profile.id, label: profile.label ?? profile.id })),
+  ];
+  const profileValue = profileOptions.some((option) => option.value === (config.profile ?? ''))
+    ? config.profile ?? ''
+    : '';
+
+  return (
+    <>
+      <div className="field">
+        <FieldLabel required>Provider</FieldLabel>
+        {providerOptions.length > 0 ? (
+          <SelectMenu
+            ariaLabel="Provider"
+            value={providerValue}
+            options={providerOptions}
+            onChange={(providerId) => onPatch({ ...config, providerId, profile: undefined })}
+          />
+        ) : (
+          <p className="field-hint" role="alert">No HTTP providers are configured.</p>
+        )}
+        {currentProvider && !httpProviders.some((provider) => provider.id === currentProvider) ? (
+          <p className="field-hint" role="alert">
+            The saved provider is unavailable or does not support HTTP structured output. Choose an HTTP provider.
+          </p>
+        ) : null}
+      </div>
+
+      <div className="field">
+        <FieldLabel help="Leave blank to use the provider's configured default model.">Model</FieldLabel>
+        {profiles.length > 0 ? (
+          <SelectMenu
+            ariaLabel="Model"
+            value={profileValue}
+            options={profileOptions}
+            onChange={(profile) => onPatch({ ...config, profile: profile || undefined })}
+          />
+        ) : (
+          <HeroInput
+            variant="secondary"
+            aria-label="Model"
+            type="text"
+            value={config.profile ?? ''}
+            onChange={(event) => onPatch({ ...config, profile: event.target.value.trim() || undefined })}
+            placeholder="provider default"
+          />
+        )}
+        {profilesError ? <p className="field-hint">Model discovery unavailable: {profilesError}</p> : null}
+      </div>
+
+      <div className="field">
+        <FieldLabel required>Prompt</FieldLabel>
+        <TemplateField
+          multiline
+          rows={5}
+          ariaLabel="Prompt"
+          value={prompt}
+          onChange={setPrompt}
+          selfId={selfId}
+          refs={templateRefs}
+          fieldPath="prompt"
+          required
+        />
+        <RefChips refs={refs} />
+      </div>
+
+      <div className="field">
+        <FieldLabel required>JSON Schema</FieldLabel>
+        <HeroTextArea
+          variant="secondary"
+          aria-label="JSON Schema"
+          value={schemaText}
+          onChange={(event) => commitSchema(event.target.value)}
+          rows={8}
+        />
+        {schemaError ? <p className="field-hint" role="alert">{schemaError}</p> : null}
+        <label className="btn btn-ghost" style={{ display: 'inline-flex', marginTop: 8 }}>
+          Import JSON Schema
+          <input
+            aria-label="Import JSON Schema"
+            type="file"
+            accept="application/json,.json"
+            onChange={onImportSchema}
+            style={{ display: 'none' }}
+          />
+        </label>
+      </div>
+
+      <div className="field">
+        <FieldLabel required>Iteration timeout</FieldLabel>
+        <div className="field-row">
+          <HeroInput
+            variant="secondary"
+            aria-label="Iteration timeout"
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="any"
+            required
+            value={timeoutDisplay}
+            onChange={onTimeoutChange}
+            className="no-spin"
+          />
+          <div className="seg-tight" role="group" aria-label="Iteration timeout unit">
+            {TIMEOUT_UNITS.map((unit) => (
+              <button
+                key={unit}
+                type="button"
+                data-active={timeoutUnit === unit}
+                aria-pressed={timeoutUnit === unit}
+                onClick={() => setTimeoutUnit(unit)}
+              >
+                {unit}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
     </>
   );
 }
@@ -2681,6 +2922,16 @@ export default function ConfigPanel() {
         {node.type === 'subworkflow' && (
           <SubworkflowForm
             config={node.config as SubworkflowConfig}
+            templateRefs={templateRefs}
+            selfId={node.id}
+            onPatch={patchConfig}
+          />
+        )}
+        {node.type === 'structured-output' && (
+          <StructuredOutputForm
+            config={node.config as StructuredOutputConfig}
+            providers={providers}
+            refs={refs}
             templateRefs={templateRefs}
             selfId={node.id}
             onPatch={patchConfig}

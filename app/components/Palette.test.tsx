@@ -30,7 +30,7 @@ describe('Palette', () => {
   it('renders the static (non-provider) draggable node items', () => {
     render(<Palette />);
 
-    const types = ['start', 'end', 'loop', 'condition'] as const;
+    const types = ['start', 'end', 'loop', 'condition', 'structured-output'] as const;
     for (const t of types) {
       const item = screen.getByRole('button', { name: `add ${t} node` });
       expect(item).toBeInTheDocument();

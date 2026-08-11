@@ -71,6 +71,28 @@ afterEach(async () => {
 });
 
 describe('workflow-store', () => {
+  it('rejects a structured-output node whose schema is not an object', async () => {
+    const wf = makeWorkflow({
+      nodes: [
+        { id: 'start-1', type: 'start', position: { x: 0, y: 0 }, config: {} },
+        {
+          id: 'structured-output-1',
+          type: 'structured-output',
+          position: { x: 100, y: 0 },
+          config: {
+            providerId: 'http-provider',
+            prompt: 'p',
+            schema: [] as unknown as Record<string, unknown>,
+            timeoutMs: 1000,
+          },
+        },
+      ],
+      edges: [],
+    });
+
+    await expect(saveWorkflow(wf)).rejects.toThrow(/structured-output.*schema must be a JSON object/i);
+  });
+
   it('listWorkflows returns [] when the directory is empty (and creates it)', async () => {
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'infinite-loop-wfstore-empty-'));
     const nested = path.join(fresh, 'does-not-exist-yet');

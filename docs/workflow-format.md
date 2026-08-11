@@ -49,6 +49,7 @@ uses `/tmp`.
 | **Start** | Entry point. Holds the workflow's input declarations. | — | `next` |
 | **End** | Settles the run as `succeeded` or `failed`. | — | (terminal) |
 | **Agent** | Runs an agent through any provider — Claude, Codex, Hermes, your own. | `stdout`, `stderr`, `exitCode`, `durationMs`, `timedOut` | `next` (exit 0) / `error` |
+| **Structured Output** | Makes one OpenAI-compatible HTTP completion with a strict imported JSON Schema. | `result` | `next` / `error` |
 | **Script** | Inline TypeScript (Bun) or Python (`python3`). Reads typed named inputs; the function's return value is stored as `result`. | `result`, `stdout`, `stderr`, `durationMs` | `next` / `error` |
 | **Condition** | Decides whether to continue. Three kinds: `sentinel`, `command`, `judge`. | `met`, `detail` | `met` / `not_met` / `error` |
 | **Loop** | Repeats its body until a `Condition` says stop. Capped by `maxIterations` (or genuinely unbounded with `infinite: true`). | `iterations`, `broke` | `next` |
@@ -67,7 +68,7 @@ uses `/tmp`.
 
 ## Templating
 
-Every text field — an Agent's `prompt` and `cwd`, a Condition's `against`, a Branch's `lhs`/`rhs`, a Script's `inputs.*`, a Subworkflow's `inputs.*` — supports `{{node-id.field}}` templating, resolved against the run's flat scope before the node executes. The config panel autocompletes references from the upstream graph.
+Every text field — an Agent's `prompt` and `cwd`, a Structured Output node's `prompt`, a Condition's `against`, a Branch's `lhs`/`rhs`, a Script's `inputs.*`, a Subworkflow's `inputs.*` — supports `{{node-id.field}}` templating, resolved against the run's flat scope before the node executes. The config panel autocompletes references from the upstream graph.
 
 Reserved scopes:
 

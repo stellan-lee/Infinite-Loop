@@ -12,6 +12,7 @@ export type NodeType =
   | 'branch'
   | 'parallel'
   | 'subworkflow'
+  | 'structured-output'
   | 'sidenote'
   | 'script'
   | 'manual';
@@ -363,6 +364,19 @@ export function validateManualDecisions(
   }
 }
 
+/** One OpenAI-compatible, strict-JSON-Schema completion. The provider id
+ * resolves through the existing HTTP-provider manifests; credentials never
+ * live in workflow JSON. */
+export interface StructuredOutputConfig {
+  providerId: string;
+  /** HTTP provider model override; falls back to the manifest default. */
+  profile?: string;
+  /** Templated user message sent in the single completion request. */
+  prompt: string;
+  /** JSON Schema object sent as `response_format.json_schema.schema`. */
+  schema: Record<string, unknown>;
+  timeoutMs: number;
+}
 export type NodeConfigByType = {
   start: StartConfig;
   end: EndConfig;
@@ -372,6 +386,7 @@ export type NodeConfigByType = {
   branch: BranchConfig;
   parallel: ParallelConfig;
   subworkflow: SubworkflowConfig;
+  'structured-output': StructuredOutputConfig;
   sidenote: SidenoteConfig;
   script: ScriptConfig;
   manual: ManualConfig;

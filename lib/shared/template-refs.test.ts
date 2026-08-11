@@ -68,6 +68,22 @@ describe('availableVariables', () => {
     expect(fields).toEqual(expect.arrayContaining(['greeting', 'count', 'stdout', 'language']));
   });
 
+  it('exposes structured-output result as a template reference', () => {
+    const wf: Workflow = {
+      ...baseWorkflow,
+      nodes: [
+        ...baseWorkflow.nodes,
+        {
+          id: 'structured-output-1',
+          type: 'structured-output',
+          position: { x: 0, y: 0 },
+          config: { providerId: 'http', prompt: 'p', schema: { type: 'object' }, timeoutMs: 1000 },
+        },
+      ],
+    };
+    expect(isKnownRef(wf, 'structured-output-1.result')).toBe(true);
+  });
+
   it('excludes the self id', () => {
     const refs = availableVariables(baseWorkflow, 'claude-1');
     expect(refs.some((r) => r.nodeId === 'claude-1')).toBe(false);

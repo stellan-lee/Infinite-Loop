@@ -87,6 +87,10 @@ function staticOutputs(type: WorkflowNode['type']): Array<{ field: string; descr
         { field: 'winner', description: 'race mode: winning branch id' },
         { field: 'winners', description: 'quorum mode: winning branch ids' },
       ];
+    case 'structured-output':
+      return [
+        { field: 'result', description: 'parsed JSON Schema response' },
+      ];
     case 'subworkflow':
       return [
         { field: 'status', description: 'succeeded / failed / cancelled' },
@@ -314,6 +318,7 @@ export function isKnownRef(workflow: Workflow | null, ref: string): boolean {
  * / subworkflow.inputs) are handled out-of-band below. */
 const TEMPLATED_FIELDS: Partial<Record<WorkflowNode['type'], string[]>> = {
   agent: ['prompt', 'cwd'],
+  'structured-output': ['prompt'],
   condition: ['against'],
   branch: ['lhs', 'rhs'],
   script: ['cwd'],

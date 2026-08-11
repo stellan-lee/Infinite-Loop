@@ -64,6 +64,7 @@ describe('CanvasContextMenu', () => {
     expect(screen.getByLabelText('add end node')).toBeInTheDocument();
     expect(screen.getByLabelText('add loop node')).toBeInTheDocument();
     expect(screen.getByLabelText('add condition node')).toBeInTheDocument();
+    expect(screen.getByLabelText('add structured-output node')).toBeInTheDocument();
     // Provider items appear after the fetch resolves.
     await waitFor(() =>
       expect(

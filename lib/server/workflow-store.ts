@@ -5,6 +5,7 @@ import type {
   AgentConfig,
   ManualConfig,
   ParallelConfig,
+  StructuredOutputConfig,
   SubworkflowConfig,
   Workflow,
   WorkflowEdge,
@@ -108,6 +109,14 @@ function validateNodeConfig(n: WorkflowNode): void {
     if (typeof cfg.workflowId !== 'string' || cfg.workflowId.length === 0) {
       throw new Error(
         `invalid workflow: subworkflow node "${n.id}" workflowId must be a non-empty string`,
+      );
+    }
+  }
+  if (n.type === 'structured-output') {
+    const cfg = n.config as StructuredOutputConfig;
+    if (!cfg.schema || typeof cfg.schema !== 'object' || Array.isArray(cfg.schema)) {
+      throw new Error(
+        `invalid workflow: structured-output node "${n.id}" schema must be a JSON object`,
       );
     }
   }

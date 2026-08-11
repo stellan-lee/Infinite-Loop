@@ -54,6 +54,7 @@ const log = createLogger('run-controller');
 
 const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   agent: ['prompt', 'cwd', 'worktreeRef'],
+  'structured-output': ['prompt'],
   condition: ['against'],
   branch: ['lhs', 'rhs'],
   // Script: `code` stays literal so template braces inside string literals
@@ -82,6 +83,7 @@ const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
  */
 const CRITICAL_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   agent: ['prompt'],
+  'structured-output': ['prompt'],
 };
 
 /** Final working-directory fallback for every executor. Kept explicit rather

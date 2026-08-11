@@ -1,6 +1,25 @@
 import type { RunnerOptions, RunnerResult } from '../../shared/types';
 import type { HttpProviderManifest } from './types';
 
+function resolveBearerToken(
+  manifest: HttpProviderManifest,
+): { token?: string; error?: string } {
+  if (manifest.auth?.type !== 'bearer') return {};
+
+  // Inline token (from a *.hermes.local.json file the user configured via
+  // the UI) wins; the env-var path is for committed manifests where the
+  // secret deliberately lives off-disk.
+  if (manifest.auth.token) return { token: manifest.auth.token };
+  if (manifest.auth.envVar) {
+    const token = process.env[manifest.auth.envVar]?.trim();
+    if (token) return { token };
+    return {
+      error: `http-runner(${manifest.id}): env var ${manifest.auth.envVar} is not set`,
+    };
+  }
+  return {};
+}
+
 /**
  * Drive an OpenAI-compatible `/chat/completions` endpoint with streaming,
  * mapping the SSE delta stream into the same RunnerResult contract the CLI
@@ -29,28 +48,15 @@ export async function runHttpProvider(
     };
   }
 
-  let bearerToken: string | undefined;
-  if (manifest.auth?.type === 'bearer') {
-    // Inline token (from a *.hermes.local.json file the user configured via
-    // the UI) wins; the env-var path is for committed manifests where the
-    // secret deliberately lives off-disk.
-    if (manifest.auth.token) {
-      bearerToken = manifest.auth.token;
-    } else if (manifest.auth.envVar) {
-      // .trim(): .env files routinely smuggle a trailing newline into the
-      // token, which produces `Authorization: Bearer <token>\n` and a
-      // confusing 401 from the server.
-      bearerToken = process.env[manifest.auth.envVar]?.trim();
-      if (!bearerToken) {
-        return {
-          exitCode: 1,
-          stdout: '',
-          stderr: `http-runner(${manifest.id}): env var ${manifest.auth.envVar} is not set`,
-          durationMs: Date.now() - startedAt,
-          timedOut: false,
-        };
-      }
-    }
+  const auth = resolveBearerToken(manifest);
+  if (auth.error) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: auth.error,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
   }
 
   // Compose an AbortController that fires on either the caller's signal or
@@ -86,7 +92,7 @@ export async function runHttpProvider(
     'content-type': 'application/json',
     accept: 'text/event-stream',
   };
-  if (bearerToken) headers.authorization = `Bearer ${bearerToken}`;
+  if (auth.token) headers.authorization = `Bearer ${auth.token}`;
 
   const body = JSON.stringify({
     model: profile,
@@ -273,6 +279,224 @@ export async function runHttpProvider(
     stderr,
     durationMs: Date.now() - startedAt,
     timedOut: false,
+  };
+}
+
+/**
+ * Perform one non-streaming OpenAI-compatible chat completion that requires
+ * strict JSON Schema output. This intentionally does not reuse the streaming
+ * Agent path: its response and `Accept` contracts are different.
+ */
+export async function runHttpStructuredOutput(
+  manifest: HttpProviderManifest,
+  opts: RunnerOptions,
+  schema: Record<string, unknown>,
+): Promise<RunnerResult> {
+  const startedAt = Date.now();
+  const profile = opts.profile ?? manifest.defaultProfile;
+  if (!profile) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `http-runner(${manifest.id}): no profile selected and no defaultProfile in manifest`,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
+
+  const auth = resolveBearerToken(manifest);
+  if (auth.error) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: auth.error,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
+
+  const controller = new AbortController();
+  let timedOut = false;
+  const onCallerAbort = () => controller.abort();
+  let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  if (opts.timeoutMs > 0) {
+    timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, opts.timeoutMs);
+  }
+  if (opts.signal.aborted) controller.abort();
+  else opts.signal.addEventListener('abort', onCallerAbort, { once: true });
+
+  const cleanup = (): void => {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
+    opts.signal.removeEventListener('abort', onCallerAbort);
+  };
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json',
+  };
+  if (auth.token) headers.authorization = `Bearer ${auth.token}`;
+
+  let resp: Response;
+  try {
+    resp = await fetch(manifest.baseUrl + manifest.endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: profile,
+        messages: [{ role: 'user', content: opts.prompt }],
+        stream: false,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'structured_output',
+            strict: true,
+            schema,
+          },
+        },
+      }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    cleanup();
+    const aborted = (err as Error)?.name === 'AbortError';
+    return {
+      exitCode: aborted ? null : 1,
+      stdout: '',
+      stderr: `http-runner(${manifest.id}) fetch error: ${(err as Error).message}`,
+      durationMs: Date.now() - startedAt,
+      timedOut,
+    };
+  }
+
+  if (!resp.ok) {
+    let errText = '';
+    try {
+      errText = await readTextUntilAbort(resp, controller.signal);
+    } catch (err) {
+      const aborted = (err as Error)?.name === 'AbortError';
+      if (aborted) {
+        cleanup();
+        return {
+          exitCode: null,
+          stdout: '',
+          stderr: '',
+          durationMs: Date.now() - startedAt,
+          timedOut,
+        };
+      }
+      // Ignore body-read failure and retain the HTTP status.
+    }
+    cleanup();
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `http-runner(${manifest.id}) HTTP ${resp.status}: ${errText.slice(0, 8192)}`,
+      durationMs: Date.now() - startedAt,
+      timedOut,
+    };
+  }
+
+  let payload: unknown;
+  try {
+    payload = await readJsonUntilAbort(resp, controller.signal);
+  } catch (err) {
+    cleanup();
+    const aborted = (err as Error)?.name === 'AbortError';
+    return {
+      exitCode: aborted ? null : 1,
+      stdout: '',
+      stderr: aborted ? '' : `http-runner(${manifest.id}) invalid JSON response: ${(err as Error).message}`,
+      durationMs: Date.now() - startedAt,
+      timedOut,
+    };
+  }
+  cleanup();
+
+  if (timedOut || opts.signal.aborted) {
+    return {
+      exitCode: null,
+      stdout: '',
+      stderr: '',
+      durationMs: Date.now() - startedAt,
+      timedOut,
+    };
+  }
+
+  const message = extractStructuredMessage(payload);
+  if (message.refusal) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `http-runner(${manifest.id}) provider refusal: ${message.refusal.slice(0, 8192)}`,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
+  if (!message.content) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `http-runner(${manifest.id}) response did not contain assistant content`,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
+  return {
+    exitCode: 0,
+    stdout: message.content,
+    stderr: '',
+    durationMs: Date.now() - startedAt,
+    timedOut: false,
+  };
+}
+
+/**
+ * Some fetch implementations do not reject an in-flight `Response.json()`
+ * when its signal aborts while an incomplete body is still open. Race the
+ * decode with the same controller so the runner honours its timeout/caller
+ * abort regardless of that implementation detail.
+ */
+async function readJsonUntilAbort(resp: Response, signal: AbortSignal): Promise<unknown> {
+  return readResponseUntilAbort(() => resp.json(), signal);
+}
+
+function readTextUntilAbort(resp: Response, signal: AbortSignal): Promise<string> {
+  return readResponseUntilAbort(() => resp.text(), signal);
+}
+
+async function readResponseUntilAbort<T>(
+  read: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new DOMException('response read aborted', 'AbortError'));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([read(), aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+function extractStructuredMessage(payload: unknown): {
+  content?: string;
+  refusal?: string;
+} {
+  if (!payload || typeof payload !== 'object') return {};
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return {};
+  const message = (choices[0] as { message?: unknown } | undefined)?.message;
+  if (!message || typeof message !== 'object') return {};
+  const obj = message as { content?: unknown; refusal?: unknown };
+  return {
+    ...(typeof obj.content === 'string' ? { content: obj.content } : {}),
+    ...(typeof obj.refusal === 'string' ? { refusal: obj.refusal } : {}),
   };
 }
 

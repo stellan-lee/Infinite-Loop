@@ -10,6 +10,7 @@ import BranchNode from './BranchNode';
 import ConditionNode from './ConditionNode';
 import LoopNode from './LoopNode';
 import SidenoteNode from './SidenoteNode';
+import StructuredOutputNode from './StructuredOutputNode';
 
 beforeEach(() => {
   // xyflow's <Handle> uses ResizeObserver under the hood; jsdom needs a polyfill.
@@ -316,6 +317,22 @@ describe('node components', () => {
     // The node doesn't render a state dot, and we don't surface
     // `data-state` because the engine cannot reach it (no handles).
     expect(card.getAttribute('data-state')).toBeNull();
+  });
+
+  it('StructuredOutputNode previews its prompt and exposes next / error handles', () => {
+    renderWithFlow(
+      <StructuredOutputNode
+        {...makeProps(
+          { config: { providerId: 'test-http', profile: 'model-a', prompt: 'return a typed answer' } },
+          { type: 'structured-output' },
+        )}
+      />,
+    );
+    const card = screen.getByLabelText('structured output node');
+    expect(card).toHaveTextContent('model-a');
+    expect(card).toHaveTextContent('return a typed answer');
+    expect(card.querySelector('[data-handleid="next"]')).not.toBeNull();
+    expect(card.querySelector('[data-handleid="error"]')).not.toBeNull();
   });
 
   it('ConditionNode exposes met / not_met / error handle ids', () => {

@@ -31,6 +31,7 @@ import type {
   ScriptConfig,
   SidenoteConfig,
   StartConfig,
+  StructuredOutputConfig,
   SubworkflowConfig,
   RunStatus,
   Workflow,
@@ -58,6 +59,7 @@ import ScriptNode from './nodes/ScriptNode';
 import SidenoteNode from './nodes/SidenoteNode';
 import StartNode from './nodes/StartNode';
 import SubworkflowNode from './nodes/SubworkflowNode';
+import StructuredOutputNode from './nodes/StructuredOutputNode';
 import CanvasContextMenu, {
   type ContextMenuItem,
   type ContextMenuOpenAt,
@@ -106,6 +108,12 @@ const DEFAULT_CONFIG: { [K in NodeType]: () => NodeConfigByType[K] } = {
     workflowId: '',
     inputs: {},
     outputs: {},
+  }),
+  'structured-output': (): StructuredOutputConfig => ({
+    providerId: '',
+    prompt: '',
+    schema: {},
+    timeoutMs: 30 * 60 * 1000,
   }),
   sidenote: (): SidenoteConfig => ({ text: '' }),
   script: (): ScriptConfig => ({
@@ -316,6 +324,7 @@ const NODE_TYPES = {
   branch: BranchNode,
   parallel: ParallelNode,
   subworkflow: SubworkflowNode,
+  'structured-output': StructuredOutputNode,
   sidenote: SidenoteNode,
   script: ScriptNode,
   manual: ManualNode,

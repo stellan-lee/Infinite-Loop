@@ -42,7 +42,7 @@ describe('GET /api/providers', () => {
         description: 'remote provider',
         transport: 'http',
         baseUrl: 'https://example.test/v1',
-        endpoint: '/chat/completions',
+        endpoint: '/responses',
       },
     ];
     mocked.loadProviders.mockResolvedValueOnce(providers);

@@ -46,6 +46,7 @@ export default function AgentNode({ data, selected }: NodeProps) {
   const providers = useProviders();
   const info = providers.find((p) => p.id === provider);
   const isHermes = info?.kind === 'hermes-local';
+  const isOpenAiProvider = info?.kind === 'openai-local';
   // For hermes-local nodes we override two things:
   //   - the icon lookup key → "hermes" (so the registry mark resolves)
   //   - the auto-title → "<profile> · <connection-label>" if the user
@@ -55,7 +56,9 @@ export default function AgentNode({ data, selected }: NodeProps) {
     ? info && info.connectionLabel
       ? `${info.label} · ${info.connectionLabel}`
       : info?.label
-    : undefined;
+    : isOpenAiProvider
+      ? info?.label
+      : undefined;
   const titleText = customLabel || autoTitle;
 
   return (

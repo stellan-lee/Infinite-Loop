@@ -40,6 +40,44 @@ Each agent node picks a runner from `providers/*.json`. A manifest declares eith
 
 ## HTTP provider
 
+For the **OpenAI** node, configure a reusable OpenAI-compatible provider from
+**+ configure OpenAI providers** in the palette. The connection is stored
+server-side (under the app data directory), and its API key and custom header
+values are write-only: workflow JSON and provider list APIs never include
+them. Configure the base URL, optional bearer key, default/static models,
+model-discovery path, custom headers, and compatible request options once;
+then select the provider and model from each OpenAI node. API keys, header
+values, and request options are write-only.
+
+All HTTP execution uses the OpenAI **Responses API** at `/responses`. A
+committed HTTP manifest that still points at `/chat/completions` is not given
+a fallback: runs stop before any request with a compatibility message asking
+the operator to change the endpoint. Older UI-managed OpenAI providers are
+automatically read as `/responses`.
+
+The node uses the Responses API and reserves `model`, `input`, `stream`,
+`text`, `messages`, `response_format`, and `n`
+so global request options cannot override strict JSON Schema output.
+
+Manifests remain supported for environment-managed credentials. For example:
+
+```json
+{
+  "id": "openai",
+  "label": "OpenAI",
+  "description": "OpenAI API",
+  "transport": "http",
+  "baseUrl": "https://api.openai.com/v1",
+  "endpoint": "/responses",
+  "profilesEndpoint": "/models",
+  "auth": { "type": "bearer", "envVar": "OPENAI_API_KEY" },
+  "defaultProfile": "gpt-4.1-mini",
+  "requestOptions": { "temperature": 0.2 }
+}
+```
+
+## Hermes local connection
+
 ```json
 {
   "label": "MyHermes",

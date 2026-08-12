@@ -24,7 +24,9 @@ export default function StructuredOutputNode({ data, selected }: NodeProps) {
   const state = node._state ?? 'idle';
   const prompt = node.config?.prompt ?? '';
   const preview = truncate(prompt || '(no prompt)');
-  const title = node.label?.trim() || 'STRUCTURED OUTPUT';
+  // Keep the persisted `structured-output` type for compatibility, while the
+  // user-facing name accurately describes the protocol this node speaks.
+  const title = node.label?.trim() || 'OPENAI';
   const provider = node.config?.providerId || 'no provider';
   const profile = node.config?.profile?.trim();
 
@@ -34,7 +36,7 @@ export default function StructuredOutputNode({ data, selected }: NodeProps) {
       data-node-type={NODE_TYPE}
       data-state={state}
       data-selected={selected ? 'true' : 'false'}
-      aria-label="structured output node"
+      aria-label="OpenAI node"
     >
       <Handle type="target" position={Position.Left} id="in" />
       <div className="wf-node-head">

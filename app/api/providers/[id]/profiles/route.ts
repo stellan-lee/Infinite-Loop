@@ -24,7 +24,15 @@ async function fetchLiveProfiles(
     throw new Error('manifest has no profilesEndpoint configured');
   }
   const url = manifest.baseUrl + manifest.profilesEndpoint;
-  const headers: Record<string, string> = { accept: 'application/json' };
+  // Provider-specific gateway headers are applied first; the protocol's
+  // authorization and accept headers are owned by this endpoint.
+  const headers: Record<string, string> = Object.fromEntries(
+    Object.entries(manifest.headers ?? {}).filter(([name]) => {
+      const normalized = name.toLowerCase();
+      return normalized !== 'authorization' && normalized !== 'content-type' && normalized !== 'accept';
+    }),
+  );
+  headers.accept = 'application/json';
   if (manifest.auth?.type === 'bearer') {
     // Same precedence as the runner: inline token (UI-managed local file)
     // wins over env var (committed manifest).

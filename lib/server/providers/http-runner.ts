@@ -1,6 +1,60 @@
 import type { RunnerOptions, RunnerResult } from '../../shared/types';
 import type { HttpProviderManifest } from './types';
 
+const PROTECTED_REQUEST_FIELDS = new Set([
+  'model',
+  'input',
+  'messages',
+  'stream',
+  'text',
+  'response_format',
+  'n',
+]);
+
+/** HTTP providers deliberately use one protocol: the OpenAI Responses API.
+ * Keeping this check at the transport boundary prevents an old manifest from
+ * quietly sending a Responses-shaped payload to Chat Completions (or vice
+ * versa), which would otherwise produce an opaque provider error. */
+function responsesEndpointError(manifest: HttpProviderManifest): string | null {
+  if (manifest.endpoint.replace(/\/+$/, '') === '/responses') return null;
+  return `http-runner(${manifest.id}): Responses API required; endpoint "${manifest.endpoint}" is not "/responses". Reconfigure this provider to use /responses.`;
+}
+
+/** Provider settings are intentionally applied first. The node executor owns
+ * protocol-critical request fields so a global setting cannot make a strict
+ * JSON Schema request non-strict or redirect its selected model. */
+function requestBody(
+  manifest: HttpProviderManifest,
+  fields: Record<string, unknown>,
+): string {
+  const options = Object.fromEntries(
+    Object.entries(manifest.requestOptions ?? {}).filter(([key]) => !PROTECTED_REQUEST_FIELDS.has(key)),
+  );
+  return JSON.stringify({ ...options, ...fields });
+}
+
+/** Same precedence rule for headers: custom headers are useful for gateways,
+ * but they cannot replace content negotiation or bearer authorization. */
+function requestHeaders(
+  manifest: HttpProviderManifest,
+  accept: string,
+  token?: string,
+): Record<string, string> {
+  const customHeaders = Object.fromEntries(
+    Object.entries(manifest.headers ?? {}).filter(([name]) => {
+      const normalized = name.toLowerCase();
+      return normalized !== 'authorization' && normalized !== 'content-type' && normalized !== 'accept';
+    }),
+  );
+  const headers: Record<string, string> = {
+    ...customHeaders,
+    'content-type': 'application/json',
+    accept,
+  };
+  if (token) headers.authorization = `Bearer ${token}`;
+  return headers;
+}
+
 function resolveBearerToken(
   manifest: HttpProviderManifest,
 ): { token?: string; error?: string } {
@@ -21,12 +75,12 @@ function resolveBearerToken(
 }
 
 /**
- * Drive an OpenAI-compatible `/chat/completions` endpoint with streaming,
- * mapping the SSE delta stream into the same RunnerResult contract the CLI
+ * Drive an OpenAI-compatible `/responses` endpoint with streaming, mapping
+ * Responses API output-text deltas into the same RunnerResult contract the CLI
  * runner produces. Honors abort + timeoutMs the same way as the spawn-based
  * runner, so the engine doesn't have to care which transport ran.
  *
- * The request body is intentionally minimal — `model` + `messages` +
+ * The request body is intentionally minimal — `model` + `input` +
  * `stream:true`. Manifests can extend this later; for now the goal is "talk
  * to Hermes / OpenRouter / vLLM and stream tokens back".
  */
@@ -35,6 +89,16 @@ export async function runHttpProvider(
   opts: RunnerOptions,
 ): Promise<RunnerResult> {
   const startedAt = Date.now();
+  const endpointError = responsesEndpointError(manifest);
+  if (endpointError) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: endpointError,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
   const url = manifest.baseUrl + manifest.endpoint;
 
   const profile = opts.profile ?? manifest.defaultProfile;
@@ -88,20 +152,19 @@ export async function runHttpProvider(
     opts.signal.removeEventListener('abort', onCallerAbort);
   };
 
-  const headers: Record<string, string> = {
-    'content-type': 'application/json',
-    accept: 'text/event-stream',
-  };
-  if (auth.token) headers.authorization = `Bearer ${auth.token}`;
+  const headers = requestHeaders(manifest, 'text/event-stream', auth.token);
 
-  const body = JSON.stringify({
+  const body = requestBody(manifest, {
     model: profile,
-    messages: [{ role: 'user', content: opts.prompt }],
+    input: opts.prompt,
     stream: true,
   });
 
   let stdout = '';
   let stderr = '';
+  let streamError = '';
+  let streamRefusal = '';
+  let streamCompleted = false;
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -169,17 +232,23 @@ export async function runHttpProvider(
     opts.onStdoutChunk?.(text);
   };
 
-  // Parse one fully-buffered SSE event. Returns true if the stream signals
-  // [DONE]; otherwise pushes any text delta and returns false.
+  // Parse one fully-buffered Responses SSE event. The event name and payload
+  // both identify `response.output_text.delta`; checking either keeps the
+  // parser compatible with servers that omit one of the redundant fields.
   const handleEvent = (event: string): boolean => {
     // Each line within an event can be `data: …`, `event: …`, `:comment`, etc.
-    // OpenAI streams only use `data:`; we ignore others. Split on /\r?\n/
-    // because Cloudflare-fronted endpoints send CRLF.
+    // Split on /\r?\n/ because Cloudflare-fronted endpoints send CRLF.
     let done = false;
+    let eventName = '';
     for (const rawLine of event.split(/\r?\n/)) {
+      if (rawLine.startsWith('event:')) {
+        eventName = rawLine.slice(6).trim();
+        continue;
+      }
       if (!rawLine.startsWith('data:')) continue;
       const payload = rawLine.slice(5).trim();
       if (payload === '[DONE]') {
+        streamCompleted = true;
         done = true;
         continue;
       }
@@ -193,8 +262,19 @@ export async function runHttpProvider(
           `http-runner(${manifest.id}): non-JSON SSE payload: ${payload.slice(0, 200)}`;
         continue;
       }
-      const text = extractDeltaText(parsed);
+      const text = extractResponseDeltaText(parsed, eventName);
       if (text) emitDelta(text);
+      const refusal = extractResponseStreamRefusal(parsed, eventName);
+      if (refusal) streamRefusal += refusal;
+      if (isResponseStreamCompleted(parsed, eventName)) {
+        streamCompleted = true;
+        done = true;
+      }
+      const providerError = extractResponseStreamError(parsed, eventName);
+      if (providerError) {
+        streamError = providerError;
+        done = true;
+      }
     }
     return done;
   };
@@ -273,6 +353,33 @@ export async function runHttpProvider(
       timedOut: false,
     };
   }
+  if (streamError) {
+    return {
+      exitCode: 1,
+      stdout,
+      stderr: `http-runner(${manifest.id}) provider error: ${streamError.slice(0, 8192)}`,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
+  if (streamRefusal) {
+    return {
+      exitCode: 1,
+      stdout,
+      stderr: `http-runner(${manifest.id}) provider refusal: ${streamRefusal.slice(0, 8192)}`,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
+  if (!streamCompleted) {
+    return {
+      exitCode: 1,
+      stdout,
+      stderr: `http-runner(${manifest.id}) Responses stream ended before response.completed`,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
   return {
     exitCode: 0,
     stdout,
@@ -283,9 +390,9 @@ export async function runHttpProvider(
 }
 
 /**
- * Perform one non-streaming OpenAI-compatible chat completion that requires
- * strict JSON Schema output. This intentionally does not reuse the streaming
- * Agent path: its response and `Accept` contracts are different.
+ * Perform one non-streaming OpenAI Responses API request that requires strict
+ * JSON Schema output. This intentionally does not reuse the streaming Agent
+ * path: its response and `Accept` contracts are different.
  */
 export async function runHttpStructuredOutput(
   manifest: HttpProviderManifest,
@@ -293,6 +400,16 @@ export async function runHttpStructuredOutput(
   schema: Record<string, unknown>,
 ): Promise<RunnerResult> {
   const startedAt = Date.now();
+  const endpointError = responsesEndpointError(manifest);
+  if (endpointError) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: endpointError,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
   const profile = opts.profile ?? manifest.defaultProfile;
   if (!profile) {
     return {
@@ -333,24 +450,20 @@ export async function runHttpStructuredOutput(
     opts.signal.removeEventListener('abort', onCallerAbort);
   };
 
-  const headers: Record<string, string> = {
-    'content-type': 'application/json',
-    accept: 'application/json',
-  };
-  if (auth.token) headers.authorization = `Bearer ${auth.token}`;
+  const headers = requestHeaders(manifest, 'application/json', auth.token);
 
   let resp: Response;
   try {
     resp = await fetch(manifest.baseUrl + manifest.endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
+      body: requestBody(manifest, {
         model: profile,
-        messages: [{ role: 'user', content: opts.prompt }],
+        input: opts.prompt,
         stream: false,
-        response_format: {
-          type: 'json_schema',
-          json_schema: {
+        text: {
+          format: {
+            type: 'json_schema',
             name: 'structured_output',
             strict: true,
             schema,
@@ -435,6 +548,15 @@ export async function runHttpStructuredOutput(
       timedOut: false,
     };
   }
+  if (message.error) {
+    return {
+      exitCode: 1,
+      stdout: '',
+      stderr: `http-runner(${manifest.id}) provider error: ${message.error.slice(0, 8192)}`,
+      durationMs: Date.now() - startedAt,
+      timedOut: false,
+    };
+  }
   if (!message.content) {
     return {
       exitCode: 1,
@@ -487,32 +609,110 @@ async function readResponseUntilAbort<T>(
 function extractStructuredMessage(payload: unknown): {
   content?: string;
   refusal?: string;
+  error?: string;
 } {
   if (!payload || typeof payload !== 'object') return {};
-  const choices = (payload as { choices?: unknown }).choices;
-  if (!Array.isArray(choices) || choices.length === 0) return {};
-  const message = (choices[0] as { message?: unknown } | undefined)?.message;
-  if (!message || typeof message !== 'object') return {};
-  const obj = message as { content?: unknown; refusal?: unknown };
+  const root = payload as {
+    output?: unknown;
+    status?: unknown;
+    error?: unknown;
+    incomplete_details?: unknown;
+  };
+  const error = responseErrorMessage(root.error);
+  if (error) return { error };
+  if (typeof root.status === 'string' && root.status !== 'completed') {
+    if (root.status === 'failed') return { error: 'response failed without an error message' };
+    if (root.status === 'cancelled') return { error: 'response cancelled' };
+    if (root.status !== 'incomplete') return { error: `response ${root.status}` };
+    const reason = root.incomplete_details && typeof root.incomplete_details === 'object'
+      ? (root.incomplete_details as { reason?: unknown }).reason
+      : undefined;
+    return { error: `response incomplete${typeof reason === 'string' ? `: ${reason}` : ''}` };
+  }
+  const output = root.output;
+  if (!Array.isArray(output)) return {};
+  let content = '';
+  let refusal = '';
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue;
+    const parts = (item as { content?: unknown }).content;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue;
+      const value = part as { type?: unknown; text?: unknown; refusal?: unknown };
+      if (value.type === 'output_text' && typeof value.text === 'string') content += value.text;
+      if (value.type === 'refusal' && typeof value.refusal === 'string') refusal += value.refusal;
+    }
+  }
   return {
-    ...(typeof obj.content === 'string' ? { content: obj.content } : {}),
-    ...(typeof obj.refusal === 'string' ? { refusal: obj.refusal } : {}),
+    ...(content ? { content } : {}),
+    ...(refusal ? { refusal } : {}),
   };
 }
 
-/** Pull the text delta out of an OpenAI chat-completions stream chunk:
- * `{choices: [{delta: {content: "..."}}]}`. */
-function extractDeltaText(parsed: unknown): string {
+/** Pull the text delta out of a Responses API stream event:
+ * `{type: "response.output_text.delta", delta: "..."}`. */
+function extractResponseDeltaText(parsed: unknown, eventName: string): string {
   if (!parsed || typeof parsed !== 'object') return '';
-  const obj = parsed as { choices?: unknown };
-  if (!Array.isArray(obj.choices) || obj.choices.length === 0) return '';
-  const first = obj.choices[0] as { delta?: { content?: unknown } } | undefined;
-  if (
-    first?.delta &&
-    typeof first.delta === 'object' &&
-    typeof first.delta.content === 'string'
-  ) {
-    return first.delta.content;
+  const obj = parsed as { type?: unknown; delta?: unknown };
+  if (obj.type !== 'response.output_text.delta' && eventName !== 'response.output_text.delta') return '';
+  return typeof obj.delta === 'string' ? obj.delta : '';
+}
+
+function responseStreamType(parsed: unknown, eventName: string): string {
+  if (!parsed || typeof parsed !== 'object') return eventName;
+  const type = (parsed as { type?: unknown }).type;
+  return typeof type === 'string' ? type : eventName;
+}
+
+/** A Responses stream is only successful after its canonical completed event.
+ * `[DONE]` remains accepted solely for gateways that terminate a valid
+ * Responses stream with the older marker. */
+function isResponseStreamCompleted(parsed: unknown, eventName: string): boolean {
+  if (responseStreamType(parsed, eventName) !== 'response.completed') return false;
+  const response = (parsed as { response?: unknown }).response;
+  return !response || typeof response !== 'object' || (response as { status?: unknown }).status === 'completed';
+}
+
+/** Responses streaming reports terminal provider failures as `error` and
+ * non-completed `response.*` events. Do not turn either into a successful
+ * empty Agent result. */
+function extractResponseStreamError(parsed: unknown, eventName: string): string {
+  if (!parsed || typeof parsed !== 'object') return '';
+  const obj = parsed as { type?: unknown; message?: unknown; error?: unknown; response?: unknown };
+  const type = responseStreamType(parsed, eventName);
+  if (type === 'error') return typeof obj.message === 'string' ? obj.message : 'stream error';
+  if (type !== 'response.failed' && type !== 'response.incomplete' && type !== 'response.cancelled') return '';
+  const response = obj.response && typeof obj.response === 'object'
+    ? obj.response as { error?: unknown; incomplete_details?: unknown }
+    : undefined;
+  const error = responseErrorMessage(response?.error);
+  if (error) return error;
+  if (type === 'response.incomplete') {
+    const reason = response?.incomplete_details && typeof response.incomplete_details === 'object'
+      ? (response.incomplete_details as { reason?: unknown }).reason
+      : undefined;
+    return `response incomplete${typeof reason === 'string' ? `: ${reason}` : ''}`;
   }
+  if (type === 'response.cancelled') return 'response cancelled';
+  return 'response failed without an error message';
+}
+
+/** Refusals are not successful empty responses. We accumulate deltas until
+ * the final refusal event, and also report a truncated stream that only sent
+ * one or more refusal deltas. */
+function extractResponseStreamRefusal(parsed: unknown, eventName: string): string {
+  if (!parsed || typeof parsed !== 'object') return '';
+  const obj = parsed as { delta?: unknown; refusal?: unknown };
+  const type = responseStreamType(parsed, eventName);
+  if (type === 'response.refusal.delta') return typeof obj.delta === 'string' ? obj.delta : '';
+  if (type === 'response.refusal.done') return typeof obj.refusal === 'string' ? obj.refusal : '';
   return '';
+}
+
+function responseErrorMessage(value: unknown): string {
+  if (typeof value === 'string' && value) return value;
+  if (!value || typeof value !== 'object') return '';
+  const message = (value as { message?: unknown }).message;
+  return typeof message === 'string' ? message : '';
 }

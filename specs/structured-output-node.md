@@ -18,7 +18,7 @@ output and routes failures to its existing `error` handle.
   through provider manifests or local Hermes connections. Their credentials
   remain server-side.
 - **Confirmed fact:** The HTTP provider runner only makes streaming
-  `/chat/completions` calls and returns plain text. It has no strict JSON Schema
+  `/responses` calls and returns plain text. It has no strict JSON Schema
   request or response path.
 - **Confirmed fact:** Agent nodes provide the existing model/provider selection
   and prompt-form pattern.
@@ -36,8 +36,8 @@ typed JSON value governed by an imported JSON Schema.
   a templated prompt, and supply a JSON Schema through the node form.
 - Provide a local JSON-file import action that loads the schema into that form;
   the file is not uploaded or persisted separately.
-- Make exactly one OpenAI-compatible `/chat/completions` request per node
-  execution, using strict `json_schema` response formatting.
+- Make exactly one OpenAI-compatible `/responses` request per node execution,
+  using strict `text.format` JSON Schema output.
 - Expose the successfully parsed response at `{{<node-id>.result}}` and follow
   normal `next` / `error` routing.
 
@@ -46,11 +46,11 @@ typed JSON value governed by an imported JSON Schema.
 - Do not generate or edit canvas nodes from natural-language authoring prompts.
 - Do not support CLI providers, multi-turn conversations, streaming output,
   retries, tool calls, or fallback JSON parsing.
-- Do not add a second endpoint, model, or API-key store. Provider manifests and
-  local connections remain the only provider and credential configuration.
+- Do not add a per-node endpoint, model, or API-key store. Providers are global
+  reusable settings; workflow JSON never stores credentials.
 - Do not validate or transform the schema locally beyond confirming that the
   imported or entered text is valid JSON and a JSON object. The object-root
-  requirement follows the OpenAI-compatible `response_format.json_schema`
+  requirement follows the OpenAI-compatible `text.format`
   contract; unsupported strict-schema features fail through the provider
   response.
 - Do not add edges automatically or change downstream templating behavior.
@@ -62,8 +62,9 @@ typed JSON value governed by an imported JSON Schema.
   conventions; the workflow never stores an API key.
 - **Proposed decision:** The node's JSON Schema is stored as JSON workflow
   configuration, alongside its prompt. It must not contain credentials.
-- Existing workflow node types, Agent execution, HTTP streaming behavior, and
-  provider manifests remain unchanged.
+- Existing workflow node types and CLI execution remain unchanged. HTTP
+  providers use Responses only; old committed Chat Completions manifests fail
+  before a request with a clear reconfiguration message.
 - A node insertion continues to receive its id, position, undo history, dirty
   state, and autosave behavior from the existing canvas/store path.
 - A failed provider call, a refusal, an empty response, invalid JSON, or an
@@ -85,17 +86,17 @@ typed JSON value governed by an imported JSON Schema.
    files leave the current schema unchanged and show a field error.
 3. Add a dedicated one-shot HTTP-provider operation. Given an HTTP manifest,
    resolved prompt, selected/default model, timeout, and schema, it sends one
-   non-streaming `/chat/completions` request with the existing bearer-auth
+   non-streaming `/responses` request with the existing bearer-auth
    resolution and:
 
    ```json
    {
      "model": "<selected profile>",
-     "messages": [{ "role": "user", "content": "<resolved prompt>" }],
+     "input": "<resolved prompt>",
      "stream": false,
-     "response_format": {
-       "type": "json_schema",
-       "json_schema": {
+     "text": {
+       "format": {
+         "type": "json_schema",
          "name": "structured_output",
          "strict": true,
          "schema": "<configured JSON Schema object>"
@@ -104,7 +105,8 @@ typed JSON value governed by an imported JSON Schema.
    }
    ```
 
-   The existing streaming Agent operation remains separate and unchanged.
+   Streaming Agent calls also use `/responses` and consume typed
+   `response.output_text.delta` events.
 4. Add the Structured Output executor. It validates the local config before
    calling the provider; invokes the one-shot operation once; parses the
    returned assistant content as JSON; and writes the parsed value as `result`.
@@ -147,7 +149,8 @@ schema and prompt are workflow content and must not be treated as secrets.
 
 - Existing workflows are unchanged because `structured-output` is a new node
   type.
-- Existing HTTP Agent nodes keep their streaming plain-text request shape.
+- Existing HTTP Agent nodes retain their streaming plain-text result contract,
+  but use the Responses request and event shape.
 - Providers that do not implement OpenAI strict JSON Schema return an error at
   execution time; the workflow can route that error without retrying or
   altering saved configuration.
@@ -171,7 +174,7 @@ schema and prompt are workflow content and must not be treated as secrets.
   discovered/fallback model profile, and imports a valid JSON Schema file into
   the schema editor without uploading that file.
 - A valid saved node sends exactly one non-streaming request with
-  `response_format.type = "json_schema"` and `json_schema.strict = true`.
+  `text.format.type = "json_schema"` and `text.format.strict = true`.
 - On a valid JSON completion, `result` is the parsed JSON value and the node
   follows `next`.
 - Invalid local config, provider/network errors, provider refusals, unsupported

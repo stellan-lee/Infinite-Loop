@@ -22,7 +22,7 @@ function startStub(chatHandler: ChatHandler): Promise<Stub> {
   return new Promise((resolve, reject) => {
     let captured: { headers: Record<string, string>; body: unknown } | null = null;
     const server = http.createServer((req, res) => {
-      if (req.url === '/v1/chat/completions' && req.method === 'POST') {
+      if (req.url === '/v1/responses' && req.method === 'POST') {
         let buf = '';
         req.on('data', (chunk: Buffer) => {
           buf += chunk.toString('utf8');
@@ -88,8 +88,8 @@ function makeManifest(baseUrl: string, opts: Partial<HttpProviderManifest> = {})
     label: 'Hermes Test',
     description: 'd',
     transport: 'http',
-    baseUrl,
-    endpoint: '/v1/chat/completions',
+    baseUrl: `${baseUrl}/v1`,
+    endpoint: '/responses',
     auth: { type: 'bearer', envVar: 'TEST_HERMES_TOKEN' },
     defaultProfile: 'hermes-test-model',
     ...opts,
@@ -125,12 +125,28 @@ afterEach(async () => {
 });
 
 describe('runHttpProvider', () => {
+  it('rejects legacy Chat Completions endpoints before issuing a request', async () => {
+    stub = await startStub((_req, res) => {
+      res.writeHead(500);
+      res.end();
+    });
+    const result = await runHttpProvider(makeManifest(stub.url, { endpoint: '/chat/completions' }), {
+      prompt: 'p',
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      signal: new AbortController().signal,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/Responses API required.*\/responses/);
+    expect(stub.lastChatRequest()).toBeNull();
+  });
+
   it('streams OpenAI-style deltas and resolves with exitCode 0', async () => {
     stub = await startStub((_req, res) => {
       writeSseHeaders(res);
-      res.write(sseFrame({ choices: [{ delta: { content: 'Hi ' } }] }));
-      res.write(sseFrame({ choices: [{ delta: { content: 'there' } }] }));
-      res.write('data: [DONE]\n\n');
+      res.write(`event: response.output_text.delta\n${sseFrame({ type: 'response.output_text.delta', delta: 'Hi ' })}`);
+      res.write(`event: response.output_text.delta\n${sseFrame({ type: 'response.output_text.delta', delta: 'there' })}`);
+      res.write(`event: response.completed\n${sseFrame({ type: 'response.completed' })}`);
       res.end();
     });
 
@@ -149,15 +165,15 @@ describe('runHttpProvider', () => {
     expect(chunks).toEqual(['Hi ', 'there']);
     const captured = stub.lastChatRequest();
     expect(captured?.headers.authorization).toBe('Bearer test-token-123');
-    const body = captured?.body as { model?: string; messages?: unknown };
+    const body = captured?.body as { model?: string; input?: unknown };
     expect(body?.model).toBe('hermes-test-model');
-    expect(body?.messages).toEqual([{ role: 'user', content: 'hello' }]);
+    expect(body?.input).toBe('hello');
   });
 
   it('uses opts.profile to override defaultProfile in the request body', async () => {
     stub = await startStub((_req, res) => {
       writeSseHeaders(res);
-      res.write('data: [DONE]\n\n');
+      res.write(sseFrame({ type: 'response.completed' }));
       res.end();
     });
 
@@ -172,6 +188,46 @@ describe('runHttpProvider', () => {
     expect(result.exitCode).toBe(0);
     const body = stub.lastChatRequest()?.body as { model?: string };
     expect(body?.model).toBe('picked-by-user');
+  });
+
+  it('reports Responses API stream failures instead of succeeding with empty output', async () => {
+    stub = await startStub((_req, res) => {
+      writeSseHeaders(res);
+      res.write(sseFrame({ type: 'response.failed', response: { error: { message: 'model unavailable' } } }));
+      res.end();
+    });
+    const result = await runHttpProvider(makeManifest(stub.url), {
+      prompt: 'p', cwd: process.cwd(), timeoutMs: 5000, signal: new AbortController().signal,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('model unavailable');
+  });
+
+  it('rejects a truncated stream that ends before response.completed', async () => {
+    stub = await startStub((_req, res) => {
+      writeSseHeaders(res);
+      res.write(sseFrame({ type: 'response.output_text.delta', delta: 'partial' }));
+      res.end();
+    });
+    const result = await runHttpProvider(makeManifest(stub.url), {
+      prompt: 'p', cwd: process.cwd(), timeoutMs: 5000, signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({ exitCode: 1, stdout: 'partial' });
+    expect(result.stderr).toContain('ended before response.completed');
+  });
+
+  it('reports a streamed refusal as an error', async () => {
+    stub = await startStub((_req, res) => {
+      writeSseHeaders(res);
+      res.write(sseFrame({ type: 'response.refusal.delta', delta: 'cannot comply' }));
+      res.write(sseFrame({ type: 'response.completed', response: { status: 'completed' } }));
+      res.end();
+    });
+    const result = await runHttpProvider(makeManifest(stub.url), {
+      prompt: 'p', cwd: process.cwd(), timeoutMs: 5000, signal: new AbortController().signal,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('provider refusal: cannot comply');
   });
 
   it('errors when no profile is set and no defaultProfile is configured', async () => {
@@ -231,7 +287,7 @@ describe('runHttpProvider', () => {
   it('marks timedOut when the stream stays open past timeoutMs', async () => {
     stub = await startStub((_req, res) => {
       writeSseHeaders(res);
-      res.write(sseFrame({ choices: [{ delta: { content: 'a' } }] }));
+      res.write(sseFrame({ type: 'response.output_text.delta', delta: 'a' }));
       // Keep the connection open — never call res.end().
     });
 
@@ -276,6 +332,43 @@ describe('runHttpProvider', () => {
 });
 
 describe('runHttpStructuredOutput', () => {
+  it('rejects legacy Chat Completions endpoints before issuing a request', async () => {
+    stub = await startStub((_req, res) => {
+      res.writeHead(500);
+      res.end();
+    });
+    const result = await runHttpStructuredOutput(
+      makeManifest(stub.url, { endpoint: '/chat/completions' }),
+      { prompt: 'p', cwd: process.cwd(), timeoutMs: 5000, signal: new AbortController().signal },
+      { type: 'object' },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toMatch(/Responses API required.*\/responses/);
+    expect(stub.lastChatRequest()).toBeNull();
+  });
+
+  it('merges configurable options and headers without allowing them to override strict output fields', async () => {
+    stub = await startStub((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      res.end(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: '{"ok":true}' }] }] }));
+    });
+    const result = await runHttpStructuredOutput(
+      makeManifest(stub.url, {
+        headers: { authorization: 'Bearer wrong', accept: 'text/plain', 'x-gateway-key': 'gateway-secret' },
+        requestOptions: { temperature: 0.2, model: 'wrong', input: 'wrong', stream: true, text: { format: { type: 'text' } }, n: 3 },
+      }),
+      { prompt: 'p', cwd: process.cwd(), timeoutMs: 5000, signal: new AbortController().signal, profile: 'selected' },
+      { type: 'object' },
+    );
+    expect(result.exitCode).toBe(0);
+    const captured = stub.lastChatRequest();
+    expect(captured?.headers.authorization).toBe('Bearer test-token-123');
+    expect(captured?.headers.accept).toBe('application/json');
+    expect(captured?.headers['x-gateway-key']).toBe('gateway-secret');
+    expect(captured?.body).toMatchObject({ model: 'selected', stream: false, temperature: 0.2 });
+    expect((captured?.body as { text?: unknown }).text).toBeDefined();
+  });
+
   it('sends one strict JSON Schema request and returns assistant content', async () => {
     stub = await startStub((_req, res) => {
       res.writeHead(200, {
@@ -283,7 +376,7 @@ describe('runHttpStructuredOutput', () => {
         'access-control-allow-origin': '*',
         'access-control-allow-headers': '*',
       });
-      res.end(JSON.stringify({ choices: [{ message: { content: '{"answer":42}' } }] }));
+      res.end(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: '{"answer":42}' }] }] }));
     });
 
     const result = await runHttpStructuredOutput(
@@ -302,13 +395,15 @@ describe('runHttpStructuredOutput', () => {
     const body = stub.lastChatRequest()?.body as {
       model?: string;
       stream?: boolean;
-      response_format?: { type?: string; json_schema?: { name?: string; strict?: boolean; schema?: unknown } };
+      input?: unknown;
+      text?: { format?: { type?: string; name?: string; strict?: boolean; schema?: unknown } };
     };
     expect(body.model).toBe('selected-model');
     expect(body.stream).toBe(false);
-    expect(body.response_format).toEqual({
-      type: 'json_schema',
-      json_schema: {
+    expect(body.input).toBe('answer the question');
+    expect(body.text).toEqual({
+      format: {
+        type: 'json_schema',
         name: 'structured_output',
         strict: true,
         schema: { type: 'object', properties: { answer: { type: 'number' } }, additionalProperties: false },
@@ -320,7 +415,7 @@ describe('runHttpStructuredOutput', () => {
   it('returns a bounded failure when the provider refuses the request', async () => {
     stub = await startStub((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-      res.end(JSON.stringify({ choices: [{ message: { refusal: 'cannot answer' } }] }));
+      res.end(JSON.stringify({ output: [{ content: [{ type: 'refusal', refusal: 'cannot answer' }] }] }));
     });
 
     const result = await runHttpStructuredOutput(
@@ -331,6 +426,34 @@ describe('runHttpStructuredOutput', () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('provider refusal: cannot answer');
+  });
+
+  it('reports a non-streaming incomplete Responses result', async () => {
+    stub = await startStub((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      res.end(JSON.stringify({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] }));
+    });
+    const result = await runHttpStructuredOutput(
+      makeManifest(stub.url),
+      { prompt: 'p', cwd: process.cwd(), timeoutMs: 5000, signal: new AbortController().signal },
+      { type: 'object' },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('response incomplete: max_output_tokens');
+  });
+
+  it('reports a non-streaming cancelled Responses result', async () => {
+    stub = await startStub((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+      res.end(JSON.stringify({ status: 'cancelled', output: [{ content: [{ type: 'output_text', text: '{"partial":true}' }] }] }));
+    });
+    const result = await runHttpStructuredOutput(
+      makeManifest(stub.url),
+      { prompt: 'p', cwd: process.cwd(), timeoutMs: 5000, signal: new AbortController().signal },
+      { type: 'object' },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('response cancelled');
   });
 
   it('returns bounded errors for HTTP failures, malformed bodies, and empty completions', async () => {
@@ -355,7 +478,7 @@ describe('runHttpStructuredOutput', () => {
         name: 'empty completion',
         respond: (res: ServerResponse) => {
           res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
-          res.end(JSON.stringify({ choices: [{ message: { content: '' } }] }));
+          res.end(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: '' }] }] }));
         },
         error: /did not contain assistant content/,
       },

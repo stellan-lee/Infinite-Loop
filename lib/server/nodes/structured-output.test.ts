@@ -28,7 +28,7 @@ async function startServer(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
 ): Promise<string> {
   server = http.createServer((req, res) => {
-    if (req.url !== '/v1/chat/completions' || req.method !== 'POST') {
+    if (req.url !== '/v1/responses' || req.method !== 'POST') {
       res.writeHead(404);
       res.end();
       return;
@@ -44,7 +44,7 @@ function writeProvider(baseUrl: string, transport: 'http' | 'cli' = 'http') {
   const manifest = transport === 'http'
     ? {
         id: 'test-http', label: 'Test HTTP', description: 'test', transport,
-        baseUrl, endpoint: '/v1/chat/completions', defaultProfile: 'test-model',
+        baseUrl: `${baseUrl}/v1`, endpoint: '/responses', defaultProfile: 'test-model',
       }
     : {
         id: 'test-cli', label: 'Test CLI', description: 'test', transport,
@@ -85,7 +85,7 @@ describe('structuredOutputExecutor', () => {
   it('rejects invalid local config before making a request', async () => {
     const baseUrl = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { content: '{}' } }] }));
+      res.end(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: '{}' }] }] }));
     });
     writeProvider(baseUrl);
 
@@ -100,7 +100,7 @@ describe('structuredOutputExecutor', () => {
   it('stores the parsed JSON value and makes exactly one request', async () => {
     const baseUrl = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { content: '{"ready":true}' } }] }));
+      res.end(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: '{"ready":true}' }] }] }));
     });
     writeProvider(baseUrl);
 
@@ -115,7 +115,7 @@ describe('structuredOutputExecutor', () => {
   it('routes malformed JSON to error without retrying', async () => {
     const baseUrl = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { content: 'not-json' } }] }));
+      res.end(JSON.stringify({ output: [{ content: [{ type: 'output_text', text: 'not-json' }] }] }));
     });
     writeProvider(baseUrl);
 

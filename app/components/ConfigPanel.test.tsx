@@ -177,7 +177,7 @@ describe('ConfigPanel', () => {
     expect(screen.getByText(/agent-1 · agent/)).toBeInTheDocument();
   });
 
-  it('renders the structured-output form with HTTP provider, model, prompt, and schema import controls', async () => {
+  it('renders the OpenAI form with HTTP provider, model, prompt, and schema import controls', async () => {
     mockProvidersFetch([
       { id: 'cli-provider', label: 'CLI provider', transport: 'cli' },
       { id: 'http-provider', label: 'HTTP provider', transport: 'http' },
@@ -188,6 +188,9 @@ describe('ConfigPanel', () => {
       useWorkflowStore.getState().selectNode('structured-output-1');
     });
     render(<ConfigPanel />);
+
+    expect(screen.getByText('structured-output-1 · OpenAI')).toBeInTheDocument();
+    expect(screen.getByLabelText('Display name')).toHaveAttribute('placeholder', 'OPENAI');
 
     const provider = await screen.findByLabelText('Provider');
     expect(provider).toBeInTheDocument();

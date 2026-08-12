@@ -20,6 +20,7 @@ import type { NodeType } from '@/lib/shared/workflow';
 import type { ProviderInfo } from '@/lib/server/providers/types';
 import ProviderIcon from './icons/ProviderIcon';
 import HermesConnectionsModal from './HermesConnectionsModal';
+import OpenAIProvidersModal from './OpenAIProvidersModal';
 import { refreshProviders } from '@/lib/client/use-providers';
 
 const DRAG_MIME = 'application/x-infinite-loop-node';
@@ -86,7 +87,7 @@ const STATIC_CATEGORIES: PaletteCategory[] = [
     items: [
       { type: 'parallel', name: 'Parallel', Icon: LuColumns3, glyph: '⫲', description: 'fan out concurrent branches' },
       { type: 'subworkflow', name: 'Subworkflow', Icon: LuLayers, glyph: '⊞', description: 'call another workflow' },
-      { type: 'structured-output', name: 'Structured Output', Icon: LuBraces, glyph: '{}', description: 'one strict JSON Schema completion' },
+      { type: 'structured-output', name: 'OpenAI', Icon: LuBraces, glyph: '{}', description: 'one strict JSON Schema completion' },
     ],
   },
   {
@@ -186,6 +187,7 @@ function handlePaletteItemClick(item: PaletteItem): void {
 export default function Palette() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [openAiProvidersOpen, setOpenAiProvidersOpen] = useState(false);
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   // Open by default; clicking the Hermes subgroup header toggles it.
@@ -359,6 +361,15 @@ export default function Palette() {
             * "+ new" link sits inside this group so it belongs visually to
             * the connections it creates. */}
           {category.id === 'model-runners' && (
+            <>
+            <button
+              type="button"
+              className="palette-manage"
+              onClick={() => setOpenAiProvidersOpen(true)}
+              aria-label="manage OpenAI providers"
+            >
+              + configure OpenAI providers
+            </button>
             <div className="palette-subgroup">
               <button
                 type="button"
@@ -467,7 +478,7 @@ export default function Palette() {
                   )}
                   <button
                     type="button"
-                    className="btn btn-ghost palette-manage"
+                    className="palette-manage"
                     onClick={() => setConnectionsOpen(true)}
                     aria-label="manage hermes connections"
                   >
@@ -476,12 +487,19 @@ export default function Palette() {
                 </div>
               )}
             </div>
+            </>
           )}
         </section>
       ))}
       {connectionsOpen && (
         <HermesConnectionsModal
           onClose={() => setConnectionsOpen(false)}
+          onConnectionsChanged={loadProviders}
+        />
+      )}
+      {openAiProvidersOpen && (
+        <OpenAIProvidersModal
+          onClose={() => setOpenAiProvidersOpen(false)}
           onConnectionsChanged={loadProviders}
         />
       )}

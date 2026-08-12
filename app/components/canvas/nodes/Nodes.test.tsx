@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { render, screen } from '@testing-library/react';
 import { ReactFlowProvider, type NodeProps } from '@xyflow/react';
 import type { ReactElement } from 'react';
@@ -11,6 +11,9 @@ import ConditionNode from './ConditionNode';
 import LoopNode from './LoopNode';
 import SidenoteNode from './SidenoteNode';
 import StructuredOutputNode from './StructuredOutputNode';
+import { refreshProviders } from '@/lib/client/use-providers';
+
+const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   // xyflow's <Handle> uses ResizeObserver under the hood; jsdom needs a polyfill.
@@ -29,6 +32,23 @@ beforeEach(() => {
         constructor() {}
       };
   }
+  globalThis.fetch = (async () => ({
+    json: async () => ({
+      providers: [{
+        id: 'northgate',
+        label: 'NorthGate',
+        description: 'OpenAI-compatible provider',
+        transport: 'http',
+        kind: 'openai-local',
+        available: true,
+        health: { status: 'unknown' },
+      }],
+    }),
+  })) as unknown as typeof fetch;
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
 });
 
 /**
@@ -208,6 +228,27 @@ describe('node components', () => {
     expect(screen.getByLabelText('codex agent')).toBeInTheDocument();
   });
 
+  it('AgentNode defaults a global OpenAI provider title to its configured name', async () => {
+    refreshProviders();
+    renderWithFlow(
+      <AgentNode
+        {...makeProps(
+          {
+            config: {
+              providerId: 'northgate',
+              prompt: 'hi',
+              cwd: '/tmp',
+              timeoutMs: 60000,
+            },
+          },
+          { type: 'agent' },
+        )}
+      />,
+    );
+
+    expect(await screen.findByLabelText('NorthGate (northgate agent)')).toBeInTheDocument();
+  });
+
   it('ConditionNode renders kind brief', () => {
     renderWithFlow(
       <ConditionNode
@@ -319,7 +360,7 @@ describe('node components', () => {
     expect(card.getAttribute('data-state')).toBeNull();
   });
 
-  it('StructuredOutputNode previews its prompt and exposes next / error handles', () => {
+  it('OpenAI node previews its prompt and exposes next / error handles', () => {
     renderWithFlow(
       <StructuredOutputNode
         {...makeProps(
@@ -328,7 +369,8 @@ describe('node components', () => {
         )}
       />,
     );
-    const card = screen.getByLabelText('structured output node');
+    const card = screen.getByLabelText('OpenAI node');
+    expect(card).toHaveTextContent('OPENAI');
     expect(card).toHaveTextContent('model-a');
     expect(card).toHaveTextContent('return a typed answer');
     expect(card.querySelector('[data-handleid="next"]')).not.toBeNull();

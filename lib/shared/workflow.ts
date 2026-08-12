@@ -373,7 +373,7 @@ export interface StructuredOutputConfig {
   profile?: string;
   /** Templated user message sent in the single completion request. */
   prompt: string;
-  /** JSON Schema object sent as `response_format.json_schema.schema`. */
+  /** JSON Schema object sent as `text.format.schema` in the Responses API. */
   schema: Record<string, unknown>;
   timeoutMs: number;
 }

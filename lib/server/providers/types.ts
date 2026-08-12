@@ -16,7 +16,7 @@ export type ProviderTransport = 'cli' | 'http';
  * `<id>.hermes.local.json` files. The palette uses this to group them
  * under their own collapsible section so the user can manage them
  * separately from committed CLI / HTTP providers. */
-export type ProviderKind = 'hermes-local';
+export type ProviderKind = 'hermes-local' | 'openai-local';
 
 interface ProviderManifestCommon {
   id: string;
@@ -93,11 +93,20 @@ export interface HttpProviderManifest extends ProviderManifestCommon {
   transport: 'http';
   /** Base URL with no trailing slash, e.g. "https://hermes.example/v1". */
   baseUrl: string;
-  /** Path appended to baseUrl for the chat-completions call. */
+  /** Path appended to baseUrl for the Responses API call. Must be
+   * `/responses` at execution time. */
   endpoint: string;
   /** Optional path for live profile discovery (e.g. "/models"). */
   profilesEndpoint?: string;
   auth?: HttpProviderAuth;
+  /** Extra provider-specific headers. Runtime-owned headers (authorization,
+   * content-type and accept) always take precedence. */
+  headers?: Record<string, string>;
+  /** Optional OpenAI-compatible request parameters. Runtime-owned fields
+   * (`model`, `input`, `stream`, `text`, `messages`, `response_format`, and
+   * `n`) are protected
+   * and cannot be overridden by this object. */
+  requestOptions?: Record<string, unknown>;
   /** Static fallback list, used when the live fetch fails or
    * `profilesEndpoint` is unset. */
   profiles?: HttpProviderProfile[];

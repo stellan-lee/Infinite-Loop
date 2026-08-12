@@ -1435,11 +1435,11 @@ function StructuredOutputForm({
             onChange={(providerId) => onPatch({ ...config, providerId, profile: undefined })}
           />
         ) : (
-          <p className="field-hint" role="alert">No HTTP providers are configured.</p>
+          <p className="field-hint" role="alert">No OpenAI-compatible providers are configured. Use “configure OpenAI providers” in the palette, or add an HTTP manifest.</p>
         )}
         {currentProvider && !httpProviders.some((provider) => provider.id === currentProvider) ? (
           <p className="field-hint" role="alert">
-            The saved provider is unavailable or does not support HTTP structured output. Choose an HTTP provider.
+            The saved provider is unavailable or does not support OpenAI-compatible structured output. Choose an HTTP provider.
           </p>
         ) : null}
       </div>
@@ -2850,7 +2850,7 @@ export default function ConfigPanel() {
             size={22}
           />
         ) : null}
-        <span>{node.id} · {node.type}</span>
+        <span>{node.id} · {node.type === 'structured-output' ? 'OpenAI' : node.type}</span>
       </header>
 
       <form className="task-form" onSubmit={(e) => e.preventDefault()}>
@@ -2860,7 +2860,7 @@ export default function ConfigPanel() {
         <DisplayNameField
           key={node.id}
           value={node.label ?? ''}
-          fallback={node.type.toUpperCase()}
+          fallback={node.type === 'structured-output' ? 'OPENAI' : node.type.toUpperCase()}
           onCommit={(next) =>
             updateNode(node.id, {
               label: next.trim() ? next.trim() : undefined,

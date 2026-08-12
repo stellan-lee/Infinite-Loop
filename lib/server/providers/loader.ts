@@ -277,6 +277,50 @@ function validateHttpProfiles(
   });
 }
 
+function validateHttpHeaders(
+  raw: unknown,
+  file: string,
+): Record<string, string> | undefined {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`provider ${file}: \`headers\` must be an object if set`);
+  }
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    // Field-name grammar from RFC 9110. Keeping this strict prevents a local
+    // configuration file from injecting a second HTTP header via CRLF.
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) {
+      throw new Error(`provider ${file}: \`headers\` has an invalid header name "${name}"`);
+    }
+    if (typeof value !== 'string' || /[\r\n]/.test(value)) {
+      throw new Error(`provider ${file}: \`headers.${name}\` must be a single-line string`);
+    }
+    headers[name] = value;
+  }
+  return headers;
+}
+
+function isJsonValue(value: unknown): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).every(isJsonValue);
+  }
+  return false;
+}
+
+function validateRequestOptions(
+  raw: unknown,
+  file: string,
+): Record<string, unknown> | undefined {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !isJsonValue(raw)) {
+    throw new Error(`provider ${file}: \`requestOptions\` must be a JSON object if set`);
+  }
+  return raw as Record<string, unknown>;
+}
+
 function validateHttpManifest(
   m: Record<string, unknown>,
   file: string,
@@ -331,6 +375,8 @@ function validateHttpManifest(
     profilesEndpoint: m.profilesEndpoint as string | undefined,
     defaultProfile: m.defaultProfile as string | undefined,
     auth: validateHttpAuth(m.auth, file),
+    headers: validateHttpHeaders(m.headers, file),
+    requestOptions: validateRequestOptions(m.requestOptions, file),
     profiles: validateHttpProfiles(m.profiles, file),
   };
 }
@@ -354,11 +400,19 @@ function validateManifest(parsed: unknown, file: string): ProviderManifest {
 
 /** Suffix that marks a user-managed local provider (gitignored). */
 export const HERMES_LOCAL_SUFFIX = '.hermes.local.json';
+/** Suffix for UI-managed, reusable OpenAI-compatible providers. */
+export const OPENAI_LOCAL_SUFFIX = '.openai.local.json';
 
 /** Convert a `<id>.hermes.local.json` filename to its provider id. */
 export function hermesLocalIdFromFilename(entry: string): string | null {
   if (!entry.endsWith(HERMES_LOCAL_SUFFIX)) return null;
   const stem = entry.slice(0, -HERMES_LOCAL_SUFFIX.length);
+  return stem.length > 0 ? stem : null;
+}
+
+export function openAiLocalIdFromFilename(entry: string): string | null {
+  if (!entry.endsWith(OPENAI_LOCAL_SUFFIX)) return null;
+  const stem = entry.slice(0, -OPENAI_LOCAL_SUFFIX.length);
   return stem.length > 0 ? stem : null;
 }
 
@@ -431,7 +485,7 @@ function expandHermesLocalFile(
       connectionId: stem,
       connectionLabel: label,
       baseUrl: `${host}:${port}/v1`,
-      endpoint: '/chat/completions',
+      endpoint: '/responses',
       profilesEndpoint: '/models',
       defaultProfile: profile,
       auth: { type: 'bearer', token },
@@ -440,14 +494,64 @@ function expandHermesLocalFile(
   return out;
 }
 
+/** Expand a UI-managed OpenAI-compatible connection into one regular HTTP
+ * manifest. The connection file contains secrets; it is only read on the
+ * server and never serialized by the connection CRUD API. */
+function expandOpenAiLocalFile(
+  parsed: unknown,
+  stem: string,
+  file: string,
+): HttpProviderManifest[] {
+  if (!parsed || typeof parsed !== 'object') {
+    log.warn('file is not a JSON object', { file });
+    return [];
+  }
+  const raw = parsed as Record<string, unknown>;
+  try {
+    const validated = validateHttpManifest({
+      id: stem,
+      label: raw.label,
+      description: raw.description ?? 'OpenAI-compatible provider',
+      glyph: '◌',
+      transport: 'http',
+      baseUrl: raw.baseUrl,
+      // UI-managed OpenAI providers created before the Responses-only
+      // migration may still persist the old Chat Completions path. Treat that
+      // legacy setting as the current default; committed manifests remain
+      // explicit and receive a clear compatibility error at run time.
+      endpoint: raw.endpoint === '/chat/completions' ? '/responses' : raw.endpoint ?? '/responses',
+      ...(raw.profilesEndpoint === '' ? {} : {
+        profilesEndpoint: raw.profilesEndpoint ?? '/models',
+      }),
+      ...(typeof raw.token === 'string' && raw.token.length > 0
+        ? { auth: { type: 'bearer', token: raw.token } }
+        : {}),
+      headers: raw.headers,
+      requestOptions: raw.requestOptions,
+      profiles: raw.profiles,
+      defaultProfile: raw.defaultProfile,
+    }, file);
+    return [{
+      ...validated,
+      kind: 'openai-local',
+      connectionId: stem,
+      connectionLabel: validated.label,
+    }];
+  } catch (err) {
+    log.warn('invalid OpenAI-compatible connection', { file, err });
+    return [];
+  }
+}
+
 interface CacheEntry {
   builtinDir: string;
   connDir: string;
   manifests: ProviderManifest[];
-  byId: Map<string, ProviderManifest>;
 }
 
 let cache: CacheEntry | null = null;
+let cacheEpoch = 0;
+let beforeCachePublishForTest: (() => void | Promise<void>) | undefined;
 
 async function readJsonDir(dir: string): Promise<{ entry: string; file: string; parsed: unknown }[]> {
   let entries: string[];
@@ -489,9 +593,10 @@ async function readJsonDir(dir: string): Promise<{ entry: string; file: string; 
  *   1. Built-in manifests from `INFLOOP_PROVIDERS_DIR` (or `./providers/`).
  *   2. User-managed Hermes connections from `connectionsDir()` (`~/.infinite-loop/connections/`).
  *
- * Cached for the process lifetime — restart or call `_resetProviderCache()`
- * to pick up new files. Malformed JSON, invalid manifests, and id collisions
- * are logged and skipped. First-wins on duplicate ids.
+ * Cached for provider-list reads. `getProvider()` refreshes before resolving
+ * an id so newly saved connection files are usable immediately. Malformed
+ * JSON, invalid manifests, and id collisions are logged and skipped.
+ * First-wins on duplicate ids.
  */
 export async function loadProviders(): Promise<ProviderManifest[]> {
   const builtinDir = providersDir();
@@ -499,13 +604,14 @@ export async function loadProviders(): Promise<ProviderManifest[]> {
   if (cache && cache.builtinDir === builtinDir && cache.connDir === connDir) {
     return cache.manifests;
   }
+  const loadEpoch = cacheEpoch;
 
   const manifests: ProviderManifest[] = [];
   const byId = new Map<string, ProviderManifest>();
 
   // 1. Built-in manifests from project providers/ dir.
   for (const { entry, parsed } of await readJsonDir(builtinDir)) {
-    if (hermesLocalIdFromFilename(entry) !== null) continue;
+    if (hermesLocalIdFromFilename(entry) !== null || openAiLocalIdFromFilename(entry) !== null) continue;
     let manifest: ProviderManifest;
     try {
       manifest = validateManifest(parsed, entry);
@@ -539,17 +645,49 @@ export async function loadProviders(): Promise<ProviderManifest[]> {
     }
   }
 
+  // 3. User-managed OpenAI-compatible connections. Unlike Hermes, one
+  // connection maps to one reusable provider; models are selected in nodes.
+  for (const { entry, parsed } of await readJsonDir(connDir)) {
+    const openAiLocalId = openAiLocalIdFromFilename(entry);
+    if (openAiLocalId === null) continue;
+    const expanded = expandOpenAiLocalFile(parsed, openAiLocalId, entry);
+    for (const manifest of expanded) {
+      if (byId.has(manifest.id)) {
+        log.warn('id collision; ignoring entry from file', { id: manifest.id, file: entry });
+        continue;
+      }
+      byId.set(manifest.id, manifest);
+      manifests.push(manifest);
+    }
+  }
+
   manifests.sort((a, b) => a.label.localeCompare(b.label));
-  cache = { builtinDir, connDir, manifests, byId };
+  if (beforeCachePublishForTest) await beforeCachePublishForTest();
+  // An invalidation can happen while filesystem reads are in flight. Do not
+  // let that older snapshot repopulate a cache cleared by a later write.
+  if (cacheEpoch === loadEpoch) {
+    cache = { builtinDir, connDir, manifests };
+  }
   return manifests;
 }
 
 export async function getProvider(id: string): Promise<ProviderManifest | undefined> {
-  await loadProviders();
-  return cache?.byId.get(id);
+  // Connection CRUD invalidates this cache, but the executor can be running
+  // from a module instance that did not observe that invalidation. Refreshing
+  // lookup state here keeps newly saved providers usable without a restart.
+  _resetProviderCache();
+  return (await loadProviders()).find((manifest) => manifest.id === id);
 }
 
 /** Test/dev helper: drop the in-process cache so the next load re-reads disk. */
 export function _resetProviderCache(): void {
   cache = null;
+  cacheEpoch++;
+}
+
+/** Test helper: pause a load after its filesystem snapshot is complete. */
+export function _setBeforeProviderCachePublishForTest(
+  hook: (() => void | Promise<void>) | undefined,
+): void {
+  beforeCachePublishForTest = hook;
 }

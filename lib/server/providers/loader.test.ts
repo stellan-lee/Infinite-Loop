@@ -56,6 +56,74 @@ describe('providers/loader', () => {
     expect(await loadProviders()).toEqual([]);
   });
 
+  it('refreshes provider lookup after an OpenAI connection file is added', async () => {
+    const { getProvider, loadProviders } = await import('./loader');
+    expect(await loadProviders()).toEqual([]);
+
+    writeConnection('northgate.openai.local.json', {
+      label: 'NorthGate',
+      baseUrl: 'https://northgate.example/v1',
+      endpoint: '/responses',
+      profilesEndpoint: '/models',
+      profiles: [{ id: 'northgate-reasoning', label: 'NorthGate Reasoning' }],
+      defaultProfile: 'northgate-reasoning',
+    });
+
+    // Listing intentionally stays cached until an execution lookup refreshes.
+    expect(await loadProviders()).toEqual([]);
+    const provider = await getProvider('northgate');
+    expect(provider).toMatchObject({
+      id: 'northgate',
+      label: 'NorthGate',
+      transport: 'http',
+      kind: 'openai-local',
+      endpoint: '/responses',
+    });
+  });
+
+  it('does not repopulate the cache from a load invalidated while reading', async () => {
+    writeConnection('northgate.openai.local.json', {
+      label: 'NorthGate Old',
+      baseUrl: 'https://northgate.example/v1',
+      endpoint: '/responses',
+      profiles: [],
+    });
+    let releaseOldRead: (() => void) | undefined;
+    const oldReadReleased = new Promise<void>((resolve) => { releaseOldRead = resolve; });
+    let signalOldRead: (() => void) | undefined;
+    const oldReadStarted = new Promise<void>((resolve) => { signalOldRead = resolve; });
+
+    try {
+      const {
+        _resetProviderCache,
+        _setBeforeProviderCachePublishForTest,
+        loadProviders,
+      } = await import('./loader');
+      _setBeforeProviderCachePublishForTest(async () => {
+        signalOldRead?.();
+        await oldReadReleased;
+      });
+      const staleLoad = loadProviders();
+      await oldReadStarted;
+
+      writeConnection('northgate.openai.local.json', {
+        label: 'NorthGate New',
+        baseUrl: 'https://northgate.example/v1',
+        endpoint: '/responses',
+        profiles: [],
+      });
+      _resetProviderCache();
+      releaseOldRead?.();
+      expect((await staleLoad).map((manifest) => manifest.label)).toEqual(['NorthGate Old']);
+
+      _setBeforeProviderCachePublishForTest(undefined);
+      expect((await loadProviders()).map((manifest) => manifest.label)).toEqual(['NorthGate New']);
+    } finally {
+      const { _setBeforeProviderCachePublishForTest } = await import('./loader');
+      _setBeforeProviderCachePublishForTest(undefined);
+    }
+  });
+
   it('loads valid manifests sorted by label', async () => {
     writeManifest('z.json', {
       id: 'z-prov',
@@ -154,9 +222,11 @@ describe('providers/loader', () => {
       description: 'd',
       transport: 'http',
       baseUrl: 'https://hermes.example/v1/',
-      endpoint: '/chat/completions',
+      endpoint: '/responses',
       profilesEndpoint: '/models',
       auth: { type: 'bearer', envVar: 'INFLOOP_HERMES_TOKEN' },
+      headers: { 'x-gateway': 'example' },
+      requestOptions: { temperature: 0.2 },
       profiles: [{ id: 'hermes-3', label: 'Hermes 3' }],
       defaultProfile: 'hermes-3',
     });
@@ -168,8 +238,10 @@ describe('providers/loader', () => {
     if (m.transport !== 'http') throw new Error('unreachable'); // type narrow
     // Trailing slash should be stripped from baseUrl.
     expect(m.baseUrl).toBe('https://hermes.example/v1');
-    expect(m.endpoint).toBe('/chat/completions');
+    expect(m.endpoint).toBe('/responses');
     expect(m.auth?.envVar).toBe('INFLOOP_HERMES_TOKEN');
+    expect(m.headers).toEqual({ 'x-gateway': 'example' });
+    expect(m.requestOptions).toEqual({ temperature: 0.2 });
     expect(m.profiles).toEqual([{ id: 'hermes-3', label: 'Hermes 3' }]);
     expect(m.defaultProfile).toBe('hermes-3');
   });
@@ -181,7 +253,7 @@ describe('providers/loader', () => {
       description: 'd',
       transport: 'http',
       baseUrl: 'https://x/v1',
-      endpoint: 'chat/completions',
+      endpoint: 'responses',
     });
     const { loadProviders } = await import('./loader');
     expect(await loadProviders()).toEqual([]);
@@ -194,7 +266,7 @@ describe('providers/loader', () => {
       description: 'd',
       transport: 'http',
       baseUrl: 'https://x/v1',
-      endpoint: '/chat/completions',
+      endpoint: '/responses',
       profilesEndpoint: 'models',
     });
     const { loadProviders } = await import('./loader');

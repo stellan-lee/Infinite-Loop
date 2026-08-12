@@ -38,6 +38,21 @@ describe('Palette', () => {
     }
   });
 
+  it('uses the OpenAI name while retaining the persisted structured-output node type', () => {
+    render(<Palette />);
+    expect(screen.getByRole('button', { name: 'add structured-output node' })).toHaveTextContent('OpenAI');
+  });
+
+  it('renders provider-management actions as text links, not ghost buttons', () => {
+    render(<Palette />);
+
+    for (const name of ['manage OpenAI providers', 'manage hermes connections']) {
+      const action = screen.getByRole('button', { name });
+      expect(action).toHaveClass('palette-manage');
+      expect(action).not.toHaveClass('btn', 'btn-ghost');
+    }
+  });
+
   it('renders Control and Model Runners category headings', async () => {
     render(<Palette />);
 

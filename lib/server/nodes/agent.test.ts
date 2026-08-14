@@ -100,6 +100,78 @@ describe('agentExecutor', () => {
     }
   });
 
+  it('serializes role-based messages for a CLI provider without dropping context', async () => {
+    const stdinBin = resolve(here, '../../../tests/fixtures/fake-stdin-echo.sh');
+    fs.writeFileSync(
+      path.join(providersDir, 'claude.json'),
+      JSON.stringify({
+        id: 'claude',
+        label: 'Claude',
+        description: 'fake',
+        bin: 'claude',
+        args: [],
+        promptVia: 'stdin',
+        outputFormat: 'plain',
+      }),
+    );
+    _resetProviderCache();
+    process.env.INFLOOP_PROVIDER_BIN_CLAUDE = stdinBin;
+    try {
+      const out = await agentExecutor.execute(ctx({
+        providerId: 'claude',
+        prompt: '',
+        messages: [
+          { role: 'system', content: 'Be concise.' },
+          { role: 'user', content: 'Summarize this.' },
+          { role: 'assistant', content: 'Earlier draft.' },
+        ],
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+      }));
+      expect(out.branch).toBe('next');
+      expect((out.outputs as { stdout: string }).stdout).toContain('[system]\nBe concise.');
+      expect((out.outputs as { stdout: string }).stdout).toContain('[assistant]\nEarlier draft.');
+    } finally {
+      delete process.env.INFLOOP_PROVIDER_BIN_CLAUDE;
+    }
+  });
+
+  it('rejects a system message after the first turn', async () => {
+    const out = await agentExecutor.execute(ctx({
+      providerId: 'claude',
+      prompt: '',
+      messages: [
+        { role: 'user', content: 'first' },
+        { role: 'system', content: 'later instruction' },
+      ],
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+    }));
+
+    expect(out.branch).toBe('error');
+    expect(out.outputs).toMatchObject({
+      errorMessage: expect.stringMatching(/invalid agent config/),
+    });
+  });
+
+  it('falls back to the legacy prompt when imported messages are empty', async () => {
+    process.env.INFLOOP_PROVIDER_BIN_CLAUDE = FAKE_BIN;
+    process.env.FAKE_STDOUT_LINES = 'ok';
+    try {
+      const out = await agentExecutor.execute(ctx({
+        providerId: 'claude',
+        prompt: 'legacy prompt',
+        messages: [],
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+      }));
+      expect(out.branch).toBe('next');
+    } finally {
+      delete process.env.INFLOOP_PROVIDER_BIN_CLAUDE;
+      delete process.env.FAKE_STDOUT_LINES;
+    }
+  });
+
   it('uses the context working directory when the agent has no override', async () => {
     process.env.INFLOOP_PROVIDER_BIN_CLAUDE = FAKE_BIN;
     process.env.FAKE_STDOUT_LINES = 'ok';

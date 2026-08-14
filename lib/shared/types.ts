@@ -8,7 +8,10 @@ export type {
   SentinelConfig,
   CommandConfig,
   JudgeConfig,
+  AgentMessage,
 } from './workflow';
+
+import type { AgentMessage } from './workflow';
 
 export type ConditionType = 'sentinel' | 'command' | 'judge';
 
@@ -25,6 +28,8 @@ export interface IterationRecord {
 
 export interface RunnerOptions {
   prompt: string;
+  /** Role-preserving conversation for OpenAI-compatible HTTP providers. */
+  messages?: AgentMessage[];
   cwd: string;
   timeoutMs: number;
   signal: AbortSignal;

@@ -500,6 +500,45 @@ describe('workflow-store', () => {
       await expect(saveWorkflow(wf)).resolves.toBeDefined();
     });
   });
+
+  describe('agent messages validation', () => {
+    function withAgentMessages(messages: unknown): Workflow {
+      return makeWorkflow({
+        nodes: [
+          { id: 'start-1', type: 'start', position: { x: 0, y: 0 }, config: {} },
+          {
+            id: 'agent-1',
+            type: 'agent',
+            position: { x: 100, y: 0 },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            config: { providerId: 'claude', prompt: 'p', cwd: '/tmp', timeoutMs: 1000, messages } as any,
+          },
+          {
+            id: 'end-1',
+            type: 'end',
+            position: { x: 200, y: 0 },
+            config: { outcome: 'succeeded' },
+          },
+        ],
+        edges: [
+          { id: 'e1', source: 'start-1', sourceHandle: 'next', target: 'agent-1' },
+          { id: 'e2', source: 'agent-1', sourceHandle: 'next', target: 'end-1' },
+        ],
+      });
+    }
+
+    it('rejects malformed message entries before saving', async () => {
+      await expect(saveWorkflow(withAgentMessages([{ role: 'user', content: '' }]))).rejects
+        .toThrow(/messages\.0\.content must be non-empty/);
+    });
+
+    it('rejects a system message after the first turn', async () => {
+      await expect(saveWorkflow(withAgentMessages([
+        { role: 'user', content: 'first' },
+        { role: 'system', content: 'later instruction' },
+      ]))).rejects.toThrow(/only messages\.0 may use the system role/);
+    });
+  });
 });
 
 describe('saveWorkflow migration: legacy triggers[] → trigger-store', () => {

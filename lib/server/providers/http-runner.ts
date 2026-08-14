@@ -156,7 +156,7 @@ export async function runHttpProvider(
 
   const body = requestBody(manifest, {
     model: profile,
-    input: opts.prompt,
+    input: opts.messages ?? opts.prompt,
     stream: true,
   });
 

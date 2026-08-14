@@ -126,6 +126,29 @@ describe('node components', () => {
     expect(body!.getAttribute('title')).toBe(longPrompt);
   });
 
+  it('AgentNode previews the current user message over a legacy prompt', () => {
+    renderWithFlow(
+      <AgentNode
+        {...makeProps(
+          {
+            config: {
+              providerId: 'claude',
+              prompt: 'stale legacy prompt',
+              messages: [
+                { role: 'system', content: 'Follow policy.' },
+                { role: 'user', content: 'Current parent response.' },
+              ],
+            },
+          },
+          { type: 'agent' },
+        )}
+      />
+    );
+
+    expect(screen.getByText('Current parent response.')).toBeInTheDocument();
+    expect(screen.queryByText('stale legacy prompt')).toBeNull();
+  });
+
   it('AgentNode does not set title when prompt fits without truncation', () => {
     renderWithFlow(
       <AgentNode

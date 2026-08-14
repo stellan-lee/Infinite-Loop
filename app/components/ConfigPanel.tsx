@@ -37,6 +37,8 @@ import {
 import type { ProviderInfo } from '@/lib/server/providers/types';
 import type {
   AgentConfig,
+  AgentMessage,
+  AgentMessageRole,
   AgentOutputDecl,
   BranchConfig,
   BranchOp,
@@ -955,6 +957,234 @@ function AgentOutputsEditor({
   );
 }
 
+const AGENT_MESSAGE_ROLE_OPTIONS: Array<{ value: AgentMessageRole; label: string }> = [
+  { value: 'system', label: 'System' },
+  { value: 'user', label: 'User' },
+  { value: 'assistant', label: 'Assistant' },
+];
+
+type AgentMessageFilter = 'all' | AgentMessageRole;
+const AGENT_MESSAGE_FILTER_OPTIONS: Array<{ value: AgentMessageFilter; label: string }> = [
+  { value: 'all', label: 'All roles' },
+  ...AGENT_MESSAGE_ROLE_OPTIONS,
+];
+
+function messageRoleOptions(index: number) {
+  return index === 0
+    ? AGENT_MESSAGE_ROLE_OPTIONS
+    : AGENT_MESSAGE_ROLE_OPTIONS.filter(({ value }) => value !== 'system');
+}
+
+function editorMessages(config: AgentConfig): AgentMessage[] {
+  if (Array.isArray(config.messages) && config.messages.length > 0) {
+    return config.messages;
+  }
+  return [{ role: 'user', content: config.prompt ?? '' }];
+}
+
+function AgentMessagesEditor({
+  config,
+  refs,
+  selfId,
+  onPatch,
+}: {
+  config: AgentConfig;
+  refs: readonly TemplateRef[];
+  selfId: string;
+  onPatch: (next: AgentConfig) => void;
+}) {
+  const messages = editorMessages(config);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<AgentMessageFilter>('all');
+  const [detailCollapsed, setDetailCollapsed] = useState(false);
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [selfId]);
+  useEffect(() => {
+    setSelectedIndex((index) => Math.min(index, messages.length - 1));
+  }, [messages.length]);
+  const commit = (next: AgentMessage[]) => onPatch({ ...config, messages: next });
+  const update = (index: number, patch: Partial<AgentMessage>) => {
+    commit(messages.map((message, i) => i === index ? { ...message, ...patch } : message));
+  };
+  const selectedMessage = messages[selectedIndex] ?? messages[0];
+  const visibleMessages = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => {
+      const matchingRole = filter === 'all' || message.role === filter;
+      const matchingSearch = search.trim() === '' ||
+        message.content.toLowerCase().includes(search.trim().toLowerCase());
+      return matchingRole && matchingSearch;
+    });
+  const preview = (content: string) => {
+    const line = content.replace(/\s+/g, ' ').trim();
+    return line || 'Empty message';
+  };
+  const duplicate = (index: number) => {
+    const next = [...messages];
+    next.splice(index + 1, 0, {
+      ...messages[index],
+      // System instructions belong only at the start of the conversation.
+      role: messages[index].role === 'system' ? 'user' : messages[index].role,
+    });
+    commit(next);
+    setSelectedIndex(index + 1);
+  };
+  const remove = (index: number) => {
+    if (messages.length === 1) return;
+    const next = messages.filter((_, i) => i !== index);
+    commit(next);
+    setSelectedIndex((current) => {
+      if (index < current) return current - 1;
+      if (index === current) return Math.min(index, next.length - 1);
+      return current;
+    });
+  };
+
+  return (
+    <div className="agent-messages">
+      <div className="agent-messages-toolbar">
+        <span className="agent-messages-title">Messages <b>{messages.length}</b></span>
+        <div className="agent-messages-tools">
+          <label className="agent-message-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              aria-label="Search messages"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search"
+            />
+          </label>
+          <SelectMenu<AgentMessageFilter>
+            ariaLabel="Filter messages"
+            value={filter}
+            options={AGENT_MESSAGE_FILTER_OPTIONS}
+            onChange={setFilter}
+            className="agent-message-filter"
+          />
+          <button
+            type="button"
+            className="agent-message-collapse"
+            onClick={() => setDetailCollapsed((collapsed) => !collapsed)}
+          >
+            {detailCollapsed ? 'Expand detail' : 'Collapse all'}
+          </button>
+        </div>
+      </div>
+      <div className="agent-message-list" aria-label="Messages">
+        {visibleMessages.map(({ message, index }) => (
+          <div
+            key={index}
+            className="agent-message-summary"
+            data-selected={index === selectedIndex}
+            data-role={message.role}
+          >
+            <div
+              className="agent-message-summary-main"
+              onClick={() => {
+                setSelectedIndex(index);
+                setDetailCollapsed(false);
+              }}
+            >
+              <button
+                type="button"
+                className="agent-message-summary-select"
+                aria-label={`select message ${index + 1}`}
+                onClick={() => {
+                  setSelectedIndex(index);
+                  setDetailCollapsed(false);
+                }}
+              >
+              <span className="agent-message-grip" aria-hidden="true">⠿</span>
+              <span className="agent-message-index">{index + 1}</span>
+              </button>
+              <button
+                type="button"
+                className="agent-message-role-badge"
+                onClick={() => {
+                  setSelectedIndex(index);
+                  setDetailCollapsed(false);
+                }}
+              >
+                {message.role}
+              </button>
+              <button
+                type="button"
+                className="agent-message-preview"
+                onClick={() => {
+                  setSelectedIndex(index);
+                  setDetailCollapsed(false);
+                }}
+              >
+                {preview(message.content)}
+              </button>
+            </div>
+            <div className="agent-message-summary-actions">
+              <button
+                type="button"
+                className="agent-message-action"
+                aria-label={`duplicate message ${index + 1}`}
+                title="Duplicate message"
+                onClick={() => duplicate(index)}
+              >
+                ⧉
+              </button>
+              {messages.length > 1 ? (
+                <button
+                  type="button"
+                  className="agent-message-action"
+                  aria-label={`remove message ${index + 1}`}
+                  title="Remove message"
+                  onClick={() => remove(index)}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+      {visibleMessages.length === 0 ? (
+        <p className="agent-message-empty">No messages match this filter.</p>
+      ) : null}
+      {!detailCollapsed ? <section className="agent-message-detail" data-role={selectedMessage.role}>
+        <div className="agent-message-detail-head">
+          <span>Message {selectedIndex + 1} of {messages.length}</span>
+        </div>
+        <SelectMenu<AgentMessageRole>
+          ariaLabel={`Role for message ${selectedIndex + 1}`}
+          value={selectedMessage.role}
+          options={messageRoleOptions(selectedIndex)}
+          onChange={(role) => update(selectedIndex, { role })}
+        />
+        <TemplateField
+          multiline
+          rows={3}
+          ariaLabel={`${selectedMessage.role} message ${selectedIndex + 1}`}
+          value={selectedMessage.content}
+          onChange={(content) => update(selectedIndex, { content })}
+          selfId={selfId}
+          refs={refs}
+          fieldPath={`messages.${selectedIndex}.content`}
+          required
+        />
+      </section> : null}
+      <button
+        type="button"
+        className="agent-message-add"
+        onClick={() => {
+          commit([...messages, { role: 'user', content: '' }]);
+          setSelectedIndex(messages.length);
+          setDetailCollapsed(false);
+        }}
+      >
+        + Add message
+      </button>
+    </div>
+  );
+}
+
 function AgentForm({
   config,
   refs,
@@ -975,10 +1205,6 @@ function AgentForm({
   providerInfo: ProviderInfo | null;
   onPatch: (next: AgentConfig) => void;
 }) {
-  const [prompt, setPrompt] = useDebouncedString(
-    config.prompt ?? '',
-    (next) => onPatch({ ...config, prompt: next }),
-  );
   const [cwd, setCwd] = useDebouncedString(config.cwd ?? '', (next) =>
     onPatch({ ...config, cwd: next }),
   );
@@ -1131,17 +1357,11 @@ function AgentForm({
       )}
 
       <div className="field">
-        <FieldLabel required>Prompt</FieldLabel>
-        <TemplateField
-          multiline
-          rows={5}
-          ariaLabel="Prompt"
-          value={prompt}
-          onChange={setPrompt}
+        <AgentMessagesEditor
+          config={config}
           selfId={selfId}
           refs={templateRefs}
-          fieldPath="prompt"
-          required
+          onPatch={onPatch}
         />
         <RefChips refs={refs} />
       </div>

@@ -14,7 +14,6 @@ import {
   LuSearch,
   LuSquare,
   LuStickyNote,
-  LuBraces,
 } from 'react-icons/lu';
 import type { NodeType } from '@/lib/shared/workflow';
 import type { ProviderInfo } from '@/lib/server/providers/types';
@@ -68,6 +67,59 @@ interface PaletteCategory {
   items: PaletteItem[];
 }
 
+const DRAG_PREVIEW_COPY: Record<NodeType, { title: string; body: string }> = {
+  start: { title: 'START', body: 'begin' },
+  end: { title: 'END', body: '→ succeeded' },
+  agent: { title: 'AGENT', body: '(no prompt)' },
+  condition: { title: 'CONDITION', body: 'sentinel · (no pattern)' },
+  loop: { title: 'LOOP', body: '×5 · while-not-met' },
+  branch: { title: 'BRANCH', body: '(unconfigured)' },
+  parallel: { title: 'PARALLEL', body: 'wait-all · fail-fast' },
+  subworkflow: { title: 'SUBWORKFLOW', body: '→ (unset)' },
+  'structured-output': { title: 'OPENAI', body: '⌘ no provider · (no prompt)' },
+  sidenote: { title: 'NOTE', body: '(empty note)' },
+  script: { title: 'SCRIPT', body: 'run(arg1, arg2) → output1' },
+  manual: { title: 'MANUAL', body: '✋ 3 decisions' },
+};
+
+/**
+ * The native HTML drag image would otherwise be the rectangular palette
+ * button. Build a small, styled copy of the node's default card instead, so
+ * the item under the pointer is the card the user will get on drop.
+ */
+function setNodeDragPreview(
+  e: React.DragEvent<HTMLButtonElement>,
+  item: PaletteItem,
+): void {
+  const copy = DRAG_PREVIEW_COPY[item.type];
+  const preview = document.createElement('div');
+  // Reuse the actual canvas-card classes rather than duplicating their
+  // dimensions in the preview. This makes the drag image track card-size
+  // changes automatically.
+  preview.className = 'wf-node node-drag-preview';
+  preview.dataset.nodeType = item.type;
+  preview.dataset.state = 'idle';
+  preview.dataset.selected = 'false';
+  preview.innerHTML = `
+    <div class="wf-node-head">
+      <span class="wf-node-title">${copy.title}</span>
+      <span class="wf-node-state-dot" data-state="idle"></span>
+    </div>
+    <div class="wf-node-body">${copy.body}</div>
+  `;
+  document.body.append(preview);
+  try {
+    e.dataTransfer.setDragImage(preview, 18, 16);
+  } catch {
+    // Some DOM shims (including the unit-test environment) do not provide
+    // drag-image support. The browser's standard preview remains a safe
+    // fallback there.
+    preview.remove();
+    return;
+  }
+  requestAnimationFrame(() => preview.remove());
+}
+
 const STATIC_CATEGORIES: PaletteCategory[] = [
   {
     id: 'control',
@@ -87,7 +139,6 @@ const STATIC_CATEGORIES: PaletteCategory[] = [
     items: [
       { type: 'parallel', name: 'Parallel', Icon: LuColumns3, glyph: '⫲', description: 'fan out concurrent branches' },
       { type: 'subworkflow', name: 'Subworkflow', Icon: LuLayers, glyph: '⊞', description: 'call another workflow' },
-      { type: 'structured-output', name: 'OpenAI', Icon: LuBraces, glyph: '{}', description: 'one strict JSON Schema completion' },
     ],
   },
   {
@@ -169,6 +220,7 @@ function handleDragStart(
   if (item.providerId) payload.providerId = item.providerId;
   e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
   e.dataTransfer.effectAllowed = 'copy';
+  setNodeDragPreview(e, item);
   if (process.env.NODE_ENV !== 'production') {
     console.debug('[palette] dragstart', payload);
   }

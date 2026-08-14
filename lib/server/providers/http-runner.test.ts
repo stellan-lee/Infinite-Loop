@@ -190,6 +190,31 @@ describe('runHttpProvider', () => {
     expect(body?.model).toBe('picked-by-user');
   });
 
+  it('preserves role-labelled messages in the Responses input', async () => {
+    stub = await startStub((_req, res) => {
+      writeSseHeaders(res);
+      res.write(sseFrame({ type: 'response.completed' }));
+      res.end();
+    });
+
+    const messages = [
+      { role: 'system' as const, content: 'Be concise.' },
+      { role: 'user' as const, content: 'Summarize {{agent-1.stdout}}.' },
+      { role: 'assistant' as const, content: 'Prior attempt.' },
+    ];
+    const result = await runHttpProvider(makeManifest(stub.url), {
+      prompt: 'cli fallback only',
+      messages,
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.exitCode).toBe(0);
+    const body = stub.lastChatRequest()?.body as { input?: unknown };
+    expect(body.input).toEqual(messages);
+  });
+
   it('reports Responses API stream failures instead of succeeding with empty output', async () => {
     stub = await startStub((_req, res) => {
       writeSseHeaders(res);

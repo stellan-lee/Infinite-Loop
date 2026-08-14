@@ -40,6 +40,7 @@ beforeEach(() => {
     selectedNodeId: null,
     runStatus: 'idle',
     runEvents: [],
+    inspectedRunEvents: null,
     connectionStatus: 'connecting',
   });
 });
@@ -647,6 +648,33 @@ describe('<Canvas />', () => {
     expect(container.querySelector('[data-id="start-1"]')).not.toBeNull();
     expect(container.querySelector('[data-id="agent-1"]')).not.toBeNull();
     expect(container.querySelector('[data-id="end-1"]')).not.toBeNull();
+  });
+
+  it('uses the open history record to show the recorded failure path', () => {
+    useWorkflowStore.getState().loadWorkflow(makeWorkflow());
+    useWorkflowStore.getState().setInspectedRunEvents([
+      {
+        type: 'node_started',
+        nodeId: 'agent-1',
+        nodeType: 'agent',
+        resolvedConfig: {},
+      },
+      {
+        type: 'node_finished',
+        nodeId: 'agent-1',
+        nodeType: 'agent',
+        branch: 'error',
+        outputs: {},
+        durationMs: 1,
+      },
+    ]);
+
+    const { container } = render(<Canvas />);
+    const card = container.querySelector('[data-id="agent-1"] .wf-node');
+    expect(card).toHaveAttribute('data-state', 'failed');
+    expect(
+      container.querySelector('[data-id="end-1"] .wf-node'),
+    ).toHaveAttribute('data-state', 'pending');
   });
 
   // The pane-only right-click contract (right-click on a node should not

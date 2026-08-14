@@ -31,6 +31,9 @@ export interface WorkflowStoreState {
   selectedNodeId: string | null;
   runStatus: RunStatus;
   runEvents: WorkflowEvent[];
+  /** Events from the recorded run currently open in History. These only
+   * drive the canvas outcome overlay; they never replace the live run state. */
+  inspectedRunEvents: WorkflowEvent[] | null;
   connectionStatus: WsStatus;
   /** Live overlay: maps triggerId → epoch-ms of most recent trigger_started event. */
   triggerLastFiredAt: Record<string, number>;
@@ -88,6 +91,7 @@ export interface WorkflowStoreState {
   /** Replace the run state in one shot — used when the SSE state_snapshot
    * arrives and we want to rehydrate the log + status after a refresh. */
   hydrateRun: (input: { status: RunStatus; events: WorkflowEvent[] }) => void;
+  setInspectedRunEvents: (events: WorkflowEvent[] | null) => void;
   setConnectionStatus: (s: WsStatus) => void;
 }
 
@@ -136,6 +140,7 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
   selectedNodeId: null,
   runStatus: 'idle',
   runEvents: [],
+  inspectedRunEvents: null,
   connectionStatus: 'connecting',
   triggerLastFiredAt: {},
   panRequest: null,
@@ -413,6 +418,8 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
 
   hydrateRun: ({ status, events }) =>
     set({ runStatus: status, runEvents: [...events] }),
+
+  setInspectedRunEvents: (inspectedRunEvents) => set({ inspectedRunEvents }),
 
   setConnectionStatus: (connectionStatus) => set({ connectionStatus }),
 }));

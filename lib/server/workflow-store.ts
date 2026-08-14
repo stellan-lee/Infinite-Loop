@@ -76,6 +76,31 @@ function libraryFileFor(id: string): string {
   return path.join(libraryDir(), `${id}.json`);
 }
 
+function validateAgentMessages(messages: unknown, nodeId: string): void {
+  // `messages: []` is a legacy-compatible spelling for falling back to the
+  // single `prompt` field, so only validate entries when turns are present.
+  if (messages === undefined || (Array.isArray(messages) && messages.length === 0)) return;
+  if (!Array.isArray(messages)) {
+    throw new Error(`invalid workflow: agent node "${nodeId}" messages must be an array`);
+  }
+
+  messages.forEach((message, index) => {
+    if (!message || typeof message !== 'object') {
+      throw new Error(`invalid workflow: agent node "${nodeId}" messages.${index} must be an object`);
+    }
+    const { role, content } = message as { role?: unknown; content?: unknown };
+    if (role !== 'system' && role !== 'user' && role !== 'assistant') {
+      throw new Error(`invalid workflow: agent node "${nodeId}" messages.${index}.role is invalid`);
+    }
+    if (typeof content !== 'string' || content.length === 0) {
+      throw new Error(`invalid workflow: agent node "${nodeId}" messages.${index}.content must be non-empty`);
+    }
+    if (role === 'system' && index !== 0) {
+      throw new Error(`invalid workflow: agent node "${nodeId}" only messages.0 may use the system role`);
+    }
+  });
+}
+
 function validateNodeConfig(n: WorkflowNode): void {
   // Workflow JSON is external input, so older files can still contain node
   // types that have been removed from the TypeScript contract. Reject the
@@ -122,6 +147,7 @@ function validateNodeConfig(n: WorkflowNode): void {
   }
   if (n.type === 'agent') {
     const cfg = n.config as AgentConfig;
+    validateAgentMessages(cfg.messages, n.id);
     validateAgentOutputs(cfg.outputs, n.id);
   }
   if (n.type === 'manual') {

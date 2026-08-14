@@ -279,6 +279,69 @@ describe('RunController — required (critical) template fields', () => {
     expect(finished?.branch).toBe('error');
   });
 
+  it('fails before execution when an Agent message references a missing parent output', async () => {
+    const agent: WorkflowNode = {
+      id: 'agent-1',
+      type: 'agent',
+      position: { x: 0, y: 0 },
+      config: {
+        prompt: 'legacy fallback',
+        messages: [{ role: 'user', content: 'summarize {{ghost.stdout}}' }],
+        cwd: '/tmp',
+      },
+    };
+    const agentExec = spyExec('next');
+    const eng = new WorkflowEngine({
+      start: staticExec('next'),
+      agent: agentExec,
+      end: staticExec('next'),
+    });
+    const events = captureEvents();
+
+    await eng.start(wf(
+      [startNode, agent, endNode],
+      [
+        edge('e1', 'start-1', 'next', 'agent-1'),
+        edge('e2', 'agent-1', 'next', 'end-1'),
+      ],
+    ));
+
+    expect(agentExec.calls).toBe(0);
+    const err = events.find((e) => e.type === 'error') as { message?: string } | undefined;
+    expect(err?.message).toContain('messages.0.content');
+    expect(err?.message).toContain('ghost.stdout');
+  });
+
+  it('ignores a stale legacy prompt when role-based messages are present', async () => {
+    const agent: WorkflowNode = {
+      id: 'agent-1',
+      type: 'agent',
+      position: { x: 0, y: 0 },
+      config: {
+        prompt: 'old {{ghost.stdout}}',
+        messages: [{ role: 'user', content: 'current request' }],
+        cwd: '/tmp',
+      },
+    };
+    const agentExec = spyExec('next');
+    const eng = new WorkflowEngine({
+      start: staticExec('next'),
+      agent: agentExec,
+      end: staticExec('next'),
+    });
+
+    await eng.start(wf(
+      [startNode, agent, endNode],
+      [
+        edge('e1', 'start-1', 'next', 'agent-1'),
+        edge('e2', 'agent-1', 'next', 'end-1'),
+      ],
+    ));
+
+    expect(eng.getState().status).toBe('succeeded');
+    expect(agentExec.calls).toBe(1);
+  });
+
   it('settles failed when a required template field is unresolved and unhandled', async () => {
     const agent: WorkflowNode = {
       id: 'agent-1',

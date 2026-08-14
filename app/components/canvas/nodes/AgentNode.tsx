@@ -14,6 +14,7 @@ interface AgentData {
   config?: {
     providerId?: string;
     prompt?: string;
+    messages?: Array<{ role?: string; content?: string }>;
     cwd?: string;
     timeoutMs?: number;
     agent?: string;
@@ -28,7 +29,12 @@ function truncate(s: string, n: number): string {
 export default function AgentNode({ data, selected }: NodeProps) {
   const d = (data ?? {}) as AgentData;
   const state = d._state ?? 'idle';
-  const prompt = d.config?.prompt ?? '';
+  const messages = d.config?.messages;
+  const prompt = Array.isArray(messages) && messages.length > 0
+    ? messages.filter((message) => message?.role === 'user').at(-1)?.content
+      ?? messages.at(-1)?.content
+      ?? ''
+    : d.config?.prompt ?? '';
   const provider = d.config?.providerId ?? 'claude';
   const agentName = (d.config?.agent ?? '').trim();
   const profileName = (d.config?.profile ?? '').trim();

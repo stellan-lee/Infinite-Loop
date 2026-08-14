@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import Workspace from './Workspace';
 import type { Workflow, WorkflowSummary } from '../lib/shared/workflow';
 import { useWorkflowStore } from '../lib/client/workflow-store-client';
@@ -104,5 +104,62 @@ describe('Workspace initial workflow loading', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/workflows/loop-claude-until-condition');
     expect(fetchMock).toHaveBeenCalledWith('/api/workflows');
     expect(fetchMock).toHaveBeenCalledWith('/api/workflows/wf-a');
+  });
+});
+
+describe('Workspace run persistence', () => {
+  it('saves pending workflow edits before starting a run', async () => {
+    useWorkflowStore.getState().loadWorkflow(FULL_A);
+    useWorkflowStore.setState({ isDirty: true });
+    const fetchMock = mock(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u === '/api/providers') return jsonResponse({ providers: [] });
+      if (u === '/api/workflows/wf-a' && init?.method === 'PUT') return jsonResponse({ workflow: FULL_A });
+      if (u === '/api/run' && init?.method === 'POST') return jsonResponse({ runId: 'run-1' }, { status: 202 });
+      throw new Error(`unexpected fetch ${u}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<Workspace />);
+    fireEvent.click(screen.getByRole('button', { name: 'run workflow' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/run',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    const calls = fetchMock.mock.calls;
+    const saveIndex = calls.findIndex(
+      ([url, init]) => String(url) === '/api/workflows/wf-a' && init?.method === 'PUT',
+    );
+    const runIndex = calls.findIndex(
+      ([url, init]) => String(url) === '/api/run' && init?.method === 'POST',
+    );
+    expect(saveIndex).toBeGreaterThanOrEqual(0);
+    expect(runIndex).toBeGreaterThan(saveIndex);
+  });
+});
+
+describe('Workspace card inspector', () => {
+  it('opens selected-node details as a canvas layer without adding the global rail', async () => {
+    useWorkflowStore.getState().loadWorkflow(FULL_A);
+    useWorkflowStore.getState().selectNode('start-1');
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      if (String(url) === '/api/providers') return jsonResponse({ providers: [] });
+      throw new Error(`unexpected fetch ${String(url)}`);
+    }) as unknown as typeof fetch;
+
+    const { container } = render(<Workspace />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('config panel')).toBeInTheDocument();
+    });
+    expect(container.querySelector('.workspace-bi')).not.toBeNull();
+    expect(container.querySelector('.node-inspector-layer')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'close node inspector' }));
+    expect(useWorkflowStore.getState().selectedNodeId).toBeNull();
   });
 });

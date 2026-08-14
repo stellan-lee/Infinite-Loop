@@ -76,10 +76,26 @@ export interface EndConfig {
   outcome?: 'succeeded' | 'failed';
 }
 
+/** Roles accepted by the OpenAI Responses API for a conversational input. */
+export type AgentMessageRole = 'system' | 'user' | 'assistant';
+
+/** One ordered conversational turn configured on an Agent node. */
+export interface AgentMessage {
+  role: AgentMessageRole;
+  content: string;
+}
+
 export interface AgentConfig {
   /** Provider id resolved against `providers/*.json`, e.g. "claude" or "codex". */
   providerId: string;
+  /**
+   * Legacy single user prompt. Kept for persisted workflows created before
+   * `messages`; when `messages` is absent it is treated as one user message.
+   */
   prompt: string;
+  /** Ordered system, user, and assistant turns. HTTP providers preserve these
+   * roles; CLI providers receive an explicitly labelled transcript. */
+  messages?: AgentMessage[];
   /** Optional node-specific working-directory override. Falls back to the
    * workflow's `cwd`, then `/tmp`. */
   cwd?: string;

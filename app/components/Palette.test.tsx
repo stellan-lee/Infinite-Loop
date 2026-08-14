@@ -30,7 +30,7 @@ describe('Palette', () => {
   it('renders the static (non-provider) draggable node items', () => {
     render(<Palette />);
 
-    const types = ['start', 'end', 'loop', 'condition', 'structured-output'] as const;
+    const types = ['start', 'end', 'loop', 'condition'] as const;
     for (const t of types) {
       const item = screen.getByRole('button', { name: `add ${t} node` });
       expect(item).toBeInTheDocument();
@@ -38,9 +38,9 @@ describe('Palette', () => {
     }
   });
 
-  it('uses the OpenAI name while retaining the persisted structured-output node type', () => {
+  it('does not duplicate the structured-output card in the palette', () => {
     render(<Palette />);
-    expect(screen.getByRole('button', { name: 'add structured-output node' })).toHaveTextContent('OpenAI');
+    expect(screen.queryByRole('button', { name: 'add structured-output node' })).toBeNull();
   });
 
   it('renders provider-management actions as text links, not ghost buttons', () => {

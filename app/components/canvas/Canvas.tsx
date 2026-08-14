@@ -333,7 +333,9 @@ const NODE_TYPES = {
 function CanvasInner() {
   const currentWorkflow = useWorkflowStore((s) => s.currentWorkflow);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
+  const runStatus = useWorkflowStore((s) => s.runStatus);
   const runEvents = useWorkflowStore((s) => s.runEvents);
+  const inspectedRunEvents = useWorkflowStore((s) => s.inspectedRunEvents);
   const updateNode = useWorkflowStore((s) => s.updateNode);
   const removeNode = useWorkflowStore((s) => s.removeNode);
   const removeEdge = useWorkflowStore((s) => s.removeEdge);
@@ -406,11 +408,28 @@ function CanvasInner() {
   // Memoize the nodeTypes map so xyflow doesn't warn / re-create internals.
   const nodeTypes = useMemo(() => NODE_TYPES, []);
 
-  const liveMap = useMemo(() => buildLiveStateMap(runEvents), [runEvents]);
+  // History supplies a separate terminal event stream. Prefer it while a
+  // record is open so the canvas shows that run's exact successful and failed
+  // path, without rewriting the live run's status or event log.
+  const displayedRunEvents = inspectedRunEvents ?? runEvents;
+  const liveMap = useMemo(
+    () => buildLiveStateMap(displayedRunEvents),
+    [displayedRunEvents],
+  );
+  // Treat nodes absent from a selected history record as pending so they use
+  // the neutral gray treatment. This makes the executed path immediately
+  // legible: green = completed, red = error branch, gray = not reached.
+  const displayedRunStatus: RunStatus = inspectedRunEvents ? 'running' : runStatus;
 
   const { nodes, edges } = useMemo(
-    () => workflowToXyflow(currentWorkflow, liveMap, selectedNodeId, selectedEdgeId),
-    [currentWorkflow, liveMap, selectedNodeId, selectedEdgeId],
+    () => workflowToXyflow(
+      currentWorkflow,
+      liveMap,
+      selectedNodeId,
+      selectedEdgeId,
+      displayedRunStatus,
+    ),
+    [currentWorkflow, liveMap, selectedNodeId, selectedEdgeId, displayedRunStatus],
   );
 
   const onNodesChange = useCallback(
@@ -702,6 +721,10 @@ function CanvasInner() {
         fitViewOptions={{ padding: 0.14, maxZoom: 1.05, minZoom: 0.6 }}
         connectionLineType={ConnectionLineType.Bezier}
         defaultEdgeOptions={{ type: 'default', style: { strokeWidth: 2 } }}
+        // Keep a drag focused on repositioning the card. React Flow otherwise
+        // selects at drag start, which opens the inspector and shifts the
+        // canvas under the pointer mid-gesture. A normal click still selects.
+        selectNodesOnDrag={false}
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={18} size={1.15} />

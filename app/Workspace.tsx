@@ -38,6 +38,8 @@ export default function Workspace() {
   const wsStatus = useWorkflowStore((s) => s.connectionStatus);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
+  const saveCurrentWorkflow = useWorkflowStore((s) => s.saveCurrentWorkflow);
+  const selectNode = useWorkflowStore((s) => s.selectNode);
   const undo = useWorkflowStore((s) => s.undo);
   const redo = useWorkflowStore((s) => s.redo);
   const isRunning = runStatus === 'running';
@@ -86,7 +88,10 @@ export default function Workspace() {
   // read off the DOM, which broke when the user switched views mid-drag
   // and `.workspace-tri` unmounted before the persist tick fired.
   const rightWidthRef = useRef<number>(RIGHT_WIDTH_DEFAULT);
-  const showRightPanel = isRunning || historyOpen || !!selectedNodeId;
+  // The right rail is reserved for workflow-wide views. A selected node gets
+  // its own canvas-layer inspector so card editing never shifts the graph or
+  // replaces history/run information.
+  const showGlobalPanel = isRunning || historyOpen;
 
   // Hydrate the persisted width on mount (avoids SSR mismatch).
   useEffect(() => {
@@ -177,6 +182,12 @@ export default function Workspace() {
 
   async function postRun(inputs?: Record<string, unknown>) {
     if (!currentWorkflow) return;
+    // The run API deliberately loads the persisted workflow. Flush an edit
+    // here instead of relying on the debounced autosave, so an immediately
+    // added or reconfigured node is always part of the run being started.
+    if (useWorkflowStore.getState().isDirty) {
+      await saveCurrentWorkflow();
+    }
     await fetch('/api/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -318,12 +329,27 @@ export default function Workspace() {
         <DispatchView origin={typeof window !== 'undefined' ? window.location.origin : ''} />
       ) : (
         <div
-          className={`workspace ${showRightPanel ? 'workspace-tri' : 'workspace-bi'}`}
+          className={`workspace ${showGlobalPanel ? 'workspace-tri' : 'workspace-bi'}`}
           style={{ '--right-w': `${rightWidth}px` } as CSSProperties}
         >
           <Palette />
           <Canvas />
-          {showRightPanel && (
+          {selectedNodeId && !showGlobalPanel && (
+            <div className="node-inspector-layer">
+              <div className="node-inspector">
+                <button
+                  type="button"
+                  className="node-inspector-close"
+                  aria-label="close node inspector"
+                  onClick={() => selectNode(null)}
+                >
+                  ×
+                </button>
+                <ConfigPanel />
+              </div>
+            </div>
+          )}
+          {showGlobalPanel && (
             <>
               <div
                 role="separator"
@@ -335,10 +361,11 @@ export default function Workspace() {
               />
               {isRunning ? (
                 <RunView />
-              ) : historyOpen ? (
-                <RunHistory workflowId={currentWorkflow?.id} />
               ) : (
-                <ConfigPanel />
+                // `showGlobalPanel` is only true for a running workflow or
+                // an open history drawer, so this branch is the preserved
+                // history rail rather than the card inspector.
+                <RunHistory workflowId={currentWorkflow?.id} />
               )}
             </>
           )}
@@ -367,4 +394,3 @@ function clampRightWidth(n: number): number {
   );
   return Math.min(max, Math.max(RIGHT_WIDTH_MIN, Math.floor(n)));
 }
-

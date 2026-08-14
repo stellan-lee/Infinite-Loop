@@ -55,7 +55,11 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   // Selection state lives in the module-scoped Zustand store; clear so one
   // test's selection doesn't leak filter behaviour into the next.
-  useWorkflowStore.setState({ selectedNodeId: null, panRequest: null });
+  useWorkflowStore.setState({
+    selectedNodeId: null,
+    panRequest: null,
+    inspectedRunEvents: null,
+  });
 });
 
 describe('RunHistory', () => {
@@ -123,6 +127,7 @@ describe('RunHistory', () => {
     expect(log).toHaveTextContent('run_started');
     expect(log).toHaveTextContent('run_finished');
     expect(screen.getByLabelText('node card agent-1')).toBeInTheDocument();
+    expect(useWorkflowStore.getState().inspectedRunEvents).toEqual(RECORD_A.events);
   });
 
   it('back button returns to the list view', async () => {
@@ -134,6 +139,7 @@ describe('RunHistory', () => {
     await waitFor(() =>
       expect(screen.getByLabelText('run history')).toBeInTheDocument(),
     );
+    expect(useWorkflowStore.getState().inspectedRunEvents).toBeNull();
   });
 
   it('filters cards to the selected node when it has events in this run', async () => {

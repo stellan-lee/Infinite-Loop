@@ -160,10 +160,10 @@ describe('ConfigPanel', () => {
 
     render(<ConfigPanel />);
 
-    expect(screen.getByLabelText('Prompt')).toBeInTheDocument();
+    expect(screen.getByLabelText('user message 1')).toBeInTheDocument();
     expect(screen.getByLabelText('Working directory override')).toBeInTheDocument();
     expect(screen.getByLabelText('Iteration timeout')).toBeInTheDocument();
-    expect(screen.getByLabelText('Prompt')).toBeRequired();
+    expect(screen.getByLabelText('user message 1')).toBeRequired();
     expect(screen.getByLabelText('Working directory override')).not.toHaveAttribute(
       'aria-required',
       'true',
@@ -352,7 +352,7 @@ describe('ConfigPanel', () => {
     expect(stored.model).toBe('gpt-5');
   });
 
-  it('debounces edits to the Agent prompt and dispatches updateNode', () => {
+  it('migrates a legacy Agent prompt into a user message edit', () => {
     clock = FakeTimers.install();
     const wf = makeWorkflow([startNode, agentNode]);
     act(() => {
@@ -362,28 +362,25 @@ describe('ConfigPanel', () => {
 
     render(<ConfigPanel />);
 
-    const promptField = screen.getByLabelText('Prompt') as HTMLTextAreaElement;
+    const promptField = screen.getByLabelText('user message 1') as HTMLTextAreaElement;
     act(() => {
       fireEvent.change(promptField, { target: { value: 'updated prompt' } });
     });
 
-    // Before the debounce timer fires, the store has not been updated.
     let stored = useWorkflowStore.getState().currentWorkflow!.nodes.find(
       (n) => n.id === 'agent-1',
-    )!.config as { prompt: string };
+    )!.config as { prompt: string; messages?: Array<{ role: string; content: string }> };
     expect(stored.prompt).toBe('hello');
-
-    act(() => {
-      clock!.tick(300);
-    });
+    expect(stored.messages).toEqual([{ role: 'user', content: 'updated prompt' }]);
 
     stored = useWorkflowStore.getState().currentWorkflow!.nodes.find(
       (n) => n.id === 'agent-1',
-    )!.config as { prompt: string };
-    expect(stored.prompt).toBe('updated prompt');
+    )!.config as { prompt: string; messages?: Array<{ role: string; content: string }> };
+    expect(stored.prompt).toBe('hello');
+    expect(stored.messages).toEqual([{ role: 'user', content: 'updated prompt' }]);
   });
 
-  it('flushes a pending debounced edit when the selected node changes', () => {
+  it('retains a message edit when the selected node changes', () => {
     clock = FakeTimers.install();
     const wf = makeWorkflow([startNode, agentNode]);
     act(() => {
@@ -393,15 +390,15 @@ describe('ConfigPanel', () => {
 
     render(<ConfigPanel />);
 
-    const promptField = screen.getByLabelText('Prompt') as HTMLTextAreaElement;
+    const promptField = screen.getByLabelText('user message 1') as HTMLTextAreaElement;
     act(() => {
       fireEvent.change(promptField, { target: { value: 'switch-safe prompt' } });
     });
 
     let stored = useWorkflowStore.getState().currentWorkflow!.nodes.find(
       (n) => n.id === 'agent-1',
-    )!.config as { prompt: string };
-    expect(stored.prompt).toBe('hello');
+    )!.config as { prompt: string; messages?: Array<{ role: string; content: string }> };
+    expect(stored.messages).toEqual([{ role: 'user', content: 'switch-safe prompt' }]);
 
     act(() => {
       useWorkflowStore.getState().selectNode('start-1');
@@ -409,8 +406,32 @@ describe('ConfigPanel', () => {
 
     stored = useWorkflowStore.getState().currentWorkflow!.nodes.find(
       (n) => n.id === 'agent-1',
-    )!.config as { prompt: string };
-    expect(stored.prompt).toBe('switch-safe prompt');
+    )!.config as { prompt: string; messages?: Array<{ role: string; content: string }> };
+    expect(stored.messages).toEqual([{ role: 'user', content: 'switch-safe prompt' }]);
+  });
+
+  it('adds role-labelled Agent messages', () => {
+    const wf = makeWorkflow([startNode, agentNode]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('agent-1');
+    });
+    render(<ConfigPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: /\+ add message/i }));
+    expect(screen.getByLabelText('Role for message 2')).toBeInTheDocument();
+    expect(screen.getByLabelText('user message 2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Role for message 2'));
+    expect(screen.queryByRole('option', { name: 'System' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('option', { name: 'Assistant' }));
+    const stored = useWorkflowStore.getState().currentWorkflow!.nodes.find(
+      (n) => n.id === 'agent-1',
+    )!.config as { messages?: Array<{ role: string; content: string }> };
+    expect(stored.messages).toEqual([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: '' },
+    ]);
   });
 
   it('renders the Agent outputs editor and commits a new row through to config.outputs', () => {
@@ -728,7 +749,7 @@ describe('ConfigPanel', () => {
 
     render(<ConfigPanel />);
 
-    expect(screen.getByLabelText('Prompt')).toHaveValue('inner');
+    expect(screen.getByLabelText('user message 1')).toHaveValue('inner');
     // cwd field is a read-only div now (so CSS can truncate from the start
     // and show the tail of long paths) — assert text content, not value.
     expect(screen.getByLabelText('Working directory override')).toHaveTextContent(

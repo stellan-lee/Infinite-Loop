@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
   AgentConfig,
+  AgentMessage,
   AgentOutputDecl,
   NodeExecutor,
   NodeExecutorContext,
@@ -58,6 +59,38 @@ function hasConfiguredCwd(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
+function configuredMessages(cfg: AgentConfig): AgentMessage[] | null {
+  if (cfg.messages === undefined || (Array.isArray(cfg.messages) && cfg.messages.length === 0)) {
+    return isNonEmptyString(cfg.prompt) ? [{ role: 'user', content: cfg.prompt }] : null;
+  }
+  if (!Array.isArray(cfg.messages)) return null;
+  const messages: AgentMessage[] = [];
+  for (const [index, message] of cfg.messages.entries()) {
+    if (
+      !message ||
+      typeof message !== 'object' ||
+      !['system', 'user', 'assistant'].includes((message as AgentMessage).role) ||
+      !isNonEmptyString((message as AgentMessage).content) ||
+      ((message as AgentMessage).role === 'system' && index !== 0)
+    ) {
+      return null;
+    }
+    messages.push({
+      role: (message as AgentMessage).role,
+      content: (message as AgentMessage).content,
+    });
+  }
+  return messages;
+}
+
+/** CLI runners only accept one prompt string, so retain every role in a
+ * deterministic labelled transcript rather than dropping conversational
+ * context. HTTP runners receive `messages` separately and preserve roles. */
+function serializeMessagesForCli(messages: readonly AgentMessage[]): string {
+  if (messages.length === 1 && messages[0].role === 'user') return messages[0].content;
+  return messages.map((message) => `[${message.role}]\n${message.content}`).join('\n\n');
+}
+
 function declaredOutputs(cfg: AgentConfig): AgentOutputDecl[] {
   if (!Array.isArray(cfg.outputs)) return [];
   return cfg.outputs.filter(
@@ -101,12 +134,13 @@ export const agentExecutor: NodeExecutor = {
   async execute(ctx: NodeExecutorContext): Promise<NodeExecutorResult> {
     const cfg = ctx.config as AgentConfig;
 
-    // Catches a missing providerId and a literal-empty / non-string prompt.
-    // A *templated* prompt whose `{{...}}` reference is unresolved is now
+    const messages = configuredMessages(cfg);
+    // Catches a missing providerId and invalid/empty conversational input.
+    // A templated message whose `{{...}}` reference is unresolved is now
     // front-stopped by the engine before this executor runs — see
     // CRITICAL_CONFIG_FIELDS in run-controller.ts — so this guard no longer
     // has to reason about silently-degraded templated prompts.
-    if (!isNonEmptyString(cfg?.providerId) || !isNonEmptyString(cfg?.prompt)) {
+    if (!isNonEmptyString(cfg?.providerId) || messages === null) {
       return {
         outputs: { errorMessage: 'invalid agent config' },
         branch: 'error',
@@ -285,7 +319,8 @@ export const agentExecutor: NodeExecutor = {
 
     try {
       const result = await runProvider(provider, {
-        prompt: cfg.prompt,
+        prompt: serializeMessagesForCli(messages),
+        messages,
         cwd: spawnCwd,
         timeoutMs: resolveAgentTimeout(cfg.timeoutMs),
         signal: ctx.signal,

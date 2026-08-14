@@ -429,11 +429,30 @@ export function lintWorkflowTemplates(
   const visit = (n: WorkflowNode) => {
     const cfg = n.config as Record<string, unknown> | undefined;
     if (cfg && typeof cfg === 'object') {
-      const fields = TEMPLATED_FIELDS[n.type] ?? [];
+      const usesMessages = n.type === 'agent' && Array.isArray(cfg.messages) && cfg.messages.length > 0;
+      const fields = (TEMPLATED_FIELDS[n.type] ?? []).filter(
+        (field) => !(usesMessages && field === 'prompt'),
+      );
       for (const f of fields) {
         const raw = cfg[f];
         if (typeof raw === 'string') {
           out.push(...lintField(workflow, n.id, f, raw));
+        }
+      }
+      if (n.type === 'agent' && Array.isArray(cfg.messages)) {
+        for (const [index, message] of cfg.messages.entries()) {
+          if (
+            message &&
+            typeof message === 'object' &&
+            typeof (message as { content?: unknown }).content === 'string'
+          ) {
+            out.push(...lintField(
+              workflow,
+              n.id,
+              `messages.${index}.content`,
+              (message as { content: string }).content,
+            ));
+          }
         }
       }
       // script.inputs — Record<string, string>

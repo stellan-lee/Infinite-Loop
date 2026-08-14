@@ -1723,9 +1723,17 @@ export class RunController {
     resolved: Record<string, unknown>;
     criticalMisses: Array<{ field: string; missingKey: string }>;
   } {
-    const fields = TEXT_CONFIG_FIELDS[node.type] ?? [];
-    const criticalFields = CRITICAL_CONFIG_FIELDS[node.type] ?? [];
     const cfg = node.config as Record<string, unknown>;
+    // Once the role-based message array is present, `prompt` is legacy data
+    // only. Resolving it could reject an otherwise-valid conversation because
+    // of a stale template reference the executor deliberately ignores.
+    const usesMessages = node.type === 'agent' && Array.isArray(cfg.messages) && cfg.messages.length > 0;
+    const fields = (TEXT_CONFIG_FIELDS[node.type] ?? []).filter(
+      (field) => !(usesMessages && field === 'prompt'),
+    );
+    const criticalFields = (CRITICAL_CONFIG_FIELDS[node.type] ?? []).filter(
+      (field) => !(usesMessages && field === 'prompt'),
+    );
     const resolved: Record<string, unknown> = { ...cfg };
     const criticalMisses: Array<{ field: string; missingKey: string }> = [];
     for (const field of fields) {
@@ -1749,6 +1757,21 @@ export class RunController {
           });
         }
       }
+    }
+    if (node.type === 'agent' && Array.isArray(cfg.messages)) {
+      resolved.messages = cfg.messages.map((message, index) => {
+        if (!message || typeof message !== 'object') return message;
+        const raw = (message as { content?: unknown }).content;
+        if (typeof raw !== 'string') return message;
+        const { text, warnings } = resolveTemplate(raw, scope);
+        for (const warning of warnings) {
+          criticalMisses.push({
+            field: `messages.${index}.content`,
+            missingKey: warning.missingKey,
+          });
+        }
+        return { ...message, content: text };
+      });
     }
     if (node.type === 'script') {
       const rawInputs = cfg.inputs;

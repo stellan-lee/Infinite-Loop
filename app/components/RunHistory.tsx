@@ -36,6 +36,11 @@ export default function RunHistory({ workflowId }: Props) {
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const selectNode = useWorkflowStore((s) => s.selectNode);
   const requestPanToNode = useWorkflowStore((s) => s.requestPanToNode);
+  const setInspectedRunEvents = useWorkflowStore((s) => s.setInspectedRunEvents);
+
+  // A history record is a canvas overlay, not a replacement for the live run
+  // state. Clear it as soon as History closes or this component unmounts.
+  useEffect(() => () => setInspectedRunEvents(null), [setInspectedRunEvents]);
 
   // Filter is only active if a node is selected AND that node has events in
   // the currently-loaded run record. A selection from an earlier/later run
@@ -85,7 +90,8 @@ export default function RunHistory({ workflowId }: Props) {
     setSelectedRunId(null);
     setRecord(null);
     setRecordError(null);
-  }, [workflowId]);
+    setInspectedRunEvents(null);
+  }, [workflowId, setInspectedRunEvents]);
 
   useEffect(() => {
     if (!selectedRunId || !workflowId) {
@@ -102,7 +108,10 @@ export default function RunHistory({ workflowId }: Props) {
         );
         if (!res.ok) throw new Error(`load failed: ${res.status}`);
         const data = (await res.json()) as { run: RunRecord };
-        if (!cancelled) setRecord(data.run);
+        if (!cancelled) {
+          setRecord(data.run);
+          setInspectedRunEvents(data.run.events);
+        }
       } catch (err) {
         if (!cancelled) {
           setRecordError(err instanceof Error ? err.message : 'failed to load');
@@ -114,7 +123,7 @@ export default function RunHistory({ workflowId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [selectedRunId, workflowId]);
+  }, [selectedRunId, workflowId, setInspectedRunEvents]);
 
   if (selectedRunId) {
     return (
@@ -124,7 +133,10 @@ export default function RunHistory({ workflowId }: Props) {
             type="button"
             className="wf-menu-action"
             aria-label="back to history list"
-            onClick={() => setSelectedRunId(null)}
+            onClick={() => {
+              setSelectedRunId(null);
+              setInspectedRunEvents(null);
+            }}
           >
             ← back
           </button>

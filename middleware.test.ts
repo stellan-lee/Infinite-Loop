@@ -111,6 +111,8 @@ describe('middleware — authed mode, exempt API surfaces', () => {
   it('never gates webhook ingress', () => {
     process.env.INFLOOP_API_TOKEN = TOKEN;
     expect(passedThrough(call('/api/webhook/some-trigger-id'))).toBe(true);
+    // This ingress authenticates mandatory HMAC itself; browser/API auth must not intercept GitHub.
+    expect(passedThrough(call('/api/webhook/github-ci'))).toBe(true);
   });
 
   it('never gates the SetOutput MCP server (per-run-token auth)', () => {

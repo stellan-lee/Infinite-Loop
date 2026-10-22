@@ -19,6 +19,7 @@ const VALID_EVENT_TYPES = new Set<WorkflowEvent['type']>([
   'node_slot_acquired',
   'node_waiting_for_human',
   'node_human_decided',
+  'github_ci_updated',
   'trigger_enqueued',
   'trigger_started',
   'trigger_dropped',
@@ -72,7 +73,7 @@ export function useEngineWebSocket(): void {
           const events = Array.isArray(data.state?.events)
             ? data.state.events
             : [];
-          hydrateRun({ status, events });
+          hydrateRun({ status, events, githubCI: data.state?.githubCI });
         }
       } catch {
         // ignore malformed frames

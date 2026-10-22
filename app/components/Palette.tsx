@@ -79,6 +79,7 @@ const DRAG_PREVIEW_COPY: Record<NodeType, { title: string; body: string }> = {
   'structured-output': { title: 'OPENAI', body: '⌘ no provider · (no prompt)' },
   sidenote: { title: 'NOTE', body: '(empty note)' },
   script: { title: 'SCRIPT', body: 'run(arg1, arg2) → output1' },
+  'github-ci': { title: 'GITHUB CI GATE', body: 'wait for required checks' },
   manual: { title: 'MANUAL', body: '✋ 3 decisions' },
 };
 
@@ -130,6 +131,7 @@ const STATIC_CATEGORIES: PaletteCategory[] = [
       { type: 'loop', name: 'Loop', Icon: LuRepeat, glyph: '↻', description: 'repeat until met' },
       { type: 'branch', name: 'If', Icon: LuGitBranch, glyph: '⋔', description: 'if/else on a value' },
       { type: 'condition', name: 'Condition', Icon: LuFilter, glyph: '◷', description: 'evaluate a condition' },
+      { type: 'github-ci', name: 'GitHub CI Gate', Icon: LuGitBranch, glyph: '✓', description: 'wait for required GitHub CI checks' },
       { type: 'manual', name: 'Manual', Icon: LuHand, glyph: '✋', description: 'pause for a human acceptance decision' },
     ],
   },

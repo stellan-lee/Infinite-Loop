@@ -7,6 +7,10 @@
  * `docs/concurrent-runs.md` for the design.
  */
 
+import { aggregateCI } from './github-ci-client';
+import { githubCIService } from './github-ci-service';
+import { isGitHubCITerminal, type GitHubCIConfig } from '../shared/github-ci';
+import { CheckpointError, childrenOf, saveDurableRun, removeDurableRun, type DurableRun, type WalkFrame, type BranchResult } from './durable-run';
 import type {
   EdgeHandle,
   HumanDecisionRecord,
@@ -66,6 +70,7 @@ const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   // them lets the gate quote outputs from upstream nodes
   // ("Review {{agent-1.stdout}}").
   manual: ['brief', 'reviewerHint'],
+  'github-ci': ['repository', 'pullRequest'],
 };
 
 /**
@@ -83,6 +88,7 @@ const TEXT_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
  */
 const CRITICAL_CONFIG_FIELDS: Partial<Record<string, string[]>> = {
   agent: ['prompt'],
+  'github-ci': ['repository', 'pullRequest'],
   'structured-output': ['prompt'],
 };
 
@@ -292,6 +298,76 @@ export class RunController {
   readonly workflow: Workflow;
   readonly abort: AbortController;
   snapshot: RunSnapshot;
+  private durable = false;
+  private rootFrame?: WalkFrame;
+  private scopes: Record<string, Scope> = {};
+  private terminalCheckpoint?: DurableRun['terminal'];
+  private cancellation?: DurableRun['cancellation'];
+  private checkpointFailed = false;
+
+  private frame(node: WorkflowNode, exec: ExecutionScope, scope: Scope, workflow: Workflow): WalkFrame {
+    let scopeId = Object.keys(this.scopes).find(key => this.scopes[key] === scope);
+    if (!scopeId) {
+      scopeId = crypto.randomUUID();
+      this.scopes[scopeId] = scope;
+    }
+    return { id: crypto.randomUUID(), scopeId, workflow, exec, currentNodeId: node.id, phase: 'ready' };
+  }
+
+  private checkpoint(): void {
+    if (!this.rootFrame) return;
+    if (this.checkpointFailed) throw new CheckpointError('Durable checkpoint previously failed');
+    const scopes: Record<string, Scope> = {};
+    const visit = (frame: WalkFrame) => {
+      scopes[frame.scopeId] = this.scopes[frame.scopeId];
+      if (frame.parallel) {
+        for (const [branchId, branch] of Object.entries(frame.parallel.branches)) {
+          frame.parallel.inheritedKeys[branchId] = Object.entries(this.scopes[branch.scopeId])
+            .filter(([key, value]) => frame.parallel!.parentSnapshot[key] === value)
+            .map(([key]) => key);
+        }
+      }
+      childrenOf(frame).forEach(visit);
+    };
+    visit(this.rootFrame);
+    this.scopes = scopes;
+    if (!this.durable) return;
+    try {
+      saveDurableRun({
+        version: 1,
+        serverPid: process.pid,
+        runId: this.runId,
+        correlationId: this.correlationId,
+        workflow: this.workflow,
+        root: this.rootFrame,
+        scopes,
+        snapshot: this.snapshot,
+        budget: this.budget,
+        nodeCount: this.nodeExecutionCount,
+        costUsd: this.runCostUsd,
+        events: this.runEventLog,
+        truncated: this.runEventLogTruncated,
+        worktrees: this.worktrees.snapshotEntries(),
+        terminal: this.terminalCheckpoint,
+        cancellation: this.cancellation,
+      });
+    } catch (err) {
+      this.checkpointFailed = true;
+      this.abort.abort();
+      throw new CheckpointError(`Could not persist workflow continuation: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // A parked CI frontier releases only the worker slot; lock observers and
+    // worktree exemptions live until settle. A runnable sibling keeps the slot.
+    const leaves: WalkFrame[] = [];
+    const frontier = (f: WalkFrame) => {
+      if (f.phase === 'done') return;
+      const children = f.phase === 'child' ? childrenOf(f).filter(c => c.phase !== 'done') : [];
+      if (children.length) children.forEach(frontier); else leaves.push(f);
+    };
+    frontier(this.rootFrame);
+    if (leaves.length && leaves.every(f => f.phase === 'ci-wait')) this.slotPool?.releaseRun(this.runId);
+  }
+
   private edgesBySource = new Map<string, WorkflowEdge[]>();
   private recentEvents: WorkflowEvent[] = [];
   private runEventLog: WorkflowEvent[] = [];
@@ -369,7 +445,28 @@ export class RunController {
   }
 
   stop(): void {
-    if (this.snapshot.status !== 'running') return;
+    if (this.snapshot.status !== 'running' || this.terminalCheckpoint) return;
+    this.cancelRun({ reason: 'user', message: 'cancelled by user' });
+  }
+
+  /** Checkpoint intent before abort listeners can publish or resume a wait. */
+  private cancelRun(intent: NonNullable<DurableRun['cancellation']>): void {
+    this.cancellation ??= intent;
+    const cancelWaitingCI = (frame: WalkFrame) => {
+      if (frame.phase === 'ci-wait' && frame.ci && !isGitHubCITerminal(frame.ci.output.status)) {
+        frame.ci.output = {
+          ...frame.ci.output, status: 'Cancelled',
+          errorMessage: intent.message, updatedAt: Date.now(),
+        };
+        const nodeId = frame.currentNodeId!;
+        const namespacedId = this.namespaced(nodeId, frame.exec);
+        this.snapshot.githubCI = { ...this.snapshot.githubCI, [namespacedId]: frame.ci.output };
+        this.scopes[frame.scopeId][nodeId] = { ...frame.ci.output };
+      }
+      childrenOf(frame).forEach(cancelWaitingCI);
+    };
+    if (this.rootFrame) cancelWaitingCI(this.rootFrame);
+    this.checkpoint();
     this.abort.abort();
   }
 
@@ -436,9 +533,9 @@ export class RunController {
    * adapter relies on this contract to read the runId off the engine right
    * after kicking off `start()`.
    */
-  async start(opts?: { resolvedInputs?: ResolvedInputs }): Promise<void> {
+  async start(opts?: { resolvedInputs?: ResolvedInputs; restored?: DurableRun }): Promise<void> {
     const workflow = this.workflow;
-    const startedAt = Date.now();
+    const startedAt = opts?.restored?.snapshot.startedAt ?? Date.now();
     this.runStartedAt = startedAt;
     const seedScope: Scope = {};
     if (workflow.globals && typeof workflow.globals === 'object') {
@@ -483,6 +580,38 @@ export class RunController {
     this.nodeExecutionCount = 0;
     this.runCostUsd = 0;
     this.budgetExceededMessage = undefined;
+    if (opts?.restored) {
+      const saved = opts.restored;
+      this.durable = true;
+      this.rootFrame = saved.root;
+      this.scopes = saved.scopes;
+      // JSON copies shared inherited values. Restore only recorded aliases;
+      // a branch-written equal-valued object must still count as an output.
+      const restoreAliases = (frame: WalkFrame) => {
+        if (frame.parallel) {
+          for (const [branchId, branch] of Object.entries(frame.parallel.branches)) {
+            for (const key of frame.parallel.inheritedKeys[branchId] ?? []) {
+              this.scopes[branch.scopeId][key] = frame.parallel.parentSnapshot[key];
+            }
+          }
+        }
+        childrenOf(frame).forEach(restoreAliases);
+      };
+      restoreAliases(saved.root);
+      this.snapshot = { ...saved.snapshot, status: 'running', scope: saved.scopes[saved.root.scopeId] };
+      this.nodeExecutionCount = saved.nodeCount;
+      this.runCostUsd = saved.costUsd;
+      this.runEventLog = saved.events;
+      this.recentEvents = saved.events.slice(-200);
+      this.runEventLogTruncated = saved.truncated;
+      this.terminalCheckpoint = saved.terminal;
+      this.cancellation = saved.cancellation;
+      if (this.cancellation) {
+        if (this.cancellation.reason === 'budget') this.budgetExceededMessage = this.cancellation.message;
+        this.abort.abort();
+      }
+    }
+
     // Join the process-wide event-memory budget for the run's lifetime: this
     // run now counts toward the live-run divisor, and `trimEventBuffers`
     // squeezes this run's buffers to its fair share. Unregistered in the
@@ -512,7 +641,7 @@ export class RunController {
       this.lockManager.registerObserver(this.runId, this.makeWaitObserver());
     }
 
-    this.emit({
+    if (!opts?.restored) this.emit({
       type: 'run_started',
       workflowId: workflow.id,
       workflowName: workflow.name,
@@ -538,10 +667,17 @@ export class RunController {
       const start = workflow.nodes.find((n) => n.type === 'start');
       if (!start) throw new Error("workflow has no 'start' node");
 
-      const result = await this.walkFrom(start, {}, this.snapshot.scope, workflow);
+      if (opts?.restored) {
+        this.worktrees.restoreEntries(opts.restored.worktrees, Boolean(this.terminalCheckpoint));
+        for (const [, entry] of opts.restored.worktrees) this.lockManager?.registerExempt(entry.path, this.runId);
+      }
+      this.rootFrame ??= this.frame(start, {}, this.snapshot.scope, workflow);
+      this.checkpoint();
+      const result = this.terminalCheckpoint?.status ?? await this.walkFrom(start, {}, this.snapshot.scope, workflow, this.abort.signal, this.rootFrame);
       finalStatus = result;
+      errorMessage = this.terminalCheckpoint?.errorMessage;
     } catch (err) {
-      if (this.abort.signal.aborted) {
+      if (this.abort.signal.aborted && !(err instanceof CheckpointError)) {
         finalStatus = 'cancelled';
         errorMessage = 'cancelled by user';
       } else {
@@ -560,6 +696,13 @@ export class RunController {
       errorMessage = this.budgetExceededMessage;
     }
 
+    // Terminal checkpoint precedes worktree cleanup/history; a crash here may
+    // retry cleanup, but must never restart the walk.
+    if (this.durable && !this.checkpointFailed) {
+      this.terminalCheckpoint = { status: finalStatus, errorMessage };
+      try { this.checkpoint(); }
+      catch (err) { finalStatus = 'failed'; errorMessage = err instanceof Error ? err.message : 'Checkpoint failed'; }
+    }
     let finishedAt = Date.now();
     // Settle path. Wrapped in try/finally so the eventBus subscription is
     // always torn down even if a cleanup throws something the inner
@@ -617,8 +760,9 @@ export class RunController {
       }
     }
 
-    // Snapshot every value the persist task needs RIGHT NOW. `persistRun` is
-    // fire-and-forget: if a second run starts before this task gets its first
+    // Snapshot every value the persist task needs RIGHT NOW. Ordinary runs
+    // keep fire-and-forget history writes; durable runs await persistence.
+    // If a second run starts before this task gets its first
     // tick, the controller's mutable fields would already belong to the new
     // run (in the multi-run world). Capturing locals decouples the persisted
     // record from any later state change.
@@ -640,7 +784,7 @@ export class RunController {
       nodeCount: nodeCountForPersist,
     });
 
-    void this.persistRun({
+    const persistence = this.persistRun({
       runId: this.runId,
       workflow,
       status: finalStatus,
@@ -653,6 +797,7 @@ export class RunController {
       costUsd: costUsdForPersist,
       nodeCount: nodeCountForPersist,
     });
+    if (this.durable) await persistence;
   }
 
   private async persistRun(args: {
@@ -712,6 +857,7 @@ export class RunController {
       // saveRun threw, the marker is deliberately kept so the next boot
       // reconciles this run instead of losing it.
       await removeRunMarker(args.runId);
+      if (!this.checkpointFailed) removeDurableRun(args.runId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error('saveRun failed', { err, correlationId: this.correlationId });
@@ -812,7 +958,7 @@ export class RunController {
     if (this.budgetExceededMessage) return;
     this.budgetExceededMessage = message;
     this.emit({ type: 'error', message });
-    this.abort.abort();
+    this.cancelRun({ reason: 'budget', message });
   }
 
   /**
@@ -1105,85 +1251,83 @@ export class RunController {
     scope: Scope,
     workflow: Workflow,
     signal: AbortSignal = this.abort.signal,
-  ): Promise<Exclude<RunStatus, 'idle' | 'running'>> {
-    let current: WorkflowNode | undefined = node;
+    frame: WalkFrame = this.frame(node, exec, scope, workflow),
+  ): Promise<TerminalRunStatus> {
+    if (frame.phase === 'done') return frame.status!;
     const allNodes = this.nodesById(workflow);
-
-    while (current) {
-      // `signal.aborted` short-circuits so a node step is NOT counted once a
-      // run is already settling; otherwise `tickBudget` counts this step and
-      // trips the run if a ceiling is now breached.
-      if (signal.aborted || this.tickBudget()) return 'cancelled';
-
+    const finish = (status: TerminalRunStatus, loopSignal?: 'break' | 'continue') => {
+      frame.status = status;
+      frame.loopSignal = loopSignal;
+      frame.phase = 'done';
+      this.checkpoint();
+      return status;
+    };
+    const advance = (next: WorkflowNode) => {
+      frame.currentNodeId = next.id;
+      frame.phase = 'ready';
+      delete frame.ci;
+      delete frame.branch;
+      delete frame.loop;
+      delete frame.parallel;
+      delete frame.subworkflow;
+      this.checkpoint();
+    };
+    while (frame.currentNodeId) {
+      const current = allNodes.get(frame.currentNodeId)?.node;
+      if (!current) throw new Error(`Continuation node missing: ${frame.currentNodeId}`);
+      if (signal.aborted || (frame.phase === 'ready' && this.tickBudget())) return finish('cancelled');
       this.snapshot.currentNodeId = this.namespaced(current.id, exec);
-
-      if (current.type === 'loop') {
-        const loopOutcome = await this.walkLoop(
-          current,
-          exec,
-          scope,
-          workflow,
-          signal,
-        );
-        if (loopOutcome.terminal) return loopOutcome.status!;
-        current = this.followBranch(current.id, 'next', allNodes, workflow);
-        continue;
+      let branch: EdgeHandle;
+      if (frame.phase === 'result') {
+        branch = frame.branch!;
+      } else if (current.type === 'loop') {
+        frame.phase = 'child';
+        const result = await this.walkLoop(current, exec, scope, workflow, signal, frame);
+        if (result.terminal) return finish(result.status!);
+        branch = 'next';
+      } else if (current.type === 'parallel' || current.type === 'subworkflow') {
+        frame.phase = 'child';
+        const result = current.type === 'parallel'
+          ? await this.walkParallel(current, exec, scope, workflow, signal, frame)
+          : await this.walkSubworkflow(current, exec, scope, signal, frame);
+        if (result === 'cancelled') return finish('cancelled');
+        branch = result;
+      } else if (frame.phase === 'executing' && current.type !== 'github-ci') {
+        // The old process may have performed an external side effect. Never
+        // invoke this executor again; surface interruption via its error edge.
+        const message = 'node interrupted by server restart; execution was not replayed';
+        scope[current.id] = { errorMessage: message };
+        this.emit({ type: 'error', nodeId: this.namespaced(current.id, exec), message });
+        this.emit({
+          type: 'node_finished', nodeId: this.namespaced(current.id, exec),
+          nodeType: current.type, branch: 'error', outputs: scope[current.id], durationMs: 0,
+        });
+        branch = 'error';
+      } else {
+        if (frame.phase !== 'ci-wait') frame.phase = 'executing';
+        this.checkpoint();
+        branch = await this.executeNode(current, exec, scope, workflow, signal, frame);
       }
-
-      if (current.type === 'parallel' || current.type === 'subworkflow') {
-        const branch =
-          current.type === 'parallel'
-            ? await this.walkParallel(current, exec, scope, workflow, signal)
-            : await this.walkSubworkflow(current, exec, scope, signal);
-        if (branch === 'cancelled') return 'cancelled';
+      // Stop must win even when the cancelled gate has no outgoing edge.
+      // A budget abort is reclassified by start(); checkpoint failures throw.
+      if (signal.aborted) return finish('cancelled');
+      frame.branch = branch;
+      frame.phase = 'result';
+      this.checkpoint();
+      if (current.type === 'end') return finish((current.config as { outcome?: 'succeeded' | 'failed' }).outcome ?? 'succeeded');
+      if (exec.parentNode?.type === 'loop' && current.type !== 'loop' && current.type !== 'parallel' && current.type !== 'subworkflow') {
+        if (branch === 'met' || branch === 'break') return finish('succeeded', 'break');
+        if (branch === 'not_met' || branch === 'continue') return finish('succeeded', 'continue');
         const next = this.followBranch(current.id, branch, allNodes, workflow);
-        if (!next) return branch === 'error' ? 'failed' : 'succeeded';
-        current = next;
-        continue;
-      }
-
-      const branch = await this.executeNode(current, exec, scope, workflow, signal);
-
-      if (current.type === 'end') {
-        const cfg = current.config as { outcome?: 'succeeded' | 'failed' };
-        return cfg.outcome ?? 'succeeded';
-      }
-
-      if (exec.parentNode?.type === 'loop') {
-        if (branch === 'met' || branch === 'break') {
-          this.setLoopSignal('break');
-          return 'succeeded';
-        }
-        if (branch === 'not_met' || branch === 'continue') {
-          this.setLoopSignal('continue');
-          return 'succeeded';
-        }
-        if (branch === 'error') {
-          const errNext = this.followBranch(current.id, branch, allNodes, workflow);
-          if (errNext) {
-            current = errNext;
-            continue;
-          }
-          return 'failed';
-        }
+        if (!next) return branch === 'error' || branch === 'failure' ? finish('failed') : finish('succeeded', 'continue');
+        advance(next);
+      } else {
         const next = this.followBranch(current.id, branch, allNodes, workflow);
-        if (!next) {
-          this.setLoopSignal('continue');
-          return 'succeeded';
-        }
-        current = next;
-        continue;
+        if (!next) return finish(branch === 'error' || branch === 'failure' ? 'failed' : 'succeeded');
+        advance(next);
       }
-
-      const next = this.followBranch(current.id, branch, allNodes, workflow);
-      if (!next) {
-        if (branch === 'error') return 'failed';
-        return 'succeeded';
-      }
-      current = next;
     }
-
-    return 'succeeded';
+    return finish('succeeded');
   }
 
   private async walkLoop(
@@ -1192,6 +1336,7 @@ export class RunController {
     scope: Scope,
     workflow: Workflow,
     signal: AbortSignal,
+    frame: WalkFrame,
   ): Promise<{ terminal: boolean; status?: Exclude<RunStatus, 'idle' | 'running'> }> {
     const cfg = loopNode.config as LoopConfig;
     const max = cfg.maxIterations ?? 100;
@@ -1207,19 +1352,25 @@ export class RunController {
       subworkflowStack: exec.subworkflowStack,
     };
 
-    for (let i = 1; infinite || i <= max; i++) {
+    frame.loop ??= { iteration: 1 };
+    for (let i = frame.loop.iteration; infinite || i <= max; i++) {
       if (signal.aborted) return { terminal: true, status: 'cancelled' };
 
       this.snapshot.iterationByLoopId[loopNode.id] = i;
       bodyExec.loopIteration = i;
 
-      (this.snapshot as unknown as { _loopSignal?: EdgeHandle })._loopSignal = undefined;
-
-      const bodyStatus = await this.walkFrom(bodyEntry, bodyExec, scope, workflow, signal);
-
-      const loopSig = this.readLoopSignal();
+      frame.loop.iteration = i;
+      frame.loop.body ??= this.frame(bodyEntry, { ...bodyExec }, scope, workflow);
+      this.checkpoint();
+      const bodyStatus = await this.walkFrom(bodyEntry, bodyExec, scope, workflow, signal, frame.loop.body);
+      const loopSig = frame.loop.body.loopSignal;
       if (loopSig === 'break') return { terminal: false };
-      if (loopSig === 'continue') continue;
+      if (loopSig === 'continue') {
+        frame.loop.iteration = i + 1;
+        delete frame.loop.body;
+        this.checkpoint();
+        continue;
+      }
       return { terminal: true, status: bodyStatus };
     }
     return { terminal: false };
@@ -1231,6 +1382,7 @@ export class RunController {
     parentScope: Scope,
     workflow: Workflow,
     signal: AbortSignal,
+    frame: WalkFrame,
   ): Promise<EdgeHandle | 'cancelled'> {
     const cfg = parallelNode.config as ParallelConfig;
     const children = parallelNode.children ?? [];
@@ -1247,14 +1399,9 @@ export class RunController {
     const childIds = new Set(children.map((c) => c.id));
     const branchRoots = identifyBranchRoots(children, workflow.edges, childIds);
 
-    const parentSnapshot = snapshotScope(parentScope);
-
-    type BranchResult = {
-      branchId: string;
-      status: 'succeeded' | 'failed' | 'cancelled';
-      outputs: Record<string, unknown>;
-      error?: string;
-    };
+    frame.parallel ??= { parentSnapshot: snapshotScope(parentScope), branches: {}, results: {}, inheritedKeys: {}, winners: [], failures: [], cancelled: false };
+    const saved = frame.parallel;
+    const parentSnapshot = saved.parentSnapshot;
 
     const branchControllers = new Map<string, AbortController>();
     const branchScopes = new Map<string, Scope>();
@@ -1264,15 +1411,21 @@ export class RunController {
       if (signal.aborted) ctrl.abort();
       else signal.addEventListener('abort', onParentAbort, { once: true });
       branchControllers.set(root.id, ctrl);
-      branchScopes.set(root.id, { ...parentSnapshot });
+      if (!saved.branches[root.id]) saved.branches[root.id] = this.frame(root, {
+        parentNode: parallelNode, loopIteration: exec.loopIteration, subworkflowStack: exec.subworkflowStack,
+      }, { ...parentSnapshot }, workflow);
+      branchScopes.set(root.id, this.scopes[saved.branches[root.id].scopeId]);
+      if ((saved.cancelled || saved.outcome) && !saved.results[root.id]) ctrl.abort();
     }
 
     const need = cfg.mode === 'quorum' ? Math.max(1, cfg.quorumN ?? 1) : 0;
     const onError = cfg.onError;
-    const winners: string[] = [];
-    const completedFailures: string[] = [];
+    this.checkpoint();
+    const winners = saved.winners;
+    const completedFailures = saved.failures;
 
     const branchPromise = async (root: WorkflowNode): Promise<BranchResult> => {
+      if (saved.results[root.id]) return saved.results[root.id];
       const branchScope = branchScopes.get(root.id)!;
       const branchCtrl = branchControllers.get(root.id)!;
       const branchExec: ExecutionScope = {
@@ -1287,6 +1440,7 @@ export class RunController {
           branchScope,
           workflow,
           branchCtrl.signal,
+          saved.branches[root.id],
         );
         if (branchCtrl.signal.aborted) {
           return { branchId: root.id, status: 'cancelled', outputs: {} };
@@ -1302,6 +1456,7 @@ export class RunController {
           error: typeof outputs.errorMessage === 'string' ? outputs.errorMessage : status,
         };
       } catch (err) {
+        if (err instanceof CheckpointError) throw err;
         if (branchCtrl.signal.aborted) {
           return { branchId: root.id, status: 'cancelled', outputs: {} };
         }
@@ -1314,23 +1469,31 @@ export class RunController {
       }
     };
 
+    let rejectOutcome!: (err: unknown) => void;
     let resolveOutcome!: (v: 'success' | 'error' | 'cancelled') => void;
-    const outcomePromise = new Promise<'success' | 'error' | 'cancelled'>((r) => {
+    const outcomePromise = new Promise<'success' | 'error' | 'cancelled'>((r, reject) => {
+      rejectOutcome = reject;
       resolveOutcome = r;
     });
     let outcomeSettled = false;
     const settleOutcome = (v: 'success' | 'error' | 'cancelled') => {
       if (outcomeSettled) return;
       outcomeSettled = true;
+      saved.outcome = v;
+      this.checkpoint();
       resolveOutcome(v);
     };
 
     const cancelAllSiblings = () => {
+      saved.cancelled = true;
+      this.checkpoint();
       for (const c of branchControllers.values()) c.abort();
     };
 
     const all = branchRoots.map((root) =>
       branchPromise(root).then((res) => {
+        if (saved.results[root.id]) return res;
+        saved.results[root.id] = res;
         if (res.status === 'succeeded') {
           winners.push(res.branchId);
           if (cfg.mode === 'race') {
@@ -1347,10 +1510,12 @@ export class RunController {
             cancelAllSiblings();
           }
         }
+        this.checkpoint();
         return res;
       }),
     );
 
+    if (saved.outcome) settleOutcome(saved.outcome);
     void Promise.all(all).then(() => {
       if (signal.aborted) {
         settleOutcome('cancelled');
@@ -1368,9 +1533,17 @@ export class RunController {
       }
       if (winners.length >= need) settleOutcome('success');
       else settleOutcome('error');
-    });
+    }).catch(rejectOutcome);
 
-    const outcome = await outcomePromise;
+    let outcome: 'success' | 'error' | 'cancelled';
+    try {
+      outcome = await outcomePromise;
+    } catch (err) {
+      // Checkpoint failure aborts all branches. Wait for their cleanup before
+      // the run removes shared worktrees or releases directory ownership.
+      await Promise.allSettled(all);
+      throw err;
+    }
     const results = await Promise.all(all);
 
     const childrenOut: Record<
@@ -1427,6 +1600,7 @@ export class RunController {
     exec: ExecutionScope,
     parentScope: Scope,
     signal: AbortSignal,
+    frame: WalkFrame,
   ): Promise<EdgeHandle | 'cancelled'> {
     const cfg = node.config as SubworkflowConfig;
 
@@ -1448,12 +1622,13 @@ export class RunController {
       loopIteration: exec.loopIteration,
     });
 
-    const startedAt = Date.now();
+    const startedAt = frame.subworkflow?.startedAt ?? Date.now();
 
     let child: Workflow;
     try {
-      child = await this.loadWorkflow(cfg.workflowId);
+      child = frame.subworkflow?.workflow ?? await this.loadWorkflow(cfg.workflowId);
     } catch (err) {
+      if (err instanceof CheckpointError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       const out = { status: 'failed', errorMessage: `subworkflow load failed: ${message}` };
       parentScope[node.id] = out;
@@ -1473,7 +1648,7 @@ export class RunController {
       return 'error';
     }
 
-    const childScope: Scope = {
+    const childScope: Scope = frame.subworkflow ? this.scopes[frame.subworkflow.child.scopeId] : {
       inputs: { ...resolvedInputs },
       __inputs: { ...resolvedInputs },
     };
@@ -1503,10 +1678,13 @@ export class RunController {
       return 'error';
     }
 
+    frame.subworkflow ??= { workflow: child, child: this.frame(childStart, childExec, childScope, child), startedAt };
+    this.checkpoint();
     let childStatus: Exclude<RunStatus, 'idle' | 'running'>;
     try {
-      childStatus = await this.walkFrom(childStart, childExec, childScope, child, signal);
+      childStatus = await this.walkFrom(childStart, childExec, childScope, child, signal, frame.subworkflow.child);
     } catch (err) {
+      if (err instanceof CheckpointError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       const out = { status: 'failed', errorMessage: message };
       parentScope[node.id] = out;
@@ -1567,14 +1745,6 @@ export class RunController {
     return `${exec.subworkflowStack.join('/')}/${id}`;
   }
 
-  private setLoopSignal(signal: 'break' | 'continue'): void {
-    (this.snapshot as unknown as { _loopSignal?: EdgeHandle })._loopSignal = signal;
-  }
-
-  private readLoopSignal(): EdgeHandle | undefined {
-    return (this.snapshot as unknown as { _loopSignal?: EdgeHandle })._loopSignal;
-  }
-
   private followBranch(
     sourceId: string,
     branch: EdgeHandle,
@@ -1599,6 +1769,7 @@ export class RunController {
     scope: Scope,
     workflow: Workflow,
     signal: AbortSignal,
+    frame: WalkFrame,
   ): Promise<EdgeHandle> {
     const executor = this.executors[node.type];
     if (!executor) throw new Error(`unknown node type: ${node.type}`);
@@ -1673,20 +1844,49 @@ export class RunController {
       ].join(', ');
       const message = `unresolved template reference in required field: ${detail}`;
       this.emit({ type: 'error', nodeId: namespacedId, message });
-      result = { outputs: { errorMessage: message }, branch: 'error' as EdgeHandle };
+      result = { outputs: { errorMessage: message }, branch: (node.type === 'github-ci' ? 'failure' : 'error') as EdgeHandle };
     } else {
       try {
-        result = await executor.execute(ctx);
+        if (node.type === 'github-ci') {
+          if (!frame.ci) {
+            const maxDeadline = this.budget.maxDurationMs > 0 ? this.runStartedAt + this.budget.maxDurationMs : Infinity;
+            frame.ci = githubCIService.create(resolvedConfig as unknown as GitHubCIConfig, maxDeadline);
+          }
+          frame.phase = 'ci-wait';
+          this.durable = true;
+          this.snapshot.githubCI = { ...this.snapshot.githubCI, [namespacedId]: frame.ci.output };
+          this.checkpoint();
+          this.emit({ type: 'github_ci_updated', nodeId: namespacedId, output: frame.ci.output });
+          const output = await githubCIService.wait(frame.ci, signal, output => {
+            this.snapshot.githubCI = { ...this.snapshot.githubCI, [namespacedId]: output };
+            this.checkpoint();
+            this.emit({ type: 'github_ci_updated', nodeId: namespacedId, output });
+          });
+          result = { outputs: { ...output }, branch: output.status === 'Passed' ? 'success' as const : 'failure' as const };
+        } else {
+          result = await executor.execute(ctx);
+        }
       } catch (err) {
-        if (signal.aborted) {
+        if (signal.aborted || err instanceof CheckpointError) {
           throw err;
         }
         const message = err instanceof Error ? err.message : String(err);
         this.emit({ type: 'error', nodeId: namespacedId, message });
-        result = { outputs: { errorMessage: message }, branch: 'error' as EdgeHandle };
+        result = { outputs: { errorMessage: message }, branch: (node.type === 'github-ci' ? 'failure' : 'error') as EdgeHandle };
       }
     }
 
+    if (node.type === 'github-ci' && !('status' in result.outputs)) {
+      const config = resolvedConfig as unknown as GitHubCIConfig;
+      const output = {
+        ...aggregateCI(config, '', []),
+        status: 'Error' as const,
+        errorMessage: String(result.outputs.errorMessage ?? 'GitHub CI gate failed'),
+      };
+      result = { outputs: { ...output }, branch: 'failure' as const };
+      this.snapshot.githubCI = { ...this.snapshot.githubCI, [namespacedId]: output };
+      this.emit({ type: 'github_ci_updated', nodeId: namespacedId, output });
+    }
     scope[node.id] = result.outputs;
     // Charge any provider-reported cost against the run-level cost ceiling.
     // Post-execution by necessity — cost is only known once the node has run

@@ -1,3 +1,4 @@
+import { validateGitHubCIConfig } from '../shared/github-ci';
 import { promises as fs } from 'node:fs';
 import { normalizeAgentHome } from '../shared/workflow';
 import path from 'node:path';
@@ -153,6 +154,7 @@ function validateNodeConfig(n: WorkflowNode): void {
     validateAgentMessages(cfg.messages, n.id);
     validateAgentOutputs(cfg.outputs, n.id);
   }
+  if (n.type === 'github-ci') validateGitHubCIConfig(n.config);
   if (n.type === 'manual') {
     const cfg = n.config as ManualConfig;
     validateManualDecisions(cfg.decisions, n.id);

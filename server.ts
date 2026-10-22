@@ -3,6 +3,8 @@
 // crash-loops the process on the first request. Every launch command wires it
 // in; see that module for why a plain import here would be too late.
 import { createServer } from 'http';
+import { workflowEngine } from './lib/server/workflow-engine';
+import { githubCIService } from './lib/server/github-ci-service';
 import { networkInterfaces } from 'node:os';
 import next from 'next';
 import {
@@ -74,7 +76,6 @@ const MAX_PORT_FALLBACK = 20;
 try {
   reapOrphanProcesses();
   await reconcileInterruptedRuns();
-  reconcileQueuedRuns(triggerQueue);
 } catch (err) {
   console.warn('crash recovery failed (continuing startup):', err);
 }
@@ -93,6 +94,9 @@ const port = await listenWithFallback(httpServer, startPort, host, MAX_PORT_FALL
 // MCP server injected into agent CLIs) can build accurate callback URLs
 // without re-reading process.env.PORT, which may be stale after fallback.
 setBoundPort(port);
+await workflowEngine.restoreDurableRuns();
+await githubCIService.drainInbox();
+reconcileQueuedRuns(triggerQueue);
 console.log(`Infinite Loop ready on http://${host}:${port}`);
 if (port !== startPort) {
   console.log(`  (port ${startPort} was in use; fell through to ${port})`);

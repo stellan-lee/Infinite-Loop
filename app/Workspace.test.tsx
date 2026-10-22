@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import Workspace from './Workspace';
+import type { GitHubCIOutput } from '../lib/shared/github-ci';
 import type { Workflow, WorkflowSummary } from '../lib/shared/workflow';
 import { useWorkflowStore } from '../lib/client/workflow-store-client';
 
@@ -49,6 +50,8 @@ function resetStore() {
     selectedNodeId: null,
     runStatus: 'idle',
     runEvents: [],
+    githubCI: {},
+    inspectedRunEvents: null,
     connectionStatus: 'connecting',
     past: [],
     future: [],
@@ -161,5 +164,57 @@ describe('Workspace card inspector', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'close node inspector' }));
     expect(useWorkflowStore.getState().selectedNodeId).toBeNull();
+  });
+});
+
+
+describe('Workspace live CI inspector', () => {
+  it('shows read-only live results alongside the run rail and resumes editing after settlement', async () => {
+    const workflow: Workflow = {
+      ...FULL_A,
+      nodes: [...FULL_A.nodes, {
+        id: 'ci', type: 'github-ci', position: { x: 300, y: 200 },
+        config: { repository: 'owner/repo', pullRequest: '12', required: [{ kind: 'check', name: 'test' }], timeoutMs: 60_000 },
+      }],
+    };
+    const output: GitHubCIOutput = {
+      repository: 'owner/repo', pullRequest: 12, pullRequestUrl: 'https://github.com/owner/repo/pull/12',
+      headSha: 'a'.repeat(40), status: 'Running', passed: 0, total: 1,
+      required: [{ kind: 'check', name: 'test', conclusion: null, urls: [] }],
+      checks: [], failed: [], pending: ['check:test'], updatedAt: 1,
+    };
+    useWorkflowStore.getState().loadWorkflow(workflow);
+    useWorkflowStore.setState({
+      selectedNodeId: 'ci', runStatus: 'running',
+      runEvents: [], githubCI: { ci: output },
+    });
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      if (String(url) === '/api/providers') return jsonResponse({ providers: [] });
+      throw new Error(`unexpected fetch ${String(url)}`);
+    }) as unknown as typeof fetch;
+
+    const { container } = render(<Workspace />);
+    const inspector = screen.getByLabelText('live CI inspector');
+    expect(within(inspector).getByText('Running · 0/1 required')).toBeInTheDocument();
+    expect(screen.getByLabelText('run view')).toBeInTheDocument();
+    expect(container.querySelector('.workspace-tri')).not.toBeNull();
+    expect(screen.queryByLabelText('config panel')).not.toBeInTheDocument();
+    expect(within(inspector).queryByRole('textbox')).not.toBeInTheDocument();
+
+    act(() => useWorkflowStore.getState().appendRunEvent({
+      type: 'github_ci_updated', nodeId: 'ci', output: { ...output, status: 'Failed', errorMessage: 'test failed' },
+    }));
+    expect(within(inspector).getByText('Failed · 0/1 required')).toBeInTheDocument();
+    expect(within(inspector).getByRole('alert')).toHaveTextContent('test failed');
+
+    act(() => useWorkflowStore.getState().selectNode('start-1'));
+    expect(screen.queryByLabelText('live CI inspector')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('config panel')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('run view')).toBeInTheDocument();
+
+    act(() => useWorkflowStore.setState({ selectedNodeId: 'ci', runStatus: 'succeeded' }));
+    expect(screen.getByLabelText('config panel')).toBeInTheDocument();
+    expect(screen.getByLabelText('GitHub repository')).toBeInTheDocument();
+    expect(screen.queryByLabelText('live CI inspector')).not.toBeInTheDocument();
   });
 });

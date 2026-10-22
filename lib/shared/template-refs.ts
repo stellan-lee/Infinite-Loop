@@ -96,6 +96,8 @@ function staticOutputs(type: WorkflowNode['type']): Array<{ field: string; descr
         { field: 'status', description: 'succeeded / failed / cancelled' },
         { field: 'errorMessage', description: "set when status !== 'succeeded'" },
       ];
+    case 'github-ci':
+      return ['repository', 'pullRequest', 'pullRequestUrl', 'headSha', 'status', 'required', 'checks', 'failed', 'pending', 'errorMessage'].map(field => ({ field, description: `GitHub CI ${field}` }));
     case 'manual':
       return [
         { field: 'decision', description: 'accepted / needs_changes / rejected' },
@@ -323,6 +325,7 @@ const TEMPLATED_FIELDS: Partial<Record<WorkflowNode['type'], string[]>> = {
   branch: ['lhs', 'rhs'],
   script: ['cwd'],
   manual: ['brief', 'reviewerHint'],
+  'github-ci': ['repository', 'pullRequest'],
 };
 
 export interface TemplateLintWarning {

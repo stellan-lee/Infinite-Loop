@@ -30,7 +30,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { promises as fsp } from 'node:fs';
+import { promises as fsp, existsSync } from 'node:fs';
 import path from 'node:path';
 import type { RunWorktrees } from '../shared/workflow';
 
@@ -99,6 +99,15 @@ export class RunWorktreesImpl implements RunWorktrees {
 
   constructor(runId: string) {
     this.runId = runId;
+  }
+
+  snapshotEntries(): Array<[string, Entry]> { return [...this.entries.entries()]; }
+
+  restoreEntries(entries: Array<[string, Entry]>, allowMissing = false): void {
+    for (const [key, entry] of entries) {
+      if (!allowMissing && !existsSync(entry.path)) throw new Error(`Recovered worktree is missing: ${entry.path}`);
+      this.entries.set(key, entry);
+    }
   }
 
   async create(opts: CreateOpts): Promise<string> {

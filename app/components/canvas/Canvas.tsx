@@ -54,6 +54,7 @@ import ConditionNode from './nodes/ConditionNode';
 import EndNode from './nodes/EndNode';
 import LoopNode from './nodes/LoopNode';
 import ManualNode from './nodes/ManualNode';
+import GitHubCINode from './nodes/GitHubCINode';
 import ParallelNode from './nodes/ParallelNode';
 import ScriptNode from './nodes/ScriptNode';
 import SidenoteNode from './nodes/SidenoteNode';
@@ -130,6 +131,7 @@ const DEFAULT_CONFIG: { [K in NodeType]: () => NodeConfigByType[K] } = {
       '}\n',
     timeoutMs: 60_000,
   }),
+  'github-ci': () => ({ repository: '{{inputs.repository}}', pullRequest: '{{inputs.pullRequest}}', required: [{ kind: 'check', name: 'test' }], timeoutMs: 3_600_000 }),
   manual: (): ManualConfig => ({
     // No brief by default — most authors will template upstream outputs into
     // it. The three conventional decisions are filled in by the executor
@@ -203,7 +205,7 @@ export function buildLiveStateMap(
     if (ev.type === 'node_started') {
       out[ev.nodeId] = 'live';
     } else if (ev.type === 'node_finished') {
-      out[ev.nodeId] = ev.branch === 'error' ? 'failed' : 'succeeded';
+      out[ev.nodeId] = (ev.branch === 'error' || ev.branch === 'failure') ? 'failed' : 'succeeded';
     }
   }
   return out;
@@ -328,6 +330,7 @@ const NODE_TYPES = {
   sidenote: SidenoteNode,
   script: ScriptNode,
   manual: ManualNode,
+  'github-ci': GitHubCINode,
 } as const;
 
 function CanvasInner() {

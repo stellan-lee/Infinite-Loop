@@ -41,6 +41,7 @@
  * crash→restart window, so it is documented rather than solved for v1.
  */
 
+import { listDurableRuns } from './durable-run';
 import { execFileSync } from 'node:child_process';
 import {
   listChildPidRecords,
@@ -208,6 +209,7 @@ export function reapOrphanProcesses(): void {
  */
 export async function reconcileInterruptedRuns(): Promise<void> {
   let reconciled = 0;
+  const resumable = new Set(listDurableRuns().map(run => run.runId));
 
   for (const m of await listRunMarkers()) {
     // Still owned by a different, live (second-instance) server — leave it.
@@ -220,6 +222,7 @@ export async function reconcileInterruptedRuns(): Promise<void> {
       await removeRunMarker(m.runId);
       continue;
     }
+    if (resumable.has(m.runId)) continue;
     try {
       await saveRun({
         runId: m.runId,

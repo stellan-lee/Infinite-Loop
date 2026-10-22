@@ -1,5 +1,7 @@
 'use client';
 
+import type { GitHubCIConfig } from '@/lib/shared/github-ci';
+import { GitHubCIDetails, ciOutputForNode } from './github-ci-details';
 import {
   useEffect,
   useId,
@@ -2465,6 +2467,90 @@ function SubworkflowForm({
   );
 }
 
+function GitHubCIForm({ config, nodeId, onPatch }: {
+  config: GitHubCIConfig;
+  nodeId: string;
+  onPatch: (next: GitHubCIConfig) => void;
+}) {
+  const output = useWorkflowStore(s => ciOutputForNode(s, nodeId));
+  const patchRequirement = (index: number, patch: Partial<GitHubCIConfig['required'][number]>) => {
+    onPatch({
+      ...config,
+      required: config.required.map((item, i) => i === index ? { ...item, ...patch } : item),
+    });
+  };
+  return (
+    <>
+      <div className="field">
+        <FieldLabel help="Repository in owner/repository form; upstream output templates are supported.">Repository</FieldLabel>
+        <HeroInput
+          variant="secondary"
+          aria-label="GitHub repository"
+          value={config.repository}
+          onChange={e => onPatch({ ...config, repository: e.target.value })}
+          placeholder="owner/repository or {{node.repository}}"
+        />
+      </div>
+      <div className="field">
+        <FieldLabel help="Pull request number; upstream output templates are supported.">Pull request</FieldLabel>
+        <HeroInput
+          variant="secondary"
+          aria-label="GitHub pull request"
+          value={config.pullRequest}
+          onChange={e => onPatch({ ...config, pullRequest: e.target.value })}
+          placeholder="{{create-pr.number}}"
+        />
+      </div>
+      <p className="field-hint">
+        Required names match exactly. Checks and workflows are separate identities.
+        Every matching app or workflow must succeed.
+      </p>
+      {config.required.map((item, index) => (
+        <div key={index} className="field">
+          <FieldLabel help="Choose a check run or an Actions workflow, then enter its exact GitHub name.">
+            {`Requirement ${index + 1}`}
+          </FieldLabel>
+          <SelectMenu<'check' | 'workflow'>
+            ariaLabel={`Requirement ${index + 1} kind`}
+            value={item.kind}
+            options={[{ value: 'check', label: 'Check' }, { value: 'workflow', label: 'Workflow' }]}
+            onChange={kind => patchRequirement(index, { kind })}
+          />
+          <HeroInput
+            variant="secondary"
+            aria-label={`Requirement ${index + 1} name`}
+            value={item.name}
+            onChange={e => patchRequirement(index, { name: e.target.value })}
+          />
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={config.required.length === 1}
+            onClick={() => onPatch({ ...config, required: config.required.filter((_, i) => i !== index) })}
+          >Remove</button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="btn btn-ghost"
+        onClick={() => onPatch({ ...config, required: [...config.required, { kind: 'check', name: 'new-check' }] })}
+      >Add requirement</button>
+      <div className="field">
+        <FieldLabel help="A positive wait limit; timeout follows the failure output.">Timeout (milliseconds)</FieldLabel>
+        <HeroInput
+          variant="secondary"
+          aria-label="CI timeout"
+          type="number"
+          min={1}
+          value={config.timeoutMs}
+          onChange={e => onPatch({ ...config, timeoutMs: Number(e.target.value) })}
+        />
+      </div>
+      <GitHubCIDetails output={output} />
+    </>
+  );
+}
+
 /* ─── manual / human-acceptance form ───────────────────────── */
 
 const MANUAL_DECISION_DEFAULT_LABELS: Record<ManualDecisionKey, string> = {
@@ -3217,6 +3303,7 @@ export default function ConfigPanel() {
             onPatch={patchConfig}
           />
         )}
+        {node.type === 'github-ci' && <GitHubCIForm config={node.config as GitHubCIConfig} nodeId={node.id} onPatch={patchConfig} />}
         {node.type === 'manual' && (
           <ManualForm
             config={node.config as ManualConfig}

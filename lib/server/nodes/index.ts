@@ -25,4 +25,6 @@ export const nodeExecutors: Record<NodeType, NodeExecutor> = {
   sidenote: sidenoteExecutor,
   script: scriptExecutor,
   manual: manualExecutor,
+  // The controller owns the durable CI wait and its continuation.
+  'github-ci': { execute: async () => { throw new Error('GitHub CI requires the durable controller'); } },
 };

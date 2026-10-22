@@ -21,6 +21,8 @@
  *   - `reset()`             clears registry, slot pool, lock manager (tests)
  */
 
+import { listDurableRuns, removeDurableRun, type DurableRun } from './durable-run';
+import { runExists } from './run-store';
 import type { NodeExecutor, RunSnapshot, Workflow } from '../shared/workflow';
 import type { ResolvedInputs } from '../shared/resolve-run-inputs';
 import { nodeExecutors } from './nodes/index';
@@ -128,28 +130,43 @@ export class WorkflowEngine {
    */
   startRun(
     workflow: Workflow,
-    opts?: { resolvedInputs?: ResolvedInputs; correlationId?: string },
+    opts?: { resolvedInputs?: ResolvedInputs; correlationId?: string; restored?: DurableRun },
   ): { runId: string; completion: Promise<void> } {
     const controller = new RunController({
-      runId: crypto.randomUUID(),
+      runId: opts?.restored?.runId ?? crypto.randomUUID(),
       workflow,
       executors: this.executors,
       loadWorkflow: this.loadWorkflow,
       lockManager: this.lockManager,
       slotPool: this.slotPool,
-      budget: this.runBudget,
+      budget: opts?.restored?.budget ?? this.runBudget,
       costBudget: this.costBudget,
-      correlationId: opts?.correlationId,
+      correlationId: opts?.restored?.correlationId ?? opts?.correlationId,
     });
     this.runs.set(controller.runId, controller);
     this.last = controller;
     const completion = controller
-      .start({ resolvedInputs: opts?.resolvedInputs })
+      .start({ resolvedInputs: opts?.resolvedInputs, restored: opts?.restored })
       .finally(() => {
         this.runs.delete(controller.runId);
         // `last` deliberately retained for getState() back-compat.
       });
     return { runId: controller.runId, completion };
+  }
+
+  /** Register all recovered waits before queued workflows can start. */
+  async restoreDurableRuns(): Promise<void> {
+    for (const saved of listDurableRuns()) {
+      if (saved.version !== 1) throw new Error('Unsupported durable workflow version');
+      if (saved.serverPid !== process.pid) {
+        try { process.kill(saved.serverPid, 0); continue; }
+        catch (err) { if ((err as NodeJS.ErrnoException).code === 'EPERM') continue; }
+      }
+      if (await runExists(saved.workflow.id, saved.runId)) { removeDurableRun(saved.runId); continue; }
+      if (this.runs.has(saved.runId)) continue;
+      const { completion } = this.startRun(saved.workflow, { restored: saved });
+      void completion.catch(() => { /* controller preserves failed checkpoints */ });
+    }
   }
 
   /**
@@ -181,7 +198,7 @@ export class WorkflowEngine {
 // `globalThis.__infiniteLoopWorkflowRegistry` was constructed with the old
 // class definition and behaves the old way for the rest of the dev server's
 // life.
-const ENGINE_VERSION = 17;
+const ENGINE_VERSION = 18;
 
 declare global {
   // eslint-disable-next-line no-var

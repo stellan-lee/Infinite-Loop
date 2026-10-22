@@ -1,19 +1,23 @@
 import type { ReactNode } from 'react';
-import { Newsreader, JetBrains_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 
-const newsreader = Newsreader({
-  subsets: ['latin'],
+const newsreader = localFont({
+  src: [
+    { path: './fonts/newsreader/Newsreader-Regular.ttf', weight: '300 600', style: 'normal' },
+    { path: './fonts/newsreader/Newsreader-Italic.ttf', weight: '300 600', style: 'italic' },
+  ],
   variable: '--font-serif',
-  weight: ['300', '400', '500', '600'],
-  style: ['normal', 'italic'],
+  adjustFontFallback: 'Times New Roman',
   display: 'swap',
 });
 
-const jetbrains = JetBrains_Mono({
-  subsets: ['latin'],
+const jetbrains = localFont({
+  src: './fonts/jetbrainsmono/JetBrainsMono-Regular.ttf',
   variable: '--font-mono',
-  weight: ['300', '400', '500', '700'],
+  weight: '300 700',
+  style: 'normal',
+  adjustFontFallback: 'Arial',
   display: 'swap',
 });
 
@@ -27,6 +31,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html
       lang="en"
       className={`${newsreader.variable} ${jetbrains.variable}`}
+      // The Google Newsreader face used optical size 16; Mono ignores this unsupported axis.
+      style={{ fontVariationSettings: '"opsz" 16' }}
       suppressHydrationWarning
     >
       <head>

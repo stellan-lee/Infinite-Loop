@@ -140,3 +140,35 @@ describe('useEngineWebSocket (SSE)', () => {
     expect(useWorkflowStore.getState().connectionStatus).toBe('closed');
   });
 });
+
+describe('GitHub CI snapshot hydration', () => {
+  it('restores per-node CI details without replay events and resets them at the next run', async () => {
+    const previous = globalThis.EventSource;
+    (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+    FakeEventSource.instances = [];
+    const { useWorkflowStore } = await import('./workflow-store-client');
+    const { useEngineWebSocket } = await import('./ws-client');
+    const { aggregateCI } = await import('../server/github-ci-client');
+    const output = aggregateCI({ repository: 'owner/repo', pullRequest: '2', required: [{ kind: 'check', name: 'test' }], timeoutMs: 60_000 }, 'a'.repeat(40), []);
+    useWorkflowStore.getState().resetRun();
+    const { unmount } = renderHook(() => useEngineWebSocket());
+    const es = FakeEventSource.instances[0];
+    try {
+      act(() => es.triggerMessage(JSON.stringify({
+        type: 'state_snapshot',
+        state: { status: 'running', scope: {}, iterationByLoopId: {}, events: [], githubCI: { 'left/ci': output, 'right/ci': { ...output, status: 'Running' } } },
+      })));
+      expect(useWorkflowStore.getState().runEvents).toHaveLength(0);
+      expect(useWorkflowStore.getState().githubCI['left/ci'].headSha).toBe(output.headSha);
+      expect(useWorkflowStore.getState().githubCI['right/ci'].status).toBe('Running');
+      act(() => es.triggerMessage(JSON.stringify({ type: 'github_ci_updated', nodeId: 'left/ci', output: { ...output, status: 'Passed' } })));
+      expect(useWorkflowStore.getState().githubCI['left/ci'].status).toBe('Passed');
+      expect(useWorkflowStore.getState().githubCI['right/ci'].status).toBe('Running');
+      act(() => es.triggerMessage(JSON.stringify({ type: 'run_started', workflowId: 'next', workflowName: 'Next' })));
+      expect(useWorkflowStore.getState().githubCI).toEqual({});
+    } finally {
+      unmount();
+      globalThis.EventSource = previous;
+    }
+  });
+});

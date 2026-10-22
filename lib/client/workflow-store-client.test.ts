@@ -43,6 +43,7 @@ beforeEach(() => {
     selectedNodeId: null,
     runStatus: 'idle',
     runEvents: [],
+    githubCI: {},
     connectionStatus: 'connecting',
     panRequest: null,
     past: [],

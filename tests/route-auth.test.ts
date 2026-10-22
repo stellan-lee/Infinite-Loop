@@ -24,6 +24,11 @@ const API_DIR = join(import.meta.dir, '..', 'app', 'api');
 /** Routes intentionally not guarded by an auth function, with the reason. */
 const EXEMPT = new Map<string, string>([
   [
+    'webhook/github-ci/route.ts',
+    'GitHub CI ingress requires mandatory HMAC-SHA256 verification with a ' +
+      'server-configured secret before durable acceptance; covered by github-ci-service.test.ts',
+  ],
+  [
     'webhook/[triggerId]/route.ts',
     'webhook ingress — the unguessable triggerId is the credential, and ' +
       'external senders (e.g. GitHub) cannot attach auth headers',

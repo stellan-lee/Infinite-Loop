@@ -1,6 +1,7 @@
 'use client';
 
 import { create } from 'zustand';
+import type { GitHubCIOutput } from '../shared/github-ci';
 import type {
   RunStatus,
   Workflow,
@@ -31,6 +32,7 @@ export interface WorkflowStoreState {
   selectedNodeId: string | null;
   runStatus: RunStatus;
   runEvents: WorkflowEvent[];
+  githubCI: Record<string, GitHubCIOutput>;
   /** Events from the recorded run currently open in History. These only
    * drive the canvas outcome overlay; they never replace the live run state. */
   inspectedRunEvents: WorkflowEvent[] | null;
@@ -90,7 +92,7 @@ export interface WorkflowStoreState {
   resetRun: () => void;
   /** Replace the run state in one shot — used when the SSE state_snapshot
    * arrives and we want to rehydrate the log + status after a refresh. */
-  hydrateRun: (input: { status: RunStatus; events: WorkflowEvent[] }) => void;
+  hydrateRun: (input: { status: RunStatus; events: WorkflowEvent[]; githubCI?: Record<string, GitHubCIOutput> }) => void;
   setInspectedRunEvents: (events: WorkflowEvent[] | null) => void;
   setConnectionStatus: (s: WsStatus) => void;
 }
@@ -140,6 +142,7 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
   selectedNodeId: null,
   runStatus: 'idle',
   runEvents: [],
+  githubCI: {},
   inspectedRunEvents: null,
   connectionStatus: 'connecting',
   triggerLastFiredAt: {},
@@ -401,7 +404,11 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
       const next: Partial<WorkflowStoreState> = {
         runEvents: [...baseEvents, ev],
       };
-      if (ev.type === 'run_started') next.runStatus = 'running';
+      if (ev.type === 'run_started') {
+        next.runStatus = 'running';
+        next.githubCI = {};
+      }
+      if (ev.type === 'github_ci_updated') next.githubCI = { ...s.githubCI, [ev.nodeId]: ev.output };
       if (ev.type === 'run_finished') next.runStatus = ev.status;
       if (ev.type === 'trigger_started') {
         next.triggerLastFiredAt = {
@@ -414,10 +421,16 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
 
   setRunStatus: (runStatus) => set({ runStatus }),
 
-  resetRun: () => set({ runEvents: [], runStatus: 'idle' }),
+  resetRun: () => set({ runEvents: [], githubCI: {}, runStatus: 'idle' }),
 
-  hydrateRun: ({ status, events }) =>
-    set({ runStatus: status, runEvents: [...events] }),
+  hydrateRun: ({ status, events, githubCI }) =>
+    set({
+      runStatus: status,
+      runEvents: [...events],
+      githubCI: githubCI ?? Object.fromEntries(events
+        .filter(event => event.type === 'github_ci_updated')
+        .map(event => [event.nodeId, event.output])),
+    }),
 
   setInspectedRunEvents: (inspectedRunEvents) => set({ inspectedRunEvents }),
 

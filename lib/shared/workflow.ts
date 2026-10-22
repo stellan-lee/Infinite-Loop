@@ -1,3 +1,4 @@
+import type { GitHubCIConfig, GitHubCIOutput } from './github-ci';
 /*
  * Workflow contract — IMMUTABLE for Phase B workers.
  * All node executors, the engine, the canvas, and the API talk through these types.
@@ -15,10 +16,13 @@ export type NodeType =
   | 'structured-output'
   | 'sidenote'
   | 'script'
-  | 'manual';
+  | 'manual'
+  | 'github-ci';
 
 /** Edge handles. Workers MUST emit one of these from a node executor. */
 export type EdgeHandle =
+  | 'success'
+  | 'failure'
   | 'next'
   | 'met'
   | 'not_met'
@@ -409,6 +413,7 @@ export type NodeConfigByType = {
   sidenote: SidenoteConfig;
   script: ScriptConfig;
   manual: ManualConfig;
+  'github-ci': GitHubCIConfig;
 };
 
 export interface WorkflowNode<T extends NodeType = NodeType> {
@@ -524,6 +529,8 @@ export interface RunSnapshot {
    * event log and the canvas's live-node highlight.
    */
   events?: WorkflowEvent[];
+  /** Latest CI state by namespaced node ID, independent of bounded event logs. */
+  githubCI?: Record<string, GitHubCIOutput>;
   /**
    * When a node is parked waiting for an external signal: a directory lock,
    * a concurrency slot, or a human acceptance decision. Set when the wait
@@ -769,7 +776,16 @@ export interface TriggerRemovedEvent {
   reason: 'user-cancelled';
 }
 
+export interface GitHubCIUpdatedEvent {
+  type: 'github_ci_updated';
+  runId?: string;
+  correlationId?: string;
+  nodeId: string;
+  output: GitHubCIOutput;
+}
+
 export type WorkflowEvent =
+  | GitHubCIUpdatedEvent
   | RunStartedEvent
   | NodeStartedEvent
   | NodeFinishedEvent

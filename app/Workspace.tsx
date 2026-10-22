@@ -11,6 +11,8 @@ import Canvas from './components/canvas/Canvas';
 import RunInputsModal from './components/RunInputsModal';
 import Palette from './components/Palette';
 import ConfigPanel from './components/ConfigPanel';
+import { GitHubCIDetails, latestCIOutput } from './components/github-ci-details';
+import { findWorkflowNode } from '../lib/shared/workflow-graph';
 import RunView from './components/RunView';
 import RunHistory from './components/RunHistory';
 import WorkflowMenu from './components/WorkflowMenu';
@@ -37,6 +39,8 @@ export default function Workspace() {
   const runStatus = useWorkflowStore((s) => s.runStatus);
   const wsStatus = useWorkflowStore((s) => s.connectionStatus);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
+  const runEvents = useWorkflowStore((s) => s.runEvents);
+  const githubCI = useWorkflowStore((s) => s.githubCI);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const saveCurrentWorkflow = useWorkflowStore((s) => s.saveCurrentWorkflow);
   const selectNode = useWorkflowStore((s) => s.selectNode);
@@ -92,6 +96,8 @@ export default function Workspace() {
   // its own canvas-layer inspector so card editing never shifts the graph or
   // replaces history/run information.
   const showGlobalPanel = isRunning || historyOpen;
+  const selectedNode = selectedNodeId ? findWorkflowNode(currentWorkflow?.nodes, selectedNodeId) : null;
+  const showLiveCIDetails = isRunning && selectedNode?.type === 'github-ci';
 
   // Hydrate the persisted width on mount (avoids SSR mismatch).
   useEffect(() => {
@@ -334,7 +340,7 @@ export default function Workspace() {
         >
           <Palette />
           <Canvas />
-          {selectedNodeId && !showGlobalPanel && (
+          {selectedNodeId && (!showGlobalPanel || showLiveCIDetails) && (
             <div className="node-inspector-layer">
               <div className="node-inspector">
                 <button
@@ -345,7 +351,12 @@ export default function Workspace() {
                 >
                   ×
                 </button>
-                <ConfigPanel />
+                {showLiveCIDetails ? (
+                  <aside className="config-stub" aria-label="live CI inspector">
+                    <header className="serif config-stub-section-head">GitHub CI Gate</header>
+                    <GitHubCIDetails output={githubCI[selectedNodeId] ?? latestCIOutput(runEvents, selectedNodeId)} />
+                  </aside>
+                ) : <ConfigPanel />}
               </div>
             </div>
           )}

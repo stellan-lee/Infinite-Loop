@@ -249,6 +249,34 @@ describe('agentExecutor', () => {
       }
     });
 
+    it('passes home overrides through loading and real spawn relative to the final worktree', async () => {
+      const script = fs.readFileSync(path.resolve('tests/fixtures/home-worker.cjs'), 'utf8');
+      fs.writeFileSync(path.join(providersDir, 'home-worker.json'), JSON.stringify({
+        id: 'home-worker', label: 'Home worker', description: 'fixture', bin: process.execPath,
+        args: ['{prompt}'], homeOverrideArgs: ['-e', script, '--', '-c', 'allow_login_shell=false'], outputFormat: 'plain',
+      }));
+      _resetProviderCache();
+      const runWorktrees = new RunWorktreesImpl('run-home-overrides');
+      const chunks: string[] = [];
+      try {
+        const out = await agentExecutor.execute({
+          ...ctx({ providerId: 'home-worker', prompt: 'fixture', cwd: repoDir, timeoutMs: 5000, useWorktree: true, home: 'user home', codexHome: 'codex home' }),
+          nodeId: 'home-worker', runWorktrees, emitStdoutChunk: (chunk) => chunks.push(chunk),
+        });
+        expect(out.branch).toBe('next');
+        const outputs = out.outputs as { worktreePath: string; stdout: string };
+        const child = JSON.parse(outputs.stdout);
+        expect(child.home).toBe(path.join(child.cwd, 'user home'));
+        expect(child.codexHome).toBe(path.join(child.cwd, 'codex home'));
+        expect(fs.realpathSync(child.cwd)).toBe(fs.realpathSync(outputs.worktreePath));
+        expect(child.homeIsDirectory).toBe(true);
+        expect(child.codexHomeExists).toBe(true);
+        expect(child.args).toContain('allow_login_shell=false');
+        expect(chunks.join('')).toContain('[homes]');
+        expect(outputs.stdout).not.toContain('[homes]');
+      } finally { await runWorktrees.cleanupAll(); }
+    });
+
     it('errors out cleanly when cwd is not a git repo', async () => {
       process.env.INFLOOP_PROVIDER_BIN_CLAUDE = FAKE_BIN;
       const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
@@ -339,4 +367,17 @@ describe('resolveAgentTimeout', () => {
   it('default is 30 minutes, matching the UI new-node default', () => {
     expect(DEFAULT_AGENT_TIMEOUT_MS).toBe(30 * 60 * 1000);
   });
+});
+
+
+it('rejects unsupported home overrides before worktree setup', async () => {
+  let setupCalled = false;
+  const out = await agentExecutor.execute({
+    ...ctx({ providerId: 'claude', prompt: 'p', timeoutMs: 1000, useWorktree: true, home: 'home' }),
+    nodeId: 'unsupported',
+    runWorktrees: { create: async () => { setupCalled = true; throw new Error('must not run'); }, cleanupAll: async () => {} },
+  });
+  expect(out.branch).toBe('error');
+  expect(out.outputs.errorMessage).toContain('does not support');
+  expect(setupCalled).toBe(false);
 });

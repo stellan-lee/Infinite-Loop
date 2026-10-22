@@ -5,6 +5,7 @@
   "glyph": "◈",
   "bin": "codex",
   "args": ["exec", "--skip-git-repo-check", "--profile", "{profile}", "--model", "{model}", "{prompt}"],
+  "homeOverrideArgs": ["-c", "allow_login_shell=false"],
   "envPassthrough": ["OPENAI_*", "CODEX_*"],
   "egressAllowlist": [
     "api.openai.com",

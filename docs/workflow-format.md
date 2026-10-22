@@ -86,3 +86,27 @@ Every finished run is persisted at `runs/<workflowId>/<runId>.json` — one JSON
 
 - Per-run event log is capped at **50,000 events** (oldest dropped first; `truncated: true` is set on the record).
 - Per-workflow history retention is capped by `INFLOOP_RUN_HISTORY_LIMIT` (default `100`).
+
+### Agent HOME and CODEX_HOME
+
+Agent configuration accepts independent optional `home` and `codexHome` strings
+for capable CLI providers (the shipped Codex provider). Blank or omitted values
+inherit that variable; setting HOME alone preserves inherited CODEX_HOME, and an
+unset CODEX_HOME retains Codex's normal default under the effective HOME. Values
+are trimmed, must not contain NUL, and are literal paths: no `~`, `$VAR`, or
+`{{...}}` expansion. Relative paths resolve against the final worker cwd,
+including its run-owned worktree. Requested directories are created recursively;
+creation failures take the Agent error branch before launch.
+
+For example, `"home": ".worker/user", "codexHome": ".worker/codex"` selects
+two roots under the worker directory. Either setting adds the manifest's
+`-c allow_login_shell=false` restriction. Leaving both unset preserves previous
+launch arguments and environment. Switching providers preserves saved values;
+unsupported providers reject configured overrides. Clearing the editor fields
+removes them.
+
+Absolute paths are appropriate for persistent state. Relative homes inside a
+run-owned worktree share its run-end cleanup lifecycle. Explicitly shared
+absolute roots share Codex state and its concurrency behavior. Fresh Codex homes
+may require operator-provided authentication/configuration; nothing is copied
+from the host. These settings do not provide filesystem isolation.

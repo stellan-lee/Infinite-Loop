@@ -1192,7 +1192,7 @@ function AgentForm({
   selfId,
   workflowCwd,
   providerInfo,
-  onPatch,
+  onPatch: onPatchConfig,
 }: {
   config: AgentConfig;
   refs: string[];
@@ -1205,6 +1205,21 @@ function AgentForm({
   providerInfo: ProviderInfo | null;
   onPatch: (next: AgentConfig) => void;
 }) {
+  const workflowId = useRef(useWorkflowStore.getState().currentWorkflow?.id);
+  const currentAgentConfig = (): AgentConfig | undefined => {
+    const workflow = useWorkflowStore.getState().currentWorkflow;
+    // Loading another workflow discards pending edits, even if node ids match.
+    if (!workflow || workflow.id !== workflowId.current) return undefined;
+    const currentNode = findWorkflowNode(workflow.nodes, selfId);
+    return currentNode?.type === 'agent' ? currentNode.config as AgentConfig : undefined;
+  };
+  const onPatch = (next: AgentConfig) => {
+    const current = currentAgentConfig();
+    if (!current) return;
+    // Existing controls also flush full snapshots. Preserve roots committed by
+    // another field before this callback, including during unmount cleanup.
+    onPatchConfig({ ...next, home: current.home, codexHome: current.codexHome });
+  };
   const [cwd, setCwd] = useDebouncedString(config.cwd ?? '', (next) =>
     onPatch({ ...config, cwd: next }),
   );
@@ -1216,6 +1231,19 @@ function AgentForm({
   );
   const [model, setModel] = useDebouncedString(config.model ?? '', (next) =>
     onPatch({ ...config, model: next.trim() ? next.trim() : undefined }),
+  );
+  const commitHome = (setting: 'home' | 'codexHome', next: string) => {
+    // Both debounced fields can flush during the same unmount. Merge with the
+    // originating node's current config so the second flush preserves the first.
+    const current = currentAgentConfig();
+    if (!current) return;
+    onPatchConfig({ ...current, [setting]: next.trim() || undefined });
+  };
+  const [home, setHome] = useDebouncedString(config.home ?? '', (next) =>
+    commitHome('home', next),
+  );
+  const [codexHome, setCodexHome] = useDebouncedString(config.codexHome ?? '', (next) =>
+    commitHome('codexHome', next),
   );
   const onProfileChange = (e: ChangeEvent<HTMLInputElement>) => {
     setProfile(e.target.value);
@@ -1324,6 +1352,22 @@ function AgentForm({
 
   return (
     <>
+      {providerInfo?.manifestSupportsHomeOverrides === true && (
+        <>
+          <div className="field">
+            <FieldLabel help="Optional literal directory, absolute or relative to the final worker directory (including its worktree). Blank inherits HOME. Configuring either home disables login shells.">
+              HOME
+            </FieldLabel>
+            <HeroInput variant="secondary" aria-label="HOME" type="text" value={home} onChange={(e) => setHome(e.target.value)} />
+          </div>
+          <div className="field">
+            <FieldLabel help="Optional literal directory, absolute or relative to the final worker directory. Blank inherits CODEX_HOME, or Codex's HOME/.codex default when unset. Configuring either home disables login shells.">
+              CODEX_HOME
+            </FieldLabel>
+            <HeroInput variant="secondary" aria-label="CODEX_HOME" type="text" value={codexHome} onChange={(e) => setCodexHome(e.target.value)} />
+          </div>
+        </>
+      )}
       {supportsCliProfile && (
         <div className="field">
           <FieldLabel help="Optional CLI profile passed through the provider manifest. Leave blank to omit it.">
@@ -3096,6 +3140,7 @@ export default function ConfigPanel() {
         )}
         {node.type === 'agent' && (
           <AgentForm
+            key={`agent-form:${currentWorkflow?.id}:${node.id}`}
             config={node.config as AgentConfig}
             refs={refs}
             templateRefs={templateRefs}

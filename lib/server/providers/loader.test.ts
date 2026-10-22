@@ -641,3 +641,18 @@ describe('providers/loader', () => {
     expect(await loadProviders()).toEqual([]);
   });
 });
+
+describe('home override capability', () => {
+  for (const value of [[], [''], ['   '], 'bad', [2], ['bad\0arg']]) {
+    it(`rejects malformed homeOverrideArgs ${JSON.stringify(value)}`, async () => {
+      writeManifest('test.json', { id: 'test', label: 'Test', description: 'test', bin: 'test', args: [], outputFormat: 'plain', homeOverrideArgs: value });
+      const { loadProviders } = await import('./loader');
+      expect(await loadProviders()).toEqual([]);
+    });
+  }
+  it('loads a nonempty capability without changing its arguments', async () => {
+    writeManifest('renamed.json', { id: 'renamed', label: 'Test', description: 'test', bin: 'test', args: ['exec'], outputFormat: 'plain', homeOverrideArgs: ['-c', 'allow_login_shell=false'] });
+    const { loadProviders } = await import('./loader');
+    expect((await loadProviders())[0]).toMatchObject({ homeOverrideArgs: ['-c', 'allow_login_shell=false'], args: ['exec'] });
+  });
+});

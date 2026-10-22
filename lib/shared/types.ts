@@ -31,6 +31,8 @@ export interface RunnerOptions {
   /** Role-preserving conversation for OpenAI-compatible HTTP providers. */
   messages?: AgentMessage[];
   cwd: string;
+  home?: string;
+  codexHome?: string;
   timeoutMs: number;
   signal: AbortSignal;
   onStdoutChunk?: (line: string) => void;

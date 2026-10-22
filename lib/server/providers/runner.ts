@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { normalizeAgentHome } from '../../shared/workflow';
 import type { RunnerOptions, RunnerResult } from '../../shared/types';
 import { parserFactories } from './parsers/index';
 import { resolveBin } from './loader';
@@ -152,6 +155,22 @@ export function resolveEgressEnforcement(
   return manifest.egressAllowlist ?? null;
 }
 
+/** Validate before any node or runner resource setup, including HTTP dispatch. */
+export function validateHomeOverrides(manifest: ProviderManifest, opts: Pick<RunnerOptions, 'home' | 'codexHome'>) {
+  const home = normalizeAgentHome(opts.home, 'home');
+  const codexHome = normalizeAgentHome(opts.codexHome, 'codexHome');
+  if ((home || codexHome) && (manifest.transport !== 'cli' ||
+    !Array.isArray(manifest.homeOverrideArgs) || manifest.homeOverrideArgs.length === 0 ||
+    manifest.homeOverrideArgs.some((arg) => typeof arg !== 'string' || !arg.trim() || arg.includes('\0')))) {
+    throw new Error(`provider ${manifest.id} does not support HOME/CODEX_HOME overrides`);
+  }
+  return { home, codexHome };
+}
+
+function setupFailure(message: string): RunnerResult {
+  return { exitCode: null, stdout: '', stderr: message, durationMs: 0, timedOut: false };
+}
+
 /**
  * Dispatch entry point. CLI manifests go through `runCliProvider` (spawn +
  * stdout line parser); HTTP manifests go through `runHttpProvider` (fetch +
@@ -161,6 +180,11 @@ export async function runProvider(
   manifest: ProviderManifest,
   opts: RunnerOptions,
 ): Promise<RunnerResult> {
+  try {
+    validateHomeOverrides(manifest, opts);
+  } catch (err) {
+    return setupFailure((err as Error).message);
+  }
   if (manifest.transport === 'http') {
     return runHttpProvider(manifest, opts);
   }
@@ -205,6 +229,23 @@ async function runCliProvider(
     dangerousArgs,
     promptVia,
   });
+  const roots = validateHomeOverrides(manifest, opts);
+  const hasOverrides = !!(roots.home || roots.codexHome);
+  const homeEnv: Record<string, string> = {};
+  for (const [setting, variable] of [['home', 'HOME'], ['codexHome', 'CODEX_HOME']] as const) {
+    const configured = roots[setting];
+    if (!configured) continue;
+    const resolved = path.resolve(opts.cwd, configured);
+    if (opts.signal.aborted) return setupFailure('provider launch cancelled');
+    try {
+      await fs.mkdir(resolved, { recursive: true });
+    } catch (err) {
+      return setupFailure(`${setting}: cannot create directory ${JSON.stringify(resolved)}: ${(err as Error).message}`);
+    }
+    homeEnv[variable] = resolved;
+  }
+  if (hasOverrides) args.unshift(...manifest.homeOverrideArgs!);
+  if (opts.signal.aborted) return setupFailure('provider launch cancelled');
   const parserFactory = parserFactories[manifest.outputFormat];
   if (!parserFactory) {
     // Loader validates this, but guard runtime injection too.
@@ -239,6 +280,21 @@ async function runCliProvider(
     }
   }
 
+  if (opts.signal.aborted) {
+    egressProxy?.close();
+    return setupFailure('provider launch cancelled');
+  }
+  const childEnv = buildChildEnv({
+    passthrough: manifest.envPassthrough,
+    overrides: { ...egressProxy?.childEnvOverrides(), ...homeEnv },
+  });
+  if (hasOverrides) {
+    opts.onStdoutChunk?.(`[homes] HOME=${JSON.stringify(childEnv.HOME ?? null)} CODEX_HOME=${childEnv.CODEX_HOME === undefined ? 'unset (default: HOME/.codex)' : JSON.stringify(childEnv.CODEX_HOME)} allow_login_shell=false\n`);
+  }
+  if (opts.signal.aborted) {
+    egressProxy?.close();
+    return setupFailure('provider launch cancelled');
+  }
   const startedAt = Date.now();
 
   return new Promise<RunnerResult>((resolve) => {
@@ -253,10 +309,7 @@ async function runCliProvider(
     // Pinning the type keeps overload resolution stable.
     const child: ReturnType<typeof spawn> = spawn(bin, args, {
       cwd: opts.cwd,
-      env: buildChildEnv({
-        passthrough: manifest.envPassthrough,
-        overrides: egressProxy?.childEnvOverrides(),
-      }),
+      env: childEnv,
       stdio: [promptVia === 'stdin' ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       detached: true,
     });

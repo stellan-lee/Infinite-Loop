@@ -10,7 +10,7 @@ import type {
   NodeExecutorResult,
 } from '../../shared/workflow';
 import { getProvider } from '../providers/loader';
-import { runProvider } from '../providers/runner';
+import { runProvider, validateHomeOverrides } from '../providers/runner';
 import {
   consumeOutputs,
   mintToken,
@@ -155,6 +155,12 @@ export const agentExecutor: NodeExecutor = {
         },
         branch: 'error',
       };
+    }
+
+    try {
+      validateHomeOverrides(provider, cfg);
+    } catch (err) {
+      return { outputs: { errorMessage: (err as Error).message }, branch: 'error' };
     }
 
     // Surface the permission posture. An agent running without the dangerous
@@ -322,6 +328,8 @@ export const agentExecutor: NodeExecutor = {
         prompt: serializeMessagesForCli(messages),
         messages,
         cwd: spawnCwd,
+        home: cfg.home,
+        codexHome: cfg.codexHome,
         timeoutMs: resolveAgentTimeout(cfg.timeoutMs),
         signal: ctx.signal,
         onStdoutChunk: ctx.emitStdoutChunk,

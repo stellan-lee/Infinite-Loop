@@ -99,6 +99,9 @@ export interface AgentConfig {
   /** Optional node-specific working-directory override. Falls back to the
    * workflow's `cwd`, then `/tmp`. */
   cwd?: string;
+  /** Literal paths, relative to the final worker cwd. Blank means inherited. */
+  home?: string;
+  codexHome?: string;
   timeoutMs: number;
   /** Optional model/profile name. HTTP providers use it as the request model
    * (falling back to the manifest's `defaultProfile`). CLI providers may use
@@ -957,4 +960,13 @@ export interface NodeExecutor {
 export interface TemplateResolveResult {
   text: string;
   warnings: Array<{ field: string; missingKey: string }>;
+}
+
+/** Normalize optional worker roots at persistence and execution boundaries. */
+export function normalizeAgentHome(value: unknown, setting: 'home' | 'codexHome'): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.includes('\0')) {
+    throw new Error(`${setting} must be a string without NUL bytes`);
+  }
+  return value.trim() || undefined;
 }

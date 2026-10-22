@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { normalizeAgentHome } from '../shared/workflow';
 import path from 'node:path';
 import { dataDir, triggersDir } from './paths';
 import type {
@@ -147,6 +148,8 @@ function validateNodeConfig(n: WorkflowNode): void {
   }
   if (n.type === 'agent') {
     const cfg = n.config as AgentConfig;
+    cfg.home = normalizeAgentHome(cfg.home, 'home');
+    cfg.codexHome = normalizeAgentHome(cfg.codexHome, 'codexHome');
     validateAgentMessages(cfg.messages, n.id);
     validateAgentOutputs(cfg.outputs, n.id);
   }

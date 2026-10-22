@@ -11,6 +11,7 @@ import {
 import { useWorkflowStore } from '@/lib/client/workflow-store-client';
 import type { Workflow, WorkflowInputDecl, WorkflowNode } from '@/lib/shared/workflow';
 import { validateAgentOutputs } from '@/lib/shared/workflow';
+import { findWorkflowNode } from '@/lib/shared/workflow-graph';
 import ConfigPanel from './ConfigPanel';
 
 function makeWorkflow(nodes: WorkflowNode[]): Workflow {
@@ -89,6 +90,7 @@ type StubProvider = {
   manifestSupportsProfile?: boolean;
   manifestSupportsModel?: boolean;
   manifestSupportsAgent?: boolean;
+  manifestSupportsHomeOverrides?: boolean;
 };
 function mockProvidersFetch(providers: StubProvider[]) {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -810,4 +812,102 @@ describe('ConfigPanel', () => {
 
     expect(screen.getAllByText(/duplicate name/i).length).toBeGreaterThan(0);
   });
+
+describe('Agent home controls', () => {
+  for (const existingHomes of [false, true]) {
+    it(`preserves pending homes alongside Worktree base ref on deselect (${existingHomes ? 'existing roots' : 'unset roots'})`, async () => {
+      mockProvidersFetch([{ id: 'codex', transport: 'cli', manifestSupportsHomeOverrides: true }]);
+      const node: WorkflowNode = { ...codexAgentNode, config: { ...codexAgentNode.config, useWorktree: true, ...(existingHomes ? { home: 'old-home', codexHome: 'old-codex' } : {}) } };
+      act(() => { useWorkflowStore.getState().loadWorkflow(makeWorkflow([startNode, node])); useWorkflowStore.getState().selectNode(node.id); });
+      render(<ConfigPanel />);
+      await waitFor(() => expect(screen.getByLabelText('HOME')).toBeInTheDocument());
+      clock = FakeTimers.install();
+      act(() => { fireEvent.change(screen.getByLabelText('HOME'), { target: { value: 'new-home' } }); });
+      act(() => { fireEvent.change(screen.getByLabelText('CODEX_HOME'), { target: { value: 'new-codex' } }); });
+      act(() => { fireEvent.change(screen.getByLabelText('Worktree base ref'), { target: { value: 'main' } }); });
+      act(() => { useWorkflowStore.getState().selectNode(null); });
+      act(() => { clock!.tick(300); });
+      expect(findWorkflowNode(useWorkflowStore.getState().currentWorkflow!.nodes, node.id)!.config).toMatchObject({ home: 'new-home', codexHome: 'new-codex', worktreeRef: 'main' });
+    });
+
+    it(`discards pending Agent edits when another workflow reuses the node id (${existingHomes ? 'existing roots' : 'unset roots'})`, async () => {
+      mockProvidersFetch([{ id: 'codex', transport: 'cli', manifestSupportsHomeOverrides: true }]);
+      const node: WorkflowNode = { ...codexAgentNode, config: { ...codexAgentNode.config, useWorktree: true } };
+      const replacementNode: WorkflowNode = { ...node, config: { ...node.config, prompt: 'other workflow', ...(existingHomes ? { home: 'other-home', codexHome: 'other-codex' } : {}) } };
+      const replacement = { ...makeWorkflow([startNode, replacementNode]), id: 'other-workflow' };
+      act(() => { useWorkflowStore.getState().loadWorkflow(makeWorkflow([startNode, node])); useWorkflowStore.getState().selectNode(node.id); });
+      render(<ConfigPanel />);
+      await waitFor(() => expect(screen.getByLabelText('HOME')).toBeInTheDocument());
+      clock = FakeTimers.install();
+      act(() => { fireEvent.change(screen.getByLabelText('HOME'), { target: { value: 'old-pending-home' } }); });
+      act(() => { fireEvent.change(screen.getByLabelText('CODEX_HOME'), { target: { value: 'old-pending-codex' } }); });
+      act(() => { fireEvent.change(screen.getByLabelText('Worktree base ref'), { target: { value: 'old-pending-ref' } }); });
+      act(() => { useWorkflowStore.getState().loadWorkflow(replacement); });
+      act(() => { clock!.tick(300); });
+      expect(useWorkflowStore.getState().currentWorkflow).toEqual(replacement);
+      expect(findWorkflowNode(useWorkflowStore.getState().currentWorkflow!.nodes, node.id)!.config).toEqual(replacementNode.config);
+    });
+  }
+
+  for (const nested of [false, true]) {
+    for (const destination of [null, 'agent-b']) {
+      for (const nextCodexHome of ['new-codex', ' ']) {
+        it(`flushes both pending home edits to their originating ${nested ? 'nested' : 'top-level'} Agent on ${destination ? 'Agent switch' : 'deselect'} (${nextCodexHome.trim() ? 'set both' : 'clear CODEX_HOME'})`, async () => {
+          mockProvidersFetch([{ id: 'codex', transport: 'cli', manifestSupportsHomeOverrides: true }]);
+          const agentA: WorkflowNode = { ...codexAgentNode, config: { ...codexAgentNode.config, home: 'old-home', codexHome: 'old-codex' } };
+          const agentB: WorkflowNode = { ...codexAgentNode, id: 'agent-b', config: { ...codexAgentNode.config, home: 'b-home', codexHome: 'b-codex' } };
+          const nodes: WorkflowNode[] = nested
+            ? [startNode, { id: 'loop-1', type: 'loop', position: { x: 0, y: 0 }, config: { maxIterations: 1, mode: 'while-not-met' }, children: [agentA, agentB] }]
+            : [startNode, agentA, agentB];
+          act(() => { useWorkflowStore.getState().loadWorkflow(makeWorkflow(nodes)); useWorkflowStore.getState().selectNode('codex-1'); });
+          render(<ConfigPanel />);
+          await waitFor(() => expect(screen.getByLabelText('HOME')).toBeInTheDocument());
+          clock = FakeTimers.install();
+          act(() => { fireEvent.change(screen.getByLabelText('HOME'), { target: { value: ' new-home ' } }); });
+          act(() => { fireEvent.change(screen.getByLabelText('CODEX_HOME'), { target: { value: nextCodexHome } }); });
+          act(() => { useWorkflowStore.getState().selectNode(destination); });
+          act(() => { clock!.tick(300); });
+          const storedNodes = useWorkflowStore.getState().currentWorkflow!.nodes;
+          const storedA = findWorkflowNode(storedNodes, 'codex-1')!.config as { home?: string; codexHome?: string };
+          expect(storedA.home).toBe('new-home');
+          expect(storedA.codexHome).toBe(nextCodexHome.trim() || undefined);
+          expect(findWorkflowNode(storedNodes, 'agent-b')!.config).toEqual(agentB.config);
+        });
+      }
+    }
+  }
+
+  it('edits and clears independent paths based on capability metadata', async () => {
+    mockProvidersFetch([{ id: 'codex', transport: 'cli', manifestSupportsHomeOverrides: true }]);
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(makeWorkflow([startNode, codexAgentNode]));
+      useWorkflowStore.getState().selectNode('codex-1');
+    });
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByLabelText('HOME')).toBeInTheDocument());
+    clock = FakeTimers.install();
+    const stored = () => useWorkflowStore.getState().currentWorkflow!.nodes.find((n) => n.id === 'codex-1')!.config as { home?: string; codexHome?: string };
+    act(() => { fireEvent.change(screen.getByLabelText('HOME'), { target: { value: ' user home ' } }); clock!.tick(300); });
+    expect(stored().home).toBe('user home');
+    expect(stored().codexHome).toBeUndefined();
+    act(() => { fireEvent.change(screen.getByLabelText('CODEX_HOME'), { target: { value: '/tmp/codex' } }); clock!.tick(300); });
+    expect(stored()).toMatchObject({ home: 'user home', codexHome: '/tmp/codex' });
+    act(() => { fireEvent.change(screen.getByLabelText('HOME'), { target: { value: ' ' } }); clock!.tick(300); });
+    expect(stored().home).toBeUndefined();
+    expect(stored().codexHome).toBe('/tmp/codex');
+    act(() => { fireEvent.change(screen.getByLabelText('CODEX_HOME'), { target: { value: '' } }); clock!.tick(300); });
+    expect(stored().codexHome).toBeUndefined();
+  });
+  it('hides home fields for an unsupported CLI without deleting saved values', async () => {
+    mockProvidersFetch([{ id: 'codex', transport: 'cli' }]);
+    const node = { ...codexAgentNode, config: { ...codexAgentNode.config, home: 'saved-home', codexHome: 'saved-codex' } };
+    act(() => { useWorkflowStore.getState().loadWorkflow(makeWorkflow([startNode, node])); useWorkflowStore.getState().selectNode('codex-1'); });
+    render(<ConfigPanel />);
+    await waitFor(() => expect(screen.getByLabelText('user message 1')).toBeInTheDocument());
+    expect(screen.queryByLabelText('HOME')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('CODEX_HOME')).not.toBeInTheDocument();
+    expect(useWorkflowStore.getState().currentWorkflow!.nodes.find((n) => n.id === 'codex-1')!.config).toMatchObject({ home: 'saved-home', codexHome: 'saved-codex' });
+  });
+});
+
 });

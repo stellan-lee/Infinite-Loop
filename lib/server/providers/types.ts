@@ -61,6 +61,8 @@ export interface CliProviderManifest extends ProviderManifestCommon {
    * the node has not opted in, `{dangerousArgs}` expands to nothing. For the
    * Claude CLI this is `["--dangerously-skip-permissions"]`. */
   dangerousArgs?: string[];
+  /** Required leading CLI args when per-worker HOME/CODEX_HOME are configured. */
+  homeOverrideArgs?: string[];
   /** Network hosts this CLI's child process is allowed to reach. Each entry is
    * a hostname — exact (`api.anthropic.com`) or a leading-wildcard
    * (`*.anthropic.com`, matching any subdomain but NOT the apex). When the
@@ -147,4 +149,5 @@ export interface ProviderInfo {
   manifestSupportsModel?: boolean;
   /** True when the CLI manifest declares an `{agent}` placeholder. */
   manifestSupportsAgent?: boolean;
+  manifestSupportsHomeOverrides?: boolean;
 }

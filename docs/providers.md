@@ -115,3 +115,20 @@ runs. If your Codex CLI lives somewhere else, start Infinite Loop with:
 ```bash
 INFLOOP_PROVIDER_BIN_CODEX=/path/to/codex bun run dev
 ```
+
+### Per-worker home overrides
+
+CLI manifests can opt in with `"homeOverrideArgs": ["-c", "allow_login_shell=false"]`.
+The array must contain at least one nonempty string. These arguments are
+prepended only when an Agent configures `home` or `codexHome`; currently only the
+shipped Codex manifest opts in. `/api/providers` exposes
+`manifestSupportsHomeOverrides` for the editor. Unsupported CLI and HTTP
+providers reject configured overrides before setup or execution.
+
+The runner creates requested directories before starting a proxy or process,
+then sets only the configured HOME/CODEX_HOME variables in the scrubbed child
+environment. Existing secret filtering and proxy controls still apply. A live
+path diagnostic reports the effective roots and login-shell restriction; it is
+excluded from returned provider stdout. No authentication or config is copied.
+These roots control discovery, not OS filesystem access. Codex launches remain
+noninteractive; no PTY mode is added.

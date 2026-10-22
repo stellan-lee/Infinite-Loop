@@ -640,3 +640,24 @@ describe('saveWorkflow migration: legacy triggers[] → trigger-store', () => {
     expect(all.filter((t) => t.id === triggerId)).toHaveLength(1);
   });
 });
+
+describe('Agent home persistence', () => {
+  function workflow(home: unknown, codexHome: unknown) {
+    return makeWorkflow({ nodes: [{ id: 'start-1', type: 'start', position: { x: 0, y: 0 }, config: {} }, { id: 'agent-1', type: 'agent', position: { x: 0, y: 0 }, config: { providerId: 'codex', prompt: 'p', timeoutMs: 1000, home, codexHome } as unknown as import('../shared/workflow').AgentConfig }], edges: [] });
+  }
+  it('round-trips independent trimmed paths and clears blanks', async () => {
+    await saveWorkflow(workflow(' user home ', '/tmp/codex home'));
+    expect((await getWorkflow('wf-1')).nodes[1].config).toMatchObject({ home: 'user home', codexHome: '/tmp/codex home' });
+    await saveWorkflow(workflow(' ', undefined));
+    const config = (await getWorkflow('wf-1')).nodes[1].config as import('../shared/workflow').AgentConfig;
+    expect(config.home).toBeUndefined();
+    expect(config.codexHome).toBeUndefined();
+  });
+  for (const field of ['home', 'codexHome']) {
+    for (const value of [null, 42, {}, 'bad\0path']) {
+      it(`rejects invalid ${field} ${JSON.stringify(value)}`, async () => {
+        await expect(saveWorkflow(workflow(field === 'home' ? value : undefined, field === 'codexHome' ? value : undefined))).rejects.toThrow(`${field} must be a string without NUL`);
+      });
+    }
+  }
+});

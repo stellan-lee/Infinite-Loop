@@ -215,6 +215,12 @@ function validateCliManifest(
       `provider ${file}: \`dangerousArgs\` must be a string array if set`,
     );
   }
+  if (m.homeOverrideArgs !== undefined && (
+    !isStringArray(m.homeOverrideArgs) || m.homeOverrideArgs.length === 0 ||
+    m.homeOverrideArgs.some((arg) => !arg.trim() || arg.includes('\0'))
+  )) {
+    throw new Error(`provider ${file}: \`homeOverrideArgs\` must be a nonempty array of nonempty strings`);
+  }
   return {
     ...common,
     transport: 'cli',
@@ -224,6 +230,7 @@ function validateCliManifest(
     promptVia: (m.promptVia as 'arg' | 'stdin' | undefined) ?? 'arg',
     envPassthrough: validateEnvPassthrough(m.envPassthrough, file),
     dangerousArgs: m.dangerousArgs as string[] | undefined,
+    homeOverrideArgs: m.homeOverrideArgs as string[] | undefined,
     egressAllowlist: validateEgressAllowlist(m.egressAllowlist, file),
   };
 }
@@ -352,6 +359,9 @@ function validateHttpManifest(
   // `envPassthrough` / `dangerousArgs` / `egressAllowlist` shape how a *spawned
   // child process* is built; an HTTP provider spawns nothing, so naming them is
   // a manifest mistake worth surfacing rather than silently ignoring.
+  if (m.homeOverrideArgs !== undefined) {
+    throw new Error(`provider ${file}: homeOverrideArgs is not supported for HTTP providers`);
+  }
   if (m.envPassthrough !== undefined) {
     throw new Error(
       `provider ${file}: \`envPassthrough\` is not supported for HTTP providers`,

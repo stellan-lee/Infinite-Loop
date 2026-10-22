@@ -4379,6 +4379,19 @@ input[type='number'].no-spin {
   align-items: center;
   margin-left: 6px;
 }
+/* Anchor label guidance inside the field so the inspector's scrolling
+ * boundary cannot clip a tooltip centered on the help icon. */
+.field-label:has(.field-label-help) {
+  position: relative;
+}
+.field-label > .field-label-help {
+  position: static;
+}
+.field-label > .field-label-help > .field-label-tooltip {
+  left: 0;
+  max-width: min(300px, 100%, calc(100vw - 48px));
+  transform: none;
+}
 .field-label-required {
   margin-left: 4px;
   color: var(--accent-err);
@@ -4406,7 +4419,7 @@ input[type='number'].no-spin {
 }
 .field-label-tooltip {
   position: absolute;
-  z-index: 20;
+  z-index: 100;
   top: calc(100% + 7px);
   left: 50%;
   width: max-content;

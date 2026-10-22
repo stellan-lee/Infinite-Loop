@@ -9,9 +9,16 @@
 // no CORS layer at all.
 (globalThis as { __infloopNativeFetch?: typeof fetch }).__infloopNativeFetch =
   globalThis.fetch;
+const nativeAbortController = globalThis.AbortController;
+const nativeAbortSignal = globalThis.AbortSignal;
 
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
 GlobalRegistrator.register();
+// Native fetch requires native signals (including controllers the HTTP runner
+// creates internally). Keep both constructors coherent with the saved fetch
+// while retaining happy-dom's document, fetch shim, and other browser globals.
+globalThis.AbortController = nativeAbortController;
+globalThis.AbortSignal = nativeAbortSignal;
 
 const { afterEach, expect } = await import('bun:test');
 const matchers = await import('@testing-library/jest-dom/matchers');

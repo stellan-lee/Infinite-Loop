@@ -96,6 +96,8 @@ function staticOutputs(type: WorkflowNode['type']): Array<{ field: string; descr
         { field: 'status', description: 'succeeded / failed / cancelled' },
         { field: 'errorMessage', description: "set when status !== 'succeeded'" },
       ];
+    case 'send-webhook':
+      return ['status', 'method', 'destination', 'statusCode', 'responseHeaders', 'responseBody', 'responseTruncated', 'durationMs', 'attempts', 'errorCategory', 'errorMessage'].map(field => ({ field, description: `Webhook ${field}` }));
     case 'github-ci':
       return ['repository', 'pullRequest', 'pullRequestUrl', 'headSha', 'status', 'required', 'checks', 'failed', 'pending', 'errorMessage'].map(field => ({ field, description: `GitHub CI ${field}` }));
     case 'manual':
@@ -326,6 +328,7 @@ const TEMPLATED_FIELDS: Partial<Record<WorkflowNode['type'], string[]>> = {
   script: ['cwd'],
   manual: ['brief', 'reviewerHint'],
   'github-ci': ['repository', 'pullRequest'],
+  'send-webhook': ['url', 'body', 'idempotencyKey'],
 };
 
 export interface TemplateLintWarning {
@@ -456,6 +459,11 @@ export function lintWorkflowTemplates(
               (message as { content: string }).content,
             ));
           }
+        }
+      }
+      if (n.type === 'send-webhook' && cfg.headers && typeof cfg.headers === 'object') {
+        for (const [name, value] of Object.entries(cfg.headers)) {
+          if (typeof value === 'string') out.push(...lintField(workflow, n.id, `headers.${name}`, value));
         }
       }
       // script.inputs — Record<string, string>

@@ -1,3 +1,4 @@
+import { validateSendWebhookConfig } from '../shared/send-webhook';
 import { validateGitHubCIConfig } from '../shared/github-ci';
 import { promises as fs } from 'node:fs';
 import { normalizeAgentHome } from '../shared/workflow';
@@ -154,6 +155,7 @@ function validateNodeConfig(n: WorkflowNode): void {
     validateAgentMessages(cfg.messages, n.id);
     validateAgentOutputs(cfg.outputs, n.id);
   }
+  if (n.type === 'send-webhook') validateSendWebhookConfig(n.config);
   if (n.type === 'github-ci') validateGitHubCIConfig(n.config);
   if (n.type === 'manual') {
     const cfg = n.config as ManualConfig;

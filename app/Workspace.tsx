@@ -11,6 +11,7 @@ import Canvas from './components/canvas/Canvas';
 import RunInputsModal from './components/RunInputsModal';
 import Palette from './components/Palette';
 import ConfigPanel from './components/ConfigPanel';
+import { SendWebhookDetails, latestWebhookOutput } from './components/send-webhook-details';
 import { GitHubCIDetails, latestCIOutput } from './components/github-ci-details';
 import { findWorkflowNode } from '../lib/shared/workflow-graph';
 import RunView from './components/RunView';
@@ -40,6 +41,7 @@ export default function Workspace() {
   const wsStatus = useWorkflowStore((s) => s.connectionStatus);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const runEvents = useWorkflowStore((s) => s.runEvents);
+  const webhooks = useWorkflowStore((s) => s.webhooks);
   const githubCI = useWorkflowStore((s) => s.githubCI);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
   const saveCurrentWorkflow = useWorkflowStore((s) => s.saveCurrentWorkflow);
@@ -97,6 +99,7 @@ export default function Workspace() {
   // replaces history/run information.
   const showGlobalPanel = isRunning || historyOpen;
   const selectedNode = selectedNodeId ? findWorkflowNode(currentWorkflow?.nodes, selectedNodeId) : null;
+  const showLiveWebhookDetails = isRunning && selectedNode?.type === 'send-webhook';
   const showLiveCIDetails = isRunning && selectedNode?.type === 'github-ci';
 
   // Hydrate the persisted width on mount (avoids SSR mismatch).
@@ -340,7 +343,7 @@ export default function Workspace() {
         >
           <Palette />
           <Canvas />
-          {selectedNodeId && (!showGlobalPanel || showLiveCIDetails) && (
+          {selectedNodeId && (!showGlobalPanel || showLiveCIDetails || showLiveWebhookDetails) && (
             <div className="node-inspector-layer">
               <div className="node-inspector">
                 <button
@@ -351,7 +354,12 @@ export default function Workspace() {
                 >
                   ×
                 </button>
-                {showLiveCIDetails ? (
+                {showLiveWebhookDetails ? (
+                  <aside className="config-stub" aria-label="live webhook inspector">
+                    <header className="serif config-stub-section-head">Send Webhook</header>
+                    <SendWebhookDetails output={webhooks[selectedNodeId] ?? latestWebhookOutput(runEvents, selectedNodeId)} />
+                  </aside>
+                ) : showLiveCIDetails ? (
                   <aside className="config-stub" aria-label="live CI inspector">
                     <header className="serif config-stub-section-head">GitHub CI Gate</header>
                     <GitHubCIDetails output={githubCI[selectedNodeId] ?? latestCIOutput(runEvents, selectedNodeId)} />

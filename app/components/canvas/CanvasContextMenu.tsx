@@ -44,7 +44,7 @@ const STATIC_GROUPS: Array<{ heading: string; items: ContextMenuItem[] }> = [
   },
   {
     heading: 'Scripts',
-    items: [{ type: 'script', label: 'Script' }],
+    items: [{ type: 'script', label: 'Script' }, { type: 'send-webhook', label: 'Send Webhook' }],
   },
   {
     heading: 'Annotations',

@@ -54,6 +54,7 @@ import ConditionNode from './nodes/ConditionNode';
 import EndNode from './nodes/EndNode';
 import LoopNode from './nodes/LoopNode';
 import ManualNode from './nodes/ManualNode';
+import SendWebhookNode from './nodes/SendWebhookNode';
 import GitHubCINode from './nodes/GitHubCINode';
 import ParallelNode from './nodes/ParallelNode';
 import ScriptNode from './nodes/ScriptNode';
@@ -131,6 +132,7 @@ const DEFAULT_CONFIG: { [K in NodeType]: () => NodeConfigByType[K] } = {
       '}\n',
     timeoutMs: 60_000,
   }),
+  'send-webhook': () => ({ url: 'https://example.com/webhook', method: 'POST', body: '{}', timeoutMs: 10_000, maxAttempts: 1 }),
   'github-ci': () => ({ repository: '{{inputs.repository}}', pullRequest: '{{inputs.pullRequest}}', required: [{ kind: 'check', name: 'test' }], timeoutMs: 3_600_000 }),
   manual: (): ManualConfig => ({
     // No brief by default — most authors will template upstream outputs into
@@ -331,6 +333,7 @@ const NODE_TYPES = {
   script: ScriptNode,
   manual: ManualNode,
   'github-ci': GitHubCINode,
+  'send-webhook': SendWebhookNode,
 } as const;
 
 function CanvasInner() {

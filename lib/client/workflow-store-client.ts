@@ -1,5 +1,6 @@
 'use client';
 
+import type { SendWebhookOutput } from '../shared/send-webhook';
 import { create } from 'zustand';
 import type { GitHubCIOutput } from '../shared/github-ci';
 import type {
@@ -33,6 +34,7 @@ export interface WorkflowStoreState {
   runStatus: RunStatus;
   runEvents: WorkflowEvent[];
   githubCI: Record<string, GitHubCIOutput>;
+  webhooks: Record<string, SendWebhookOutput>;
   /** Events from the recorded run currently open in History. These only
    * drive the canvas outcome overlay; they never replace the live run state. */
   inspectedRunEvents: WorkflowEvent[] | null;
@@ -92,7 +94,7 @@ export interface WorkflowStoreState {
   resetRun: () => void;
   /** Replace the run state in one shot — used when the SSE state_snapshot
    * arrives and we want to rehydrate the log + status after a refresh. */
-  hydrateRun: (input: { status: RunStatus; events: WorkflowEvent[]; githubCI?: Record<string, GitHubCIOutput> }) => void;
+  hydrateRun: (input: { status: RunStatus; events: WorkflowEvent[]; githubCI?: Record<string, GitHubCIOutput>; webhooks?: Record<string, SendWebhookOutput> }) => void;
   setInspectedRunEvents: (events: WorkflowEvent[] | null) => void;
   setConnectionStatus: (s: WsStatus) => void;
 }
@@ -143,6 +145,7 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
   runStatus: 'idle',
   runEvents: [],
   githubCI: {},
+  webhooks: {},
   inspectedRunEvents: null,
   connectionStatus: 'connecting',
   triggerLastFiredAt: {},
@@ -407,7 +410,9 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
       if (ev.type === 'run_started') {
         next.runStatus = 'running';
         next.githubCI = {};
+        next.webhooks = {};
       }
+      if (ev.type === 'webhook_updated') next.webhooks = { ...s.webhooks, [ev.nodeId]: ev.output };
       if (ev.type === 'github_ci_updated') next.githubCI = { ...s.githubCI, [ev.nodeId]: ev.output };
       if (ev.type === 'run_finished') next.runStatus = ev.status;
       if (ev.type === 'trigger_started') {
@@ -421,12 +426,13 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
 
   setRunStatus: (runStatus) => set({ runStatus }),
 
-  resetRun: () => set({ runEvents: [], githubCI: {}, runStatus: 'idle' }),
+  resetRun: () => set({ runEvents: [], githubCI: {}, webhooks: {}, runStatus: 'idle' }),
 
-  hydrateRun: ({ status, events, githubCI }) =>
+  hydrateRun: ({ status, events, githubCI, webhooks }) =>
     set({
       runStatus: status,
       runEvents: [...events],
+      webhooks: webhooks ?? Object.fromEntries(events.filter(event => event.type === 'webhook_updated').map(event => [event.nodeId, event.output])),
       githubCI: githubCI ?? Object.fromEntries(events
         .filter(event => event.type === 'github_ci_updated')
         .map(event => [event.nodeId, event.output])),

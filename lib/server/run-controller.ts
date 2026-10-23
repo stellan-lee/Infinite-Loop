@@ -1,3 +1,4 @@
+import { webhookDestination, webhookFailure, type SendWebhookConfig, type SendWebhookOutput } from '../shared/send-webhook';
 /*
  * RunController — owns the state and execution of a single workflow run.
  *
@@ -1296,14 +1297,30 @@ export class RunController {
         // The old process may have performed an external side effect. Never
         // invoke this executor again; surface interruption via its error edge.
         const message = 'node interrupted by server restart; execution was not replayed';
-        scope[current.id] = { errorMessage: message };
+        const webhook = current.type === 'send-webhook';
+        scope[current.id] = webhook
+          ? { ...webhookFailure(current.config as SendWebhookConfig, 'interrupted', scope[current.id] as unknown as SendWebhookOutput | undefined) }
+          : { errorMessage: message };
+        if (webhook) {
+          const nodeId = this.namespaced(current.id, exec);
+          const output = scope[current.id] as unknown as SendWebhookOutput;
+          this.snapshot.webhooks = { ...this.snapshot.webhooks, [nodeId]: output };
+          this.emit({ type: 'webhook_updated', nodeId, output });
+        }
         this.emit({ type: 'error', nodeId: this.namespaced(current.id, exec), message });
         this.emit({
           type: 'node_finished', nodeId: this.namespaced(current.id, exec),
-          nodeType: current.type, branch: 'error', outputs: scope[current.id], durationMs: 0,
+          nodeType: current.type, branch: webhook ? 'failure' : 'error', outputs: scope[current.id], durationMs: 0,
         });
-        branch = 'error';
+        branch = webhook ? 'failure' : 'error';
       } else {
+        if (current.type === 'send-webhook') {
+          this.durable = true;
+          // A new loop visit must not inherit evidence from the prior delivery.
+          const output = { ...webhookFailure(current.config as SendWebhookConfig, 'interrupted'), status: 'RUNNING' as const, errorCategory: undefined, errorMessage: undefined };
+          scope[current.id] = { ...output };
+          this.snapshot.webhooks = { ...this.snapshot.webhooks, [this.namespaced(current.id, exec)]: output };
+        }
         if (frame.phase !== 'ci-wait') frame.phase = 'executing';
         this.checkpoint();
         branch = await this.executeNode(current, exec, scope, workflow, signal, frame);
@@ -1782,7 +1799,9 @@ export class RunController {
       type: 'node_started',
       nodeId: namespacedId,
       nodeType: node.type,
-      resolvedConfig,
+      resolvedConfig: node.type === 'send-webhook'
+        ? { method: (node.config as SendWebhookConfig).method, destination: webhookDestination((node.config as SendWebhookConfig).url) }
+        : resolvedConfig,
       loopIteration: exec.loopIteration,
     });
 
@@ -1796,6 +1815,12 @@ export class RunController {
       runId: this.runId,
       nodeId: node.id,
       config: resolvedConfig,
+      reportWebhookProgress: node.type === 'send-webhook' ? (output) => {
+        scope[node.id] = { ...output };
+        this.snapshot.webhooks = { ...this.snapshot.webhooks, [namespacedId]: output };
+        this.checkpoint();
+        this.emit({ type: 'webhook_updated', nodeId: namespacedId, output });
+      } : undefined,
       scope,
       defaultCwd: cwd,
       signal,
@@ -1870,12 +1895,18 @@ export class RunController {
         if (signal.aborted || err instanceof CheckpointError) {
           throw err;
         }
-        const message = err instanceof Error ? err.message : String(err);
+        const message = node.type === 'send-webhook' ? 'Webhook failed (execution).' : err instanceof Error ? err.message : String(err);
         this.emit({ type: 'error', nodeId: namespacedId, message });
         result = { outputs: { errorMessage: message }, branch: (node.type === 'github-ci' ? 'failure' : 'error') as EdgeHandle };
       }
     }
 
+    if (node.type === 'send-webhook' && !('status' in result.outputs)) {
+      const output = webhookFailure(node.config as SendWebhookConfig, 'execution');
+      result = { outputs: { ...output }, branch: 'failure' as const };
+      this.snapshot.webhooks = { ...this.snapshot.webhooks, [namespacedId]: output };
+      this.emit({ type: 'webhook_updated', nodeId: namespacedId, output });
+    }
     if (node.type === 'github-ci' && !('status' in result.outputs)) {
       const config = resolvedConfig as unknown as GitHubCIConfig;
       const output = {

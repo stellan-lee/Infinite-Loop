@@ -79,6 +79,7 @@ const DRAG_PREVIEW_COPY: Record<NodeType, { title: string; body: string }> = {
   'structured-output': { title: 'OPENAI', body: '⌘ no provider · (no prompt)' },
   sidenote: { title: 'NOTE', body: '(empty note)' },
   script: { title: 'SCRIPT', body: 'run(arg1, arg2) → output1' },
+  'send-webhook': { title: 'SEND WEBHOOK', body: 'POST · HTTPS endpoint' },
   'github-ci': { title: 'GITHUB CI GATE', body: 'wait for required checks' },
   manual: { title: 'MANUAL', body: '✋ 3 decisions' },
 };
@@ -147,6 +148,7 @@ const STATIC_CATEGORIES: PaletteCategory[] = [
     id: 'scripts',
     heading: 'Scripts',
     items: [
+      { type: 'send-webhook', name: 'Send Webhook', Icon: LuGitBranch, glyph: '↗', description: 'send an HTTPS request when reached' },
       { type: 'script', name: 'Script', Icon: LuCode, glyph: '⌨', description: 'run inline TypeScript (Bun) or Python (python3)' },
     ],
   },

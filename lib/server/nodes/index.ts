@@ -1,3 +1,4 @@
+import { sendWebhookExecutor } from './send-webhook';
 import type { NodeExecutor, NodeType } from '../../shared/workflow';
 import { startExecutor } from './start';
 import { endExecutor } from './end';
@@ -13,6 +14,7 @@ import { scriptExecutor } from './script';
 import { manualExecutor } from './manual';
 
 export const nodeExecutors: Record<NodeType, NodeExecutor> = {
+  'send-webhook': sendWebhookExecutor,
   start: startExecutor,
   end: endExecutor,
   agent: agentExecutor,

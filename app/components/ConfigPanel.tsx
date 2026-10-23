@@ -1,5 +1,7 @@
 'use client';
 
+import type { SendWebhookConfig } from '@/lib/shared/send-webhook';
+import { SendWebhookForm } from './send-webhook-details';
 import type { GitHubCIConfig } from '@/lib/shared/github-ci';
 import { GitHubCIDetails, ciOutputForNode } from './github-ci-details';
 import {
@@ -3303,6 +3305,7 @@ export default function ConfigPanel() {
             onPatch={patchConfig}
           />
         )}
+        {node.type === 'send-webhook' && <SendWebhookForm key={`webhook-${node.id}`} config={node.config as SendWebhookConfig} nodeId={node.id} refs={templateRefs} onPatch={patchConfig} />}
         {node.type === 'github-ci' && <GitHubCIForm config={node.config as GitHubCIConfig} nodeId={node.id} onPatch={patchConfig} />}
         {node.type === 'manual' && (
           <ManualForm

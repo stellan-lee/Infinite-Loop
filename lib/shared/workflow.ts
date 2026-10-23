@@ -1,3 +1,4 @@
+import type { SendWebhookConfig, SendWebhookOutput } from './send-webhook';
 import type { GitHubCIConfig, GitHubCIOutput } from './github-ci';
 /*
  * Workflow contract — IMMUTABLE for Phase B workers.
@@ -17,7 +18,8 @@ export type NodeType =
   | 'sidenote'
   | 'script'
   | 'manual'
-  | 'github-ci';
+  | 'github-ci'
+  | 'send-webhook';
 
 /** Edge handles. Workers MUST emit one of these from a node executor. */
 export type EdgeHandle =
@@ -414,6 +416,7 @@ export type NodeConfigByType = {
   script: ScriptConfig;
   manual: ManualConfig;
   'github-ci': GitHubCIConfig;
+  'send-webhook': SendWebhookConfig;
 };
 
 export interface WorkflowNode<T extends NodeType = NodeType> {
@@ -531,6 +534,7 @@ export interface RunSnapshot {
   events?: WorkflowEvent[];
   /** Latest CI state by namespaced node ID, independent of bounded event logs. */
   githubCI?: Record<string, GitHubCIOutput>;
+  webhooks?: Record<string, SendWebhookOutput>;
   /**
    * When a node is parked waiting for an external signal: a directory lock,
    * a concurrency slot, or a human acceptance decision. Set when the wait
@@ -784,7 +788,16 @@ export interface GitHubCIUpdatedEvent {
   output: GitHubCIOutput;
 }
 
+export interface WebhookUpdatedEvent {
+  type: 'webhook_updated';
+  runId?: string;
+  correlationId?: string;
+  nodeId: string;
+  output: SendWebhookOutput;
+}
+
 export type WorkflowEvent =
+  | WebhookUpdatedEvent
   | GitHubCIUpdatedEvent
   | RunStartedEvent
   | NodeStartedEvent
@@ -884,6 +897,8 @@ export interface RunWorktrees {
 }
 
 export interface NodeExecutorContext {
+  /** Persist sanitized attempt evidence before sending and after completion. */
+  reportWebhookProgress?: (output: SendWebhookOutput) => void | Promise<void>;
   /** Current run id. Used by executors that mint per-run resources (e.g.
    * the SetOutput MCP token registry) and need a run-scoped key for sweep
    * on settle. Optional for back-compat with unit-test contexts that

@@ -214,7 +214,7 @@ test('Dispatch opens on home, preserves workflow filters from legacy editor link
   await page.goto(`/${DEFAULT_WORKFLOW_ID}#dispatch?workflow=${DEFAULT_WORKFLOW_ID}`);
   await expect(page).toHaveURL(new RegExp(`/#dispatch\\?workflow=${DEFAULT_WORKFLOW_ID}$`));
   await expect(page.getByRole('button', { name: 'Dispatch' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('heading', { name: 'Triggers' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dispatch' })).toBeVisible();
   await expect(page.locator('.dsp-filter-chip')).toContainText(DEFAULT_WORKFLOW_ID);
   await expect(page.getByTestId('flow-list')).toHaveCount(0);
 
@@ -223,7 +223,7 @@ test('Dispatch opens on home, preserves workflow filters from legacy editor link
   await expect(page.getByTestId('flow-list')).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/#dispatch\\?workflow=${DEFAULT_WORKFLOW_ID}$`));
-  await expect(page.getByRole('heading', { name: 'Triggers' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dispatch' })).toBeVisible();
   await page.getByRole('button', { name: 'Dispatch' }).click();
   await expect(page.getByTestId('flow-list')).toBeVisible();
 });

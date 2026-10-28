@@ -56,7 +56,7 @@ it('shows Dispatch at the home hash and returns to flows from the brand', async 
   });
   window.location.hash = '#dispatch';
   renderList();
-  expect(await screen.findByRole('heading', { name: 'Triggers' })).toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'Dispatch' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Dispatch' })).toHaveAttribute('aria-pressed', 'true');
   expect(screen.queryByTestId('flow-empty')).toBeNull();
   fireEvent.click(screen.getByRole('link', { name: 'Inf·Loop home' }));

@@ -748,6 +748,7 @@ export class RunController {
         type: 'run_finished',
         status: finalStatus,
         scope: this.snapshot.scope,
+        errorMessage,
       });
     } finally {
       captureUnsub();

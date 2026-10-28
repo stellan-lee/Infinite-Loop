@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState } from 'react';
+import { useViewportPopover } from './useViewportPopover';
 
 export interface SelectMenuOption<V extends string> {
   value: V;
@@ -28,13 +29,14 @@ export default function SelectMenu<V extends string>({
 }: Props<V>) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLDivElement>(open, rootRef, { maxHeight: 240 });
   const listboxId = useId();
   const current = options.find((o) => o.value === value);
 
   useEffect(() => {
     if (!open) return;
     const onDocDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(e.target as Node) && !panelRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -67,8 +69,10 @@ export default function SelectMenu<V extends string>({
           ▾
         </span>
       </button>
-      {open && (
+      {open && portal(
         <div
+          ref={panelRef}
+          style={panelStyle}
           id={listboxId}
           role="listbox"
           aria-label={ariaLabel}

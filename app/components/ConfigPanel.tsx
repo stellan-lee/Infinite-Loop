@@ -19,6 +19,7 @@ import FolderPicker from './FolderPicker';
 import ProviderIcon from './icons/ProviderIcon';
 import SelectMenu from './SelectMenu';
 import TemplateField from './TemplateField';
+import { useViewportPopover } from './useViewportPopover';
 import { TriggersPanel } from './TriggersPanel';
 import {
   Segmented,
@@ -80,24 +81,59 @@ function availableRefs(workflow: Workflow | null, selfId: string): string[] {
 /** Keyboard-accessible explanatory copy, shown beside a control's title. */
 function FieldHelp({ label, children }: { label: string; children: ReactNode }) {
   const tooltipId = useId();
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const open = hovered || focused;
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLSpanElement>(open, triggerRef, { minWidth: 300, maxHeight: 240 });
   return (
-    <span className="field-label-help">
+    <span
+      className="field-label-help"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={(event) => {
+        if (!(event.relatedTarget instanceof Node) || !panelRef.current?.contains(event.relatedTarget)) setHovered(false);
+      }}
+    >
       <button
+        ref={triggerRef}
         type="button"
         className="field-label-help-trigger"
         aria-label={`More information about ${label}`}
         aria-describedby={tooltipId}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
+            setHovered(false);
+            setFocused(false);
             event.currentTarget.blur();
           }
         }}
       >
         ?
       </button>
-      <span id={tooltipId} role="tooltip" className="field-label-tooltip">
+      {portal(<span
+        ref={panelRef}
+        id={tooltipId}
+        role="tooltip"
+        className="field-label-tooltip"
+        style={{
+          ...panelStyle,
+          width: open ? panelStyle.width : 'min(300px, calc(100vw - 16px))',
+          maxHeight: open ? panelStyle.maxHeight : 240,
+          display: open ? 'block' : 'none',
+          visibility: open ? 'visible' : 'hidden',
+          opacity: open ? 1 : 0,
+          transform: 'none',
+          pointerEvents: open ? 'auto' : 'none',
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={(event) => {
+          if (!(event.relatedTarget instanceof Node) || !event.relatedTarget.contains(triggerRef.current)) setHovered(false);
+        }}
+      >
         {children}
-      </span>
+      </span>)}
     </span>
   );
 }
@@ -464,7 +500,7 @@ function AgentPicker({
       if (e.button !== 0) return;
       const root = wrapRef.current;
       if (!root) return;
-      if (!root.contains(e.target as Node)) setOpen(false);
+      if (!root.contains(e.target as Node) && !panelRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -484,6 +520,7 @@ function AgentPicker({
   const filtered = needle.length
     ? choices.filter((a) => a.name.toLowerCase().includes(needle))
     : choices;
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLUListElement>(open && filtered.length > 0, wrapRef, { maxHeight: 260 });
 
   return (
     <div ref={wrapRef} className="agent-picker">
@@ -500,8 +537,8 @@ function AgentPicker({
           setOpen(true);
         }}
       />
-      {open && filtered.length > 0 && (
-        <ul role="listbox" aria-label="Available agents" className="agent-picker-panel">
+      {open && filtered.length > 0 && portal(
+        <ul ref={panelRef} style={panelStyle} role="listbox" aria-label="Available agents" className="agent-picker-panel">
           {filtered.map((a) => {
             const groupLabel =
               a.group === 'user'
@@ -555,13 +592,14 @@ function WorkflowPicker({
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLUListElement>(open, wrapRef, { maxHeight: 260 });
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const root = wrapRef.current;
-      if (root && !root.contains(e.target as Node)) setOpen(false);
+      if (root && !root.contains(e.target as Node) && !panelRef.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false);
@@ -597,8 +635,10 @@ function WorkflowPicker({
           ▾
         </span>
       </button>
-      {open && (
+      {open && portal(
         <ul
+          ref={panelRef}
+          style={panelStyle}
           role="listbox"
           aria-label="Available workflows"
           className="agent-picker-panel"
@@ -746,6 +786,7 @@ function CwdField({
       )}
       {open && (
         <FolderPicker
+          anchorRef={ref}
           initialPath={value && value.startsWith('/') ? value : undefined}
           onSelect={(picked) => {
             onChange(picked);

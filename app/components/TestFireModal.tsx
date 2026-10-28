@@ -64,27 +64,36 @@ export function TestFireModal({ trigger, plugin, onClose }: TestFireModalProps) 
       <div className="modal trg-form-modal" onClick={(e) => e.stopPropagation()}>
         <header className="modal-head">Test fire — {trigger.name}</header>
 
-        <label className="trg-form-row">
-          <span className="trg-form-label">Headers (one per line, key: value)</span>
-          <textarea
-            className="trg-form-textarea"
-            rows={2}
-            value={headers}
-            onChange={(e) => setHeaders(e.target.value)}
-            aria-label="Headers"
-          />
-        </label>
+        <div className="modal-body">
+          <label className="trg-form-row">
+            <span className="trg-form-label">Headers (one per line, key: value)</span>
+            <textarea
+              className="trg-form-textarea"
+              rows={2}
+              value={headers}
+              onChange={(e) => setHeaders(e.target.value)}
+              aria-label="Headers"
+            />
+          </label>
 
-        <label className="trg-form-row">
-          <span className="trg-form-label">Payload (JSON)</span>
-          <textarea
-            className="trg-form-textarea"
-            rows={10}
-            value={payload}
-            onChange={(e) => setPayload(e.target.value)}
-            aria-label="Payload"
-          />
-        </label>
+          <label className="trg-form-row">
+            <span className="trg-form-label">Payload (JSON)</span>
+            <textarea
+              className="trg-form-textarea"
+              rows={10}
+              value={payload}
+              onChange={(e) => setPayload(e.target.value)}
+              aria-label="Payload"
+            />
+          </label>
+
+          {error && <div className="trg-form-error">{error}</div>}
+          {response && (
+            <div className="trg-form-test-response">
+              <code>{response.status}</code> <code>{JSON.stringify(response.body)}</code>
+            </div>
+          )}
+        </div>
 
         <div className="modal-actions">
           {event?.examplePayload !== undefined && (
@@ -98,12 +107,6 @@ export function TestFireModal({ trigger, plugin, onClose }: TestFireModalProps) 
           <button type="button" className="btn" onClick={onClose}>Close</button>
         </div>
 
-        {error && <div className="trg-form-error">{error}</div>}
-        {response && (
-          <div className="trg-form-test-response">
-            <code>{response.status}</code> <code>{JSON.stringify(response.body)}</code>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -1394,7 +1394,7 @@ button.event-card-head-toggle:focus-visible {
 .wf-menu-panel {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   min-width: 280px;
   background: var(--bg-deep);
   border: 1px solid var(--accent-live);
@@ -1402,6 +1402,28 @@ button.event-card-head-toggle:focus-visible {
   z-index: 20;
   display: flex;
   flex-direction: column;
+}
+
+/* Floating panels are portalled out of scroll containers. Their shared
+ * positioning hook supplies viewport bounds; oversized content stays reachable. */
+.wf-menu-panel,
+.agent-picker-panel,
+.select-menu-panel,
+.folder-picker,
+.fp-menu,
+.template-picker-panel,
+.run-menu {
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}
+.wf-menu-panel > *,
+.folder-picker > * {
+  flex-shrink: 0;
+}
+.wf-menu-panel .wf-menu-list,
+.folder-picker .folder-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .wf-menu-list {
@@ -1903,16 +1925,18 @@ button.event-card-head-toggle:focus-visible {
   color: var(--accent-live);
 }
 .agent-picker-name {
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
 .agent-picker-meta {
+  min-width: 0;
   font-size: 11.5px;
   color: var(--fg-dim);
   letter-spacing: 0.04em;
   text-transform: lowercase;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* Button-style trigger reused by single-select pickers (e.g. Subworkflow's
@@ -2023,36 +2047,8 @@ button.event-card-head-toggle:focus-visible {
 }
 .field .cwd-preview.is-empty { color: var(--fg-muted); }
 
-/* Hover tooltip — appears instantly (no native title-attr delay) showing
- * the full untruncated path. CSS-only via `::after` + attr(data-tooltip).
- * Hidden when the field is empty (no data-tooltip attribute → ::after
- * content is the empty string, made invisible by `:not([data-tooltip])`). */
-.field .cwd-preview[data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 6px);
-  max-width: min(560px, 80vw);
-  padding: 6px 10px;
-  background: var(--bg-elevated);
-  color: var(--fg);
-  border: 1px solid var(--border-strong);
-  font-family: var(--mono);
-  font-size: 13.5px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-  pointer-events: none;
-  z-index: 100;
-  opacity: 0;
-  transform: translateY(2px);
-  transition: opacity 100ms ease, transform 100ms ease;
-}
-.field .cwd-preview[data-tooltip]:hover::after,
-.field .cwd-preview[data-tooltip]:focus-visible::after {
-  opacity: 1;
-  transform: translateY(0);
-}
+/* The preview's native title exposes its full path without an absolutely
+ * positioned tooltip that can be clipped by the inspector scrollport. */
 
 /* segmented control replaces native <select> */
 .segmented {
@@ -2277,13 +2273,13 @@ input[type='number'].no-spin {
 
 .folder-picker-row-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .folder-picker-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
   padding: 8px;
@@ -3106,7 +3102,12 @@ input[type='number'].no-spin {
 .canvas-context-menu {
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  min-width: 200px;
+  min-width: min(200px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
   padding: 6px 0;
   font-family: var(--mono);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
@@ -3302,6 +3303,8 @@ input[type='number'].no-spin {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 8px;
+  overflow: auto;
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(2px);
 }
@@ -3310,10 +3313,12 @@ input[type='number'].no-spin {
   flex-direction: column;
   gap: 16px;
   width: min(560px, calc(100vw - 32px));
-  min-width: min(420px, calc(100vw - 32px));
-  max-width: 560px;
-  max-height: min(720px, calc(100vh - 48px));
-  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  max-width: min(560px, 100%);
+  max-height: min(720px, calc(100dvh - 16px));
+  overflow: auto;
+  overflow-wrap: anywhere;
   padding: 22px 24px 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
@@ -3321,6 +3326,7 @@ input[type='number'].no-spin {
   font-family: var(--mono);
 }
 .modal h2 {
+  flex-shrink: 0;
   margin: 0;
   font-family: var(--serif);
   font-weight: 500;
@@ -3329,6 +3335,7 @@ input[type='number'].no-spin {
   color: var(--fg);
 }
 .modal-head {
+  flex-shrink: 0;
   margin: 0;
   padding-bottom: 10px;
   border-bottom: 1px dashed var(--border);
@@ -3343,6 +3350,7 @@ input[type='number'].no-spin {
   flex-direction: column;
   gap: 16px;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -3388,6 +3396,8 @@ input[type='number'].no-spin {
 }
 .modal-actions {
   display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
   margin: 0 -24px;
@@ -4379,19 +4389,6 @@ input[type='number'].no-spin {
   align-items: center;
   margin-left: 6px;
 }
-/* Anchor label guidance inside the field so the inspector's scrolling
- * boundary cannot clip a tooltip centered on the help icon. */
-.field-label:has(.field-label-help) {
-  position: relative;
-}
-.field-label > .field-label-help {
-  position: static;
-}
-.field-label > .field-label-help > .field-label-tooltip {
-  left: 0;
-  max-width: min(300px, 100%, calc(100vw - 48px));
-  transform: none;
-}
 .field-label-required {
   margin-left: 4px;
   color: var(--accent-err);
@@ -4436,21 +4433,9 @@ input[type='number'].no-spin {
   font-weight: 400;
   letter-spacing: 0.01em;
   line-height: 1.5;
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-}
-.field-label-help:hover .field-label-tooltip,
-.field-label-help:focus-within .field-label-tooltip {
   opacity: 1;
-  visibility: visible;
-}
-/* Later fields otherwise paint over a tooltip because each flex item follows
- * normal document stacking. Raise the active field as a whole. */
-.config-stub .field:has(.field-label-help:hover),
-.config-stub .field:has(.field-label-help:focus-within) {
-  position: relative;
-  z-index: 2;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
 }
 .checkbox-row-with-help {
   display: flex;

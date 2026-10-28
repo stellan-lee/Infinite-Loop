@@ -83,6 +83,33 @@ describe('CanvasContextMenu', () => {
     expect(root.style.top).toBe(`${at.clientY}px`);
   });
 
+  it('keeps a tall menu inside a smaller viewport after resizing', async () => {
+    render(<CanvasContextMenu open={{ ...at, clientX: 900, clientY: 700 }} onClose={() => {}} onPick={() => {}} />);
+    await screen.findByLabelText('add codex agent node');
+    const root = screen.getByLabelText('canvas context menu');
+    root.getBoundingClientRect = () => ({
+      width: 200,
+      height: Math.min(600, parseFloat(root.style.maxHeight)),
+    } as DOMRect);
+    const originalWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+    const originalHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    try {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 320 });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 240 });
+      fireEvent(window, new Event('resize'));
+      expect(root.style.maxHeight).toBe('224px');
+      expect(root.style.maxWidth).toBe('304px');
+      expect(root.style.left).toBe('112px');
+      expect(root.style.top).toBe('8px');
+      expect(root.parentElement).toBe(document.body);
+    } finally {
+      if (originalWidth) Object.defineProperty(window, 'innerWidth', originalWidth);
+      else Reflect.deleteProperty(window, 'innerWidth');
+      if (originalHeight) Object.defineProperty(window, 'innerHeight', originalHeight);
+      else Reflect.deleteProperty(window, 'innerHeight');
+    }
+  });
+
   it('calls onPick with the item + at-position then onClose when an item is clicked', async () => {
     const onPick = mock<(item: ContextMenuItem, at: ContextMenuOpenAt) => void>(() => {});
     const onClose = mock<() => void>(() => {});

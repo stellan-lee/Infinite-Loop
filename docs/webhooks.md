@@ -35,6 +35,18 @@ Then in your repo: **Settings → Webhooks → Add webhook**:
 
 Hit **Test** on any trigger row to open the test-fire modal. Edit a JSON payload (pre-filled from the plugin's example), set headers, and Send. You'll see the real webhook response (202, 204, 422, …) so you can debug predicates and input mapping without leaving the UI.
 
+## Received messages
+
+Open **Dispatch → Messages** to inspect deliveries across all Dispatch plugins. The history includes test fires, ignored messages, and rejected requests, including requests to unknown or disabled triggers. Filter by trigger or workflow, select a message to inspect it, and use **Load older** to browse earlier deliveries.
+
+Each message records its receipt time, source service, sender identity when supplied by the payload, request body, trigger, target workflow, and HTTP outcome. Sender identities are claims from the payload. Unknown trigger URLs have no configured source or workflow to display.
+
+Workflow state updates from **Queued** to **Running** and then to its final status. A running workflow shows its current state; completed workflows show their output or failure details. Messages and recorded results persist across server restarts independently of run-history retention.
+
+Body capture is bounded at 1 MiB. Oversized or unreadable bodies are explicitly marked as truncated or unavailable. Receipt history is protected by the same authentication as the management API; incoming webhook URLs still use their existing authentication rules. If a receipt cannot be created on disk, the server returns `503 receipt-unavailable` before starting a workflow.
+
+The history covers Dispatch's `/api/webhook/<triggerId>` endpoint. The separate GitHub CI reconciliation receiver at `/api/webhook/github-ci` is outside this history.
+
 ## Adding a plugin
 
 Plugins are pure JSON. Create `webhook-plugins/<id>.json`:
@@ -83,3 +95,4 @@ The unguessable `triggerId` in the URL is the credential. There's no HMAC verifi
 
 - `triggers/<id>.json` — one file per trigger.
 - `webhook-plugins/<id>.json` — one file per plugin (Generic is built-in; you don't need to ship a file for it).
+- `<data directory>/webhook-receipts/` — saved request bodies, workflow results, and lightweight list summaries. Receipts are not automatically pruned, so storage usage grows with deliveries and retained payloads.

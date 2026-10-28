@@ -25,7 +25,7 @@ export const FAKE_AGENT = path.join(FIXTURES_DIR, 'fake-agent.sh');
 /** Every `*.json` here is copied into a seeded data dir's `workflows/`. */
 export const WORKFLOWS_FIXTURE_DIR = path.join(FIXTURES_DIR, 'workflows');
 
-/** The workflow id Workspace.tsx auto-loads on canvas mount (DEFAULT_WORKFLOW_ID). */
+/** The seeded flow used by canvas, run, and routing smoke tests. */
 export const DEFAULT_WORKFLOW_ID = 'loop-claude-until-condition';
 /** Workflow the crash-recovery spec runs — its agent timeout far outlasts the
  *  crash window, so only the SIGKILL can interrupt the run. */

@@ -6,6 +6,7 @@ import {
   Controls,
   ReactFlow,
   ReactFlowProvider,
+  useNodesInitialized,
   useReactFlow,
   type ColorMode,
   type Connection,
@@ -352,6 +353,19 @@ function CanvasInner() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   const { screenToFlowPosition, fitView, getNode } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  const [mobileViewport, setMobileViewport] = useState<string | null>(null);
+  useEffect(() => {
+    const updateViewport = () => setMobileViewport(
+      window.matchMedia('(max-width: 920px)').matches
+        ? `${window.innerWidth}x${window.innerHeight}`
+        : null,
+    );
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+    return () => window.removeEventListener('resize', updateViewport);
+  }, []);
+  const fitMinZoom = mobileViewport ? 0.1 : 0.6;
 
   // Sync xyflow's color mode with the app theme (set on
   // `document.documentElement.dataset.theme` by the pre-paint script in
@@ -374,21 +388,20 @@ function CanvasInner() {
   }, []);
   const colorMode: ColorMode = docTheme;
 
-  // Fit the viewport to the workflow once per loaded workflow. Without this
-  // an opened workflow whose nodes sit at large x/y may render partially
-  // behind the palette or off the right edge.
+  // Fit measured nodes on load and after mobile orientation/viewport changes.
+  // A desktop minimum zoom clips longer workflows on a narrow phone canvas.
   const fittedFor = useRef<string | null>(null);
   useEffect(() => {
     const id = currentWorkflow?.id ?? null;
     const hasNodes = (currentWorkflow?.nodes?.length ?? 0) > 0;
-    if (!id || !hasNodes || fittedFor.current === id) return;
-    fittedFor.current = id;
-    // Defer to the next frame so xyflow has measured the freshly-mounted nodes.
+    const fitKey = `${id}:${mobileViewport ?? 'desktop'}`;
+    if (!id || !hasNodes || !nodesInitialized || fittedFor.current === fitKey) return;
     const raf = requestAnimationFrame(() => {
-      fitView({ padding: 0.14, maxZoom: 1.05, minZoom: 0.6, duration: 200 });
+      fittedFor.current = fitKey;
+      void fitView({ padding: 0.14, maxZoom: 1.05, minZoom: fitMinZoom, duration: 200 });
     });
     return () => cancelAnimationFrame(raf);
-  }, [currentWorkflow?.id, currentWorkflow?.nodes?.length, fitView]);
+  }, [currentWorkflow?.id, currentWorkflow?.nodes?.length, fitView, nodesInitialized, mobileViewport, fitMinZoom]);
 
   // Pan-to-node requests from outside the canvas (e.g. clicking a node card
   // in the recorded run history). The `seq` field on `panRequest` advances on
@@ -720,8 +733,9 @@ function CanvasInner() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         colorMode={colorMode}
+        minZoom={mobileViewport ? 0.1 : 0.5}
         fitView
-        fitViewOptions={{ padding: 0.14, maxZoom: 1.05, minZoom: 0.6 }}
+        fitViewOptions={{ padding: 0.14, maxZoom: 1.05, minZoom: fitMinZoom }}
         connectionLineType={ConnectionLineType.Bezier}
         defaultEdgeOptions={{ type: 'default', style: { strokeWidth: 2 } }}
         // Keep a drag focused on repositioning the card. React Flow otherwise

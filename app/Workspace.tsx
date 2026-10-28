@@ -15,45 +15,97 @@ import { GitHubCIDetails, latestCIOutput } from './components/github-ci-details'
 import { findWorkflowNode } from '../lib/shared/workflow-graph';
 import RunView from './components/RunView';
 import RunHistory from './components/RunHistory';
-import WorkflowMenu from './components/WorkflowMenu';
 import { useViewportPopover } from './components/useViewportPopover';
-import ThemeToggle from './components/ThemeToggle';
-import { QueueBadge } from './components/QueueBadge';
 import { ActiveRunsBadge } from './components/ActiveRunsBadge';
-import { DispatchView } from './components/DispatchView';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEngineWebSocket } from '../lib/client/ws-client';
 import { useWorkflowStore } from '../lib/client/workflow-store-client';
-import { useAutoSave } from '../lib/client/use-auto-save';
+import { flushPendingWorkflow } from '../lib/client/workflow-navigation';
+import type { Workflow } from '../lib/shared/workflow';
 
-const DEFAULT_WORKFLOW_ID = 'loop-claude-until-condition';
 const RIGHT_WIDTH_STORAGE_KEY = 'infinite_loop:right-width';
 const RIGHT_WIDTH_DEFAULT = 440;
 const RIGHT_WIDTH_MIN = 280;
 const CANVAS_MIN_WIDTH = 360;
 
-export default function Workspace() {
-  useEngineWebSocket();
-  useAutoSave();
-
+export default function Workspace({ flowId }: { flowId: string }) {
+  const router = useRouter();
   const currentWorkflow = useWorkflowStore((s) => s.currentWorkflow);
+  const isDirty = useWorkflowStore((s) => s.isDirty);
+  const activeRunId = useEngineWebSocket(currentWorkflow?.id === flowId ? flowId : null);
   const runStatus = useWorkflowStore((s) => s.runStatus);
   const wsStatus = useWorkflowStore((s) => s.connectionStatus);
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const runEvents = useWorkflowStore((s) => s.runEvents);
   const githubCI = useWorkflowStore((s) => s.githubCI);
   const loadWorkflow = useWorkflowStore((s) => s.loadWorkflow);
-  const saveCurrentWorkflow = useWorkflowStore((s) => s.saveCurrentWorkflow);
   const selectNode = useWorkflowStore((s) => s.selectNode);
   const undo = useWorkflowStore((s) => s.undo);
   const redo = useWorkflowStore((s) => s.redo);
   const isRunning = runStatus === 'running';
 
-  const [view, setView] = useState<'editor' | 'dispatch'>('editor');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
+  const [navigating, setNavigating] = useState(false);
+  const mounted = useRef(true);
+  const navigationVersion = useRef(0);
+  const navigationBlocked = useRef(false);
+  const ready = currentWorkflow?.id === flowId && !loadError;
+
+  const setNavigationBusy = useCallback((value: boolean) => {
+    navigationBlocked.current = value;
+    if (mounted.current) setNavigating(navigationBlocked.current);
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    const invalidateNavigation = () => {
+      navigationVersion.current += 1;
+      setNavigationBusy(false);
+    };
+    window.addEventListener('popstate', invalidateNavigation);
+    return () => {
+      mounted.current = false;
+      navigationVersion.current += 1;
+      window.removeEventListener('popstate', invalidateNavigation);
+    };
+  }, [flowId, setNavigationBusy]);
+
+  async function navigate(href: string, replace = false) {
+    if (!mounted.current) return;
+    const version = ++navigationVersion.current;
+    setNavigationError(null);
+    setNavigationBusy(true);
+    try {
+      await flushPendingWorkflow();
+      if (!mounted.current || version !== navigationVersion.current) return;
+      if (replace) router.replace(href);
+      else router.push(href);
+      if (href === window.location.pathname) setNavigationBusy(false);
+    } catch (err) {
+      if (!mounted.current || version !== navigationVersion.current) return;
+      setNavigationError(err instanceof Error ? err.message : 'Could not save changes');
+      setNavigationBusy(false);
+      throw err;
+    }
+  }
+
+  function onNavigateLink(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    void navigate(href).catch(() => {});
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const sync = () => setView(window.location.hash.startsWith('#dispatch') ? 'dispatch' : 'editor');
+    const sync = () => {
+      if (window.location.hash.startsWith('#dispatch')) {
+        void navigate(`/${window.location.hash}`, true).catch(() => {});
+      }
+    };
     sync();
     window.addEventListener('hashchange', sync);
     return () => window.removeEventListener('hashchange', sync);
@@ -64,6 +116,15 @@ export default function Workspace() {
   // typing in the prompt textarea isn't blown away by a workflow rollback.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (navigationBlocked.current && (
+        key === 'delete' || key === 'backspace' ||
+        ((e.metaKey || e.ctrlKey) && (key === 'z' || key === 'y'))
+      )) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
       if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key !== 'z' && e.key !== 'Z') return;
       const target = e.target as HTMLElement | null;
@@ -79,12 +140,31 @@ export default function Workspace() {
       if (e.shiftKey) redo();
       else undo();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [undo, redo]);
 
   const [rightWidth, setRightWidth] = useState<number>(RIGHT_WIDTH_DEFAULT);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [mobilePaletteOpen, setMobilePaletteOpen] = useState(false);
+  const paletteRef = useRef<HTMLDivElement>(null);
+  const paletteToggleRef = useRef<HTMLButtonElement>(null);
+  const closeMobilePalette = useCallback(() => {
+    setMobilePaletteOpen(false);
+    paletteToggleRef.current?.focus();
+  }, []);
+  const openMobilePalette = useCallback(() => {
+    if (window.matchMedia('(max-width: 920px)').matches) setMobilePaletteOpen(true);
+  }, []);
+  useEffect(() => {
+    if (!mobilePaletteOpen) return;
+    paletteRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMobilePalette();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobilePaletteOpen, closeMobilePalette]);
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [runChevronOpen, setRunChevronOpen] = useState(false);
   const runGroupRef = useRef<HTMLDivElement | null>(null);
@@ -142,38 +222,38 @@ export default function Workspace() {
   }, []);
 
   useEffect(() => {
-    if (currentWorkflow) return;
+    if (useWorkflowStore.getState().currentWorkflow?.id === flowId) return;
     let cancelled = false;
+    setLoadError(null);
+    setMissing(false);
     (async () => {
       try {
-        let wf: unknown = null;
-        const defaultRes = await fetch(`/api/workflows/${DEFAULT_WORKFLOW_ID}`);
-        if (defaultRes.ok) {
-          const data = await defaultRes.json();
-          wf = data?.workflow;
-        } else if (defaultRes.status === 404) {
-          const listRes = await fetch('/api/workflows');
-          if (listRes.ok) {
-            const data = await listRes.json();
-            const first = Array.isArray(data?.workflows) ? data.workflows[0] : null;
-            if (first?.id) {
-              const firstRes = await fetch(`/api/workflows/${encodeURIComponent(first.id)}`);
-              if (firstRes.ok) {
-                const firstData = await firstRes.json();
-                wf = firstData?.workflow;
-              }
-            }
-          }
+        await flushPendingWorkflow();
+        if (cancelled) return;
+        const response = await fetch(`/api/workflows/${encodeURIComponent(flowId)}`);
+        if (cancelled) return;
+        if (response.status === 404) {
+          setMissing(true);
+          throw new Error('This flow could not be found.');
         }
-        if (!cancelled && wf) loadWorkflow(wf as Parameters<typeof loadWorkflow>[0]);
-      } catch {
-        // leave canvas empty so the user can still create a fresh workflow
+        if (!response.ok) throw new Error(`Could not load this flow (${response.status}).`);
+        const data = (await response.json()) as { workflow?: Workflow };
+        if (!data.workflow || data.workflow.id !== flowId || !Array.isArray(data.workflow.nodes) || !Array.isArray(data.workflow.edges)) {
+          throw new Error('Could not read this flow.');
+        }
+        if (!cancelled) {
+          useWorkflowStore.getState().resetRun();
+          useWorkflowStore.getState().setInspectedRunEvents(null);
+          loadWorkflow(data.workflow);
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load this flow.');
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [currentWorkflow, loadWorkflow]);
+  }, [flowId, loadWorkflow, loadAttempt]);
 
   const onResizeStart = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -216,9 +296,7 @@ export default function Workspace() {
     // The run API deliberately loads the persisted workflow. Flush an edit
     // here instead of relying on the debounced autosave, so an immediately
     // added or reconfigured node is always part of the run being started.
-    if (useWorkflowStore.getState().isDirty) {
-      await saveCurrentWorkflow();
-    }
+    await flushPendingWorkflow();
     await fetch('/api/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -247,40 +325,61 @@ export default function Workspace() {
   }
 
   async function handleStop() {
-    await fetch('/api/run/stop', { method: 'POST' });
+    if (!activeRunId) return;
+    await fetch(`/api/run/stop?runId=${encodeURIComponent(activeRunId)}`, { method: 'POST' });
+  }
+
+  if (!ready) {
+    return (
+      <main className="flow-load-state">
+        <Link href="/" className="btn btn-ghost" onClick={(event) => onNavigateLink(event, '/')}>All flows</Link>
+        {navigationError && <p role="alert" className="flow-error">{navigationError}</p>}
+        {loadError ? (
+          <div data-testid="flow-load-error" role="alert">
+            <h1>{missing ? 'Flow not found' : 'Could not open flow'}</h1>
+            <p>{loadError}</p>
+            {!missing && <button type="button" className="btn" onClick={() => setLoadAttempt((value) => value + 1)}>Retry</button>}
+          </div>
+        ) : <p role="status">Loading flow…</p>}
+      </main>
+    );
   }
 
   return (
-    <>
-      <header className="top-bar">
-        <div className="brand">
+    <div className="workflow-editor">
+      {navigationError && <div role="alert" className="workflow-save-error">Could not save changes. {navigationError}</div>}
+      <header className="top-bar" inert={navigating}>
+        <Link href="/" className="brand" aria-label="Inf·Loop home" onClick={(event) => onNavigateLink(event, '/')}>
           <span
             className="brand-mark"
             data-ws={wsStatus}
             data-run={runStatus}
+            role="status"
             aria-label={`event stream ${wsStatus}, run ${runStatus}`}
             title={`event stream ${wsStatus} · run ${runStatus}`}
           />
           <span className="brand-text">
             Inf·Loop<em>Console</em>
           </span>
-        </div>
+        </Link>
 
         <div className="crumbs">
-          <WorkflowMenu />
+          <Link href="/" className="btn btn-ghost" onClick={(event) => onNavigateLink(event, '/')}>All flows</Link>
+          <span className="workflow-title" data-testid="workflow-title">
+            <span className="workflow-title-name">{currentWorkflow?.name}</span>
+            {isDirty && <span className="workflow-dirty" aria-label="unsaved changes">•</span>}
+          </span>
         </div>
 
         <div className="actions">
           <button
+            ref={paletteToggleRef}
             type="button"
-            className={`btn ${view === 'dispatch' ? 'btn-active' : ''}`}
-            onClick={() => { window.location.hash = view === 'dispatch' ? '' : '#dispatch'; }}
-          >
-            Dispatch
-          </button>
-          <ThemeToggle />
-          <Link href="/queue" className="btn btn-ghost">Queue</Link>
-          <QueueBadge />
+            className="btn btn-toggle mobile-palette-toggle"
+            aria-expanded={mobilePaletteOpen}
+            aria-controls="workspace-node-library"
+            onClick={() => setMobilePaletteOpen((open) => !open)}
+          >Nodes</button>
           <ActiveRunsBadge />
           <button
             type="button"
@@ -297,15 +396,13 @@ export default function Workspace() {
           >
             History
           </button>
-          <span className="pill" data-status={runStatus}>
-            <span className="dot" /> {runStatus}
-          </span>
           {isRunning ? (
             <button
               type="button"
               onClick={handleStop}
               className="btn btn-stop"
               aria-label="stop run"
+              disabled={!activeRunId}
             >
               Stop
             </button>
@@ -356,14 +453,18 @@ export default function Workspace() {
         </div>
       </header>
 
-      {view === 'dispatch' ? (
-        <DispatchView origin={typeof window !== 'undefined' ? window.location.origin : ''} />
-      ) : (
+      <div className="workflow-editor-content" inert={navigating}>
         <div
           className={`workspace ${showGlobalPanel ? 'workspace-tri' : 'workspace-bi'}`}
           style={{ '--right-w': `${rightWidth}px` } as CSSProperties}
         >
-          <Palette />
+          <div ref={paletteRef} id="workspace-node-library" className="workspace-palette" data-open={mobilePaletteOpen}>
+            <div className="mobile-palette-heading">
+              <span>Nodes</span>
+              <button type="button" className="btn btn-ghost" aria-label="Close nodes" onClick={closeMobilePalette}>Close</button>
+            </div>
+            <Palette onNodeAdded={closeMobilePalette} onSearch={openMobilePalette} />
+          </div>
           <Canvas />
           {selectedNodeId && (!showGlobalPanel || showLiveCIDetails) && (
             <div className="node-inspector-layer">
@@ -406,7 +507,7 @@ export default function Workspace() {
             </>
           )}
         </div>
-      )}
+      </div>
       {runModalOpen && currentWorkflow && (
         <RunInputsModal
           declared={currentWorkflow.inputs ?? []}
@@ -417,7 +518,7 @@ export default function Workspace() {
           onCancel={() => setRunModalOpen(false)}
         />
       )}
-    </>
+    </div>
   );
 }
 

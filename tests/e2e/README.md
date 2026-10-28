@@ -14,6 +14,8 @@ over HTTP.
 | ------------------------ | ---------------------------------------------------------------- |
 | `health.e2e.ts`          | `/api/health` answers 200 unauthenticated                        |
 | `auth.e2e.ts`            | API rejects anonymous calls; browser login flow works            |
+| `flow-routing.e2e.ts`    | Home owns flow creation, rename, delete, and opening; flow URLs, history, and pending-edit navigation work |
+| `home-jobs.e2e.ts`       | One home jobs list combines queued, live, and finished work with status colors, elapsed/stage updates, and failure recovery |
 | `canvas.e2e.ts`          | Console shell loads; seeded workflow renders on the canvas       |
 | `run.e2e.ts`             | UI-triggered run streams over SSE and lands in history           |
 | `webhook.e2e.ts`         | Webhook ingress runs a workflow and is recorded in the audit log |

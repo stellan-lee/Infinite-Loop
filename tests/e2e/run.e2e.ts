@@ -17,7 +17,7 @@ test('a UI-triggered run streams over SSE and lands succeeded in history', async
   page,
 }) => {
   await page.request.post('/api/auth', { data: { token: API_TOKEN } });
-  await page.goto('/');
+  await page.goto(`/${DEFAULT_WORKFLOW_ID}`);
   await expect(page.locator('[data-id="agent-1"]')).toBeVisible({
     timeout: 20_000,
   });

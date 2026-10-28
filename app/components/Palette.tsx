@@ -228,17 +228,18 @@ function handleDragStart(
   }
 }
 
-function handlePaletteItemClick(item: PaletteItem): void {
-  if (item.available === false) return;
-  if (typeof window === 'undefined') return;
+function handlePaletteItemClick(item: PaletteItem): boolean {
+  if (item.available === false) return false;
+  if (typeof window === 'undefined') return false;
   const isMobileLayout = window.matchMedia('(max-width: 920px)').matches;
-  if (!isMobileLayout) return;
+  if (!isMobileLayout) return false;
   const payload: DragPayload = { type: item.type };
   if (item.providerId) payload.providerId = item.providerId;
   window.dispatchEvent(new CustomEvent(ADD_NODE_EVENT, { detail: payload }));
+  return true;
 }
 
-export default function Palette() {
+export default function Palette({ onNodeAdded, onSearch }: { onNodeAdded?: () => void; onSearch?: () => void }) {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [openAiProvidersOpen, setOpenAiProvidersOpen] = useState(false);
@@ -332,11 +333,12 @@ export default function Palette() {
       const target = event.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) return;
       event.preventDefault();
+      onSearch?.();
       searchRef.current?.focus();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [onSearch]);
 
   return (
     <>
@@ -384,7 +386,7 @@ export default function Palette() {
                     // hover (native OS tooltip) instead of taking a row
                     // of vertical space in the card.
                     title={item.available === false ? item.healthMessage ?? 'Provider unavailable' : item.description}
-                    onClick={() => handlePaletteItemClick(item)}
+                    onClick={() => { if (handlePaletteItemClick(item)) onNodeAdded?.(); }}
                     onDragStart={(e) => handleDragStart(e, item)}
                   >
                     <span className="palette-icon" aria-hidden="true">
@@ -494,7 +496,7 @@ export default function Palette() {
                                 draggable={item.available !== false}
                                 aria-label={`add ${item.providerId} agent node`}
                                 title={item.available === false ? item.healthMessage ?? 'Provider unavailable' : item.description}
-                                onClick={() => handlePaletteItemClick(item)}
+                                onClick={() => { if (handlePaletteItemClick(item)) onNodeAdded?.(); }}
                                 onDragStart={(e) => handleDragStart(e, item)}
                               >
                                 <span
@@ -872,18 +874,18 @@ const paletteCss = `
     gap: 1px;
   }
   .palette-item {
-    min-height: 30px;
-    grid-template-columns: 10px 18px minmax(0, 1fr);
-    gap: 7px;
-    padding: 5px 8px 5px 4px;
+    min-height: 44px;
+    grid-template-columns: 26px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 8px 10px;
   }
   .palette-icon {
     font-size: 15px;
-    margin-left: -4px;
+    margin-left: 0;
   }
   .palette-name {
-    font-size: 11px;
-    letter-spacing: 0.12em;
+    font-size: 13px;
+    letter-spacing: 0;
   }
   .palette-empty {
     padding: 4px 8px;

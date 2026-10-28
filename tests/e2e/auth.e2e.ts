@@ -6,7 +6,7 @@
  * browser can sign in through the login page and reach the protected console.
  */
 import { expect, test } from '@playwright/test';
-import { API_TOKEN } from './lib/env';
+import { API_TOKEN, DEFAULT_WORKFLOW_ID } from './lib/env';
 
 test('a protected API route rejects requests with no credentials', async ({
   request,
@@ -36,9 +36,14 @@ test('an anonymous browser is redirected to /login and can sign in', async ({
   await page.fill('#login-token', API_TOKEN);
   await page.click('button.login-submit');
 
-  // A valid token sets the session cookie and lands back on the console.
-  await expect(page.locator('.top-bar')).toBeVisible();
+  // A valid token sets the session cookie and lands on the flow list.
+  await expect(page.getByTestId('flow-list')).toBeVisible();
   await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/?$/);
+});
+
+test('an anonymous deep link is gated before rendering an editor', async ({ page }) => {
+  await page.goto(`/${DEFAULT_WORKFLOW_ID}`);
+  await expect(page).toHaveURL(/\/login$/);
 });
 
 test('a rejected token surfaces an error and stays on /login', async ({

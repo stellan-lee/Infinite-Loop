@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WebhookPlugin, WebhookTrigger } from '@/lib/shared/trigger';
 import { TriggerForm } from './TriggerForm';
 import { TestFireModal } from './TestFireModal';
-import { useWorkflowStore } from '@/lib/client/workflow-store-client';
 
 export interface DispatchViewProps {
   origin: string;
@@ -26,16 +25,22 @@ export function DispatchView({ origin }: DispatchViewProps) {
   const [testingTrigger, setTestingTrigger] = useState<WebhookTrigger | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [workflowFilter, setWorkflowFilter] = useState<string | null>(null);
+  const refreshVersion = useRef(0);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; refreshVersion.current += 1; };
+  }, []);
 
   const refresh = useCallback(async () => {
+    const version = ++refreshVersion.current;
     try {
       const [t, p, w] = await Promise.all([
         fetch('/api/triggers').then((r) => r.json()),
         fetch('/api/webhook-plugins').then((r) => r.json()),
         fetch('/api/workflows').then((r) => r.json()),
       ]);
-      setTriggers(t.triggers as WebhookTrigger[]);
-      setPlugins(p.plugins as WebhookPlugin[]);
       // /api/workflows returns lightweight summaries; we need inputs too,
       // so re-fetch each workflow's full record on demand. For v2 simplicity,
       // we fetch a small per-id GET only when picked, kept locally via a
@@ -49,22 +54,31 @@ export function DispatchView({ origin }: DispatchViewProps) {
           return { id: s.id, name: s.name, inputs };
         }),
       );
+      if (!mounted.current || version !== refreshVersion.current) return;
+      setTriggers(t.triggers as WebhookTrigger[]);
+      setPlugins(p.plugins as WebhookPlugin[]);
       setWorkflows(full);
+      setError(null);
     } catch (err) {
-      setError((err as Error).message);
+      if (mounted.current && version === refreshVersion.current) setError((err as Error).message);
     }
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // Re-fetch when a trigger fires so lastFiredAt stays live.
-  const runEvents = useWorkflowStore((s) => s.runEvents);
+  // Dispatch lives on the home route, so it listens for trigger updates
+  // directly instead of relying on the editor's workflow-scoped event stream.
   useEffect(() => {
-    if (runEvents.some((e) => e.type === 'trigger_started')) {
-      void refresh();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runEvents.length]);
+    if (typeof EventSource === 'undefined') return;
+    const stream = new EventSource('/api/events');
+    stream.onopen = () => { void refresh(); };
+    stream.onmessage = (message) => {
+      try {
+        if ((JSON.parse(message.data) as { type?: string }).type === 'trigger_started') void refresh();
+      } catch { /* Ignore malformed or unrelated event data. */ }
+    };
+    return () => stream.close();
+  }, [refresh]);
 
   // Parse #dispatch?workflow=<id> from the URL hash.
   useEffect(() => {

@@ -33,9 +33,13 @@ export function TriggersPanel({ workflow }: TriggersPanelProps) {
         {count === null ? '…' : count} trigger{count === 1 ? '' : 's'} route{count === 1 ? 's' : ''} here.
       </span>
       <a
-        href="#dispatch"
+        href={`/#dispatch?workflow=${encodeURIComponent(workflow.id)}`}
         className="trg-summary-link"
-        onClick={(e) => { e.preventDefault(); window.location.hash = `#dispatch?workflow=${encodeURIComponent(workflow.id)}`; }}
+        onClick={(e) => {
+          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          window.location.hash = `#dispatch?workflow=${encodeURIComponent(workflow.id)}`;
+        }}
       >
         Manage in Dispatch →
       </a>

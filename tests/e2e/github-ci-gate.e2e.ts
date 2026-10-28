@@ -164,7 +164,7 @@ async function openBrowser(page: Page, harness: Harness): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const auth = await page.request.post(`${harness.server.baseUrl}/api/auth`, { data: { token: API_TOKEN } });
   expect(auth.status()).toBe(200);
-  await page.goto(harness.server.baseUrl);
+  await page.goto(`${harness.server.baseUrl}/${DEFAULT_WORKFLOW_ID}`);
   await expect(page.locator('[data-id="ci-gate"]')).toBeVisible({ timeout: 20_000 });
   await page.evaluate(() => new Promise<void>((resolve, reject) => {
     const w = window as unknown as ProbeWindow;

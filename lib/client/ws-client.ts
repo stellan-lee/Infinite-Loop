@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { RunSnapshot, WorkflowEvent } from '../shared/workflow';
 import { useWorkflowStore } from './workflow-store-client';
 
@@ -45,35 +45,58 @@ function isStateSnapshot(
  * `WorkflowEvent`s into the Zustand store. Reconnects automatically on drop
  * (the browser's EventSource handles backoff itself; we surface the status).
  */
-export function useEngineWebSocket(): void {
+export function useEngineWebSocket(workflowId?: string | null): string | undefined {
+  const [runId, setRunId] = useState<string>();
   const setConnectionStatus = useWorkflowStore((s) => s.setConnectionStatus);
   const appendRunEvent = useWorkflowStore((s) => s.appendRunEvent);
   const hydrateRun = useWorkflowStore((s) => s.hydrateRun);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    setRunId(undefined);
+    if (typeof window === 'undefined' || workflowId === null) return;
 
     const es = new EventSource('/api/events');
+    let active = true;
+    let selectedRunId: string | undefined;
     setConnectionStatus('connecting');
 
     es.onopen = () => setConnectionStatus('open');
 
     es.onmessage = (e) => {
+      if (!active) return;
       if (typeof e.data !== 'string' || e.data.length === 0) return;
       try {
         const data = JSON.parse(e.data);
         if (isWorkflowEvent(data)) {
+          if (workflowId) {
+            if (data.type === 'run_started') {
+              if (data.workflowId !== workflowId) return;
+              selectedRunId = data.runId;
+              setRunId(selectedRunId);
+            } else if (data.type === 'trigger_started') {
+              if (data.workflowId !== workflowId) return;
+            } else if (!selectedRunId || !('runId' in data) || data.runId !== selectedRunId) {
+              return;
+            }
+          }
           appendRunEvent(data);
         } else if (isStateSnapshot(data)) {
           // Initial frame on connect: hydrate run status AND the recent event
           // log so a page refresh mid-run brings back the live-node highlight
           // on the canvas plus the streaming-stdout history in the right
           // panel. Live events from this point onward append normally.
-          const status = data.state?.status ?? 'idle';
-          const events = Array.isArray(data.state?.events)
-            ? data.state.events
+          const state = workflowId
+            ? [...(data.runs ?? []), ...(data.state ? [data.state] : [])]
+              .filter((run) => run.workflowId === workflowId)
+              .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))[0]
+            : data.state;
+          selectedRunId = state?.runId;
+          setRunId(selectedRunId);
+          const status = state?.status ?? 'idle';
+          const events = Array.isArray(state?.events)
+            ? state.events
             : [];
-          hydrateRun({ status, events, githubCI: data.state?.githubCI });
+          hydrateRun({ status, events, githubCI: state?.githubCI });
         }
       } catch {
         // ignore malformed frames
@@ -86,7 +109,9 @@ export function useEngineWebSocket(): void {
     };
 
     return () => {
+      active = false;
       es.close();
     };
-  }, [setConnectionStatus, appendRunEvent, hydrateRun]);
+  }, [workflowId, setConnectionStatus, appendRunEvent, hydrateRun]);
+  return runId;
 }

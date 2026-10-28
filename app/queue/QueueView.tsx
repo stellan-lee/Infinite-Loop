@@ -191,7 +191,7 @@ export default function QueueView() {
           <h2>No queued runs.</h2>
           <p>Triggered runs will appear here while waiting to start.</p>
           <Link href="/" className="btn btn-ghost queue-empty-action">
-            Back to console
+            All flows
           </Link>
         </section>
       ) : (

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RunRecord, RunSummary } from '../../lib/shared/workflow';
 import { useWorkflowStore } from '../../lib/client/workflow-store-client';
 import { eventNodeId } from '../../lib/client/group-events';
-import { GroupedEventLog, JsonView } from './RunLog';
+import RunRecordDetails from './RunRecordDetails';
 
 interface Props {
   workflowId: string | undefined;
@@ -179,47 +179,14 @@ export default function RunHistory({ workflowId }: Props) {
         )}
 
         {record && !recordLoading && (
-          <>
-            <div className="run-view-log-row" aria-label="run metadata">
-              <span className="run-view-log-type">started</span>
-              <span className="run-view-log-payload">
-                {fmtTime(record.startedAt)}
-              </span>
-            </div>
-            <div className="run-view-log-row">
-              <span className="run-view-log-type">duration</span>
-              <span className="run-view-log-payload">
-                {fmtDuration(record.durationMs)}
-              </span>
-            </div>
-            {record.errorMessage ? (
-              <div className="run-view-log-row">
-                <span className="run-view-log-type">error</span>
-                <span className="run-view-log-payload">
-                  {record.errorMessage}
-                </span>
-              </div>
-            ) : null}
-            {record.truncated ? (
-              <div className="run-view-log-row">
-                <span className="run-view-log-type">notice</span>
-                <span className="run-view-log-payload">
-                  event log truncated — earliest events were dropped
-                </span>
-              </div>
-            ) : null}
-
-            <ScopeBlock scope={record.scope} />
-
-            <RecordedEventLog
-              record={record}
-              filterNodeId={filterActive ? selectedNodeId ?? undefined : undefined}
-              onCardActivate={(nodeId) => {
-                selectNode(nodeId);
-                requestPanToNode(nodeId);
-              }}
-            />
-          </>
+          <RunRecordDetails
+            record={record}
+            filterNodeId={filterActive ? selectedNodeId ?? undefined : undefined}
+            onCardActivate={(nodeId) => {
+              selectNode(nodeId);
+              requestPanToNode(nodeId);
+            }}
+          />
         )}
       </aside>
     );
@@ -274,60 +241,5 @@ export default function RunHistory({ workflowId }: Props) {
         ))}
       </div>
     </aside>
-  );
-}
-
-/** Collapsible "scope" view above the event log: shows the run's entire
- * accumulated scope (node outputs + seeded `inputs`/`globals`) as pretty
- * JSON. Reuses JsonView for long-string handling. Omitted entirely when
- * scope is empty so the panel stays uncluttered for trivial runs. */
-function ScopeBlock({ scope }: { scope: Record<string, Record<string, unknown>> }) {
-  const [open, setOpen] = useState(false);
-  const keys = Object.keys(scope);
-  if (keys.length === 0) return null;
-  return (
-    <section className="iob iob-scope" aria-label="run scope">
-      <button
-        type="button"
-        className="iob-toggle"
-        aria-expanded={open}
-        aria-label={`${open ? 'collapse' : 'expand'} scope`}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="iob-toggle-label">scope</span>
-        <span className="iob-toggle-hint">
-          {keys.length} {keys.length === 1 ? 'key' : 'keys'}
-        </span>
-        <span className="iob-toggle-fold" aria-hidden="true">
-          {open ? '▾' : '▸'}
-        </span>
-      </button>
-      {open ? (
-        <div className="iob-body">
-          <JsonView value={scope} />
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function RecordedEventLog({
-  record,
-  filterNodeId,
-  onCardActivate,
-}: {
-  record: RunRecord;
-  filterNodeId?: string;
-  onCardActivate?: (nodeId: string) => void;
-}) {
-  return (
-    <div className="run-view-log" aria-label="event log">
-      <GroupedEventLog
-        events={record.events}
-        filterNodeId={filterNodeId}
-        onCardActivate={onCardActivate}
-        showIO
-      />
-    </div>
   );
 }

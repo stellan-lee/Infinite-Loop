@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { DispatchView } from './DispatchView';
 import type { WebhookTrigger, WebhookPlugin } from '@/lib/shared/trigger';
 
@@ -29,11 +29,14 @@ const workflows = [
 ];
 
 const originalFetch = globalThis.fetch;
+const originalEventSource = globalThis.EventSource;
 const originalHash = window.location.hash;
 
 beforeEach(() => { window.location.hash = ''; });
 afterEach(() => {
+  cleanup();
   globalThis.fetch = originalFetch;
+  globalThis.EventSource = originalEventSource;
   window.location.hash = originalHash;
 });
 
@@ -86,5 +89,72 @@ describe('DispatchView', () => {
       expect(screen.getByText('generic-debug')).toBeTruthy();
     });
     window.location.hash = '';
+  });
+
+  test('refreshes a trigger after its event arrives on the home stream', async () => {
+    let stream: { onmessage: ((event: MessageEvent) => void) | null; close: () => void } | null = null;
+    let closed = false;
+    class FakeStream {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onopen: (() => void) | null = null;
+      close() { closed = true; }
+      constructor(public url: string) { stream = this; }
+    }
+    globalThis.EventSource = FakeStream as unknown as typeof EventSource;
+    let lastFiredAt: number | null = null;
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      const path = String(url);
+      if (path === '/api/triggers') return { json: async () => ({ triggers: [{ ...triggers[0], lastFiredAt }] }) } as Response;
+      if (path === '/api/webhook-plugins') return { json: async () => ({ plugins }) } as Response;
+      if (path === '/api/workflows') return { json: async () => ({ workflows }) } as Response;
+      if (path.startsWith('/api/workflows/')) return { json: async () => ({ workflow: { inputs: [] } }) } as Response;
+      throw new Error(`Unexpected fetch ${path}`);
+    }) as typeof fetch;
+    const { unmount } = render(<DispatchView origin="http://localhost:3000" />);
+    await waitFor(() => expect(screen.getByText('github-issue-opened')).toBeTruthy());
+    fireEvent.click(screen.getByText('github-issue-opened'));
+    expect(screen.getByText('Never')).toBeTruthy();
+    lastFiredAt = 1_700_000_000_000;
+    await act(async () => {
+      stream?.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ type: 'trigger_started' }) }));
+    });
+    await waitFor(() => expect(screen.queryByText('Never')).toBeNull());
+    unmount();
+    expect(closed).toBe(true);
+  });
+
+  test('keeps a newer trigger update when an older refresh finishes last', async () => {
+    let stream: { onmessage: ((event: MessageEvent) => void) | null } | null = null;
+    class FakeStream {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      close() {}
+      constructor() { stream = this; }
+    }
+    globalThis.EventSource = FakeStream as unknown as typeof EventSource;
+    let finishOld!: (value: Response) => void;
+    let reads = 0;
+    const response = (value: unknown) => ({ json: async () => value }) as Response;
+    globalThis.fetch = (async (url: RequestInfo | URL) => {
+      const path = String(url);
+      if (path === '/api/triggers') {
+        reads += 1;
+        return reads === 1
+          ? new Promise<Response>((resolve) => { finishOld = resolve; })
+          : response({ triggers: [{ ...triggers[0], name: 'Newer trigger' }] });
+      }
+      if (path === '/api/webhook-plugins') return response({ plugins });
+      if (path === '/api/workflows') return response({ workflows: [] });
+      throw new Error(`Unexpected fetch ${path}`);
+    }) as typeof fetch;
+    const { unmount } = render(<DispatchView origin="http://localhost:3000" />);
+    await waitFor(() => expect(finishOld).toBeDefined());
+    await act(async () => {
+      stream?.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ type: 'trigger_started' }) }));
+    });
+    expect(await screen.findByText('Newer trigger')).toBeTruthy();
+    await act(async () => finishOld(response({ triggers: [{ ...triggers[0], name: 'Older trigger' }] })));
+    expect(screen.getByText('Newer trigger')).toBeTruthy();
+    expect(screen.queryByText('Older trigger')).toBeNull();
+    unmount();
   });
 });

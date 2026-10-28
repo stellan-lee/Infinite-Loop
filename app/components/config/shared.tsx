@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { registerWorkflowEditor } from '../../../lib/client/workflow-navigation';
 
 export const DEBOUNCE_MS = 200;
 
@@ -40,11 +41,16 @@ export function useDebouncedString(
   );
 
   useEffect(() => {
-    return () => {
+    const commitPending = () => {
       if (!timer.current) return;
       clearTimeout(timer.current);
       timer.current = null;
       onCommitRef.current(latestValue.current);
+    };
+    const unregister = registerWorkflowEditor(commitPending);
+    return () => {
+      commitPending();
+      unregister();
     };
   }, []);
 

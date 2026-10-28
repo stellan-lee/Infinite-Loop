@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import localFont from 'next/font/local';
 import './globals.css';
+import WorkflowSession from './components/WorkflowSession';
 
 const newsreader = localFont({
   src: [
@@ -57,6 +58,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
        */}
       <body suppressHydrationWarning>
         <div className="grain" aria-hidden="true" />
+        <WorkflowSession />
         {children}
       </body>
     </html>

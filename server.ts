@@ -18,6 +18,7 @@ import {
   reconcileQueuedRuns,
 } from './lib/server/crash-recovery';
 import { triggerQueue } from './lib/server/trigger-queue-singleton';
+import { reconcileWebhookReceipts } from './lib/server/webhook-receipt-store';
 import { setBoundPort } from './lib/server/runtime';
 import { evaluatePosture, isLoopbackHost } from './lib/server/network-posture';
 import { validateConfig } from './lib/server/config-validation';
@@ -76,6 +77,7 @@ const MAX_PORT_FALLBACK = 20;
 try {
   reapOrphanProcesses();
   await reconcileInterruptedRuns();
+  await reconcileWebhookReceipts();
 } catch (err) {
   console.warn('crash recovery failed (continuing startup):', err);
 }

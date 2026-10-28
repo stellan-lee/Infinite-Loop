@@ -658,6 +658,7 @@ export interface RunFinishedEvent {
   correlationId?: string;
   status: Exclude<RunStatus, 'idle' | 'running'>;
   scope: Scope;
+  errorMessage?: string;
 }
 
 // Stage 4 (DirLockManager wiring) emits these. Defined now so the type lands

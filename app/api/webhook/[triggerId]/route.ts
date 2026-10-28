@@ -13,6 +13,10 @@ import { webhookRateLimiter } from '@/lib/server/rate-limiter';
 import { metrics, type WebhookOutcome } from '@/lib/server/metrics';
 import { createLogger } from '@/lib/server/logger';
 import { CORRELATION_HEADER, newCorrelationId } from '@/lib/server/correlation';
+import {
+  createWebhookReceipt, ensureWebhookReceiptSubscription, updateWebhookReceipt,
+} from '@/lib/server/webhook-receipt-store';
+import type { WebhookReceipt } from '@/lib/shared/webhook-receipt';
 import type { TriggerPredicate, WebhookTrigger } from '@/lib/shared/trigger';
 import type { Scope, Workflow } from '@/lib/shared/workflow';
 
@@ -52,59 +56,168 @@ function outcomeFromStatus(status: number): WebhookOutcome {
 }
 
 /**
- * Webhook ingress. A thin wrapper over `handleWebhook` whose only job is to
- * record one `infloop_webhook_requests_total` sample per request — the inner
- * handler has ~10 return points, so instrumenting the single HTTP status it
- * resolves to is both simpler and exhaustive. An unexpected throw (which
- * Next.js turns into a 500) is recorded as `error` before being rethrown so
- * the framework's error handling still applies.
+ * Capture a durable receipt before dispatching, then record its HTTP outcome
+ * and one webhook metric sample across all handler return points. Queue/run
+ * events advance execution state independently. Unexpected errors are recorded
+ * before being rethrown for the framework's error handling.
  */
 export async function POST(req: Request, ctx: RouteParams): Promise<Response> {
+  // Some route-level tests reset the shared event bus. Rewire the one receipt
+  // listener at ingress; this is also safe across Next dev module reloads.
+  ensureWebhookReceiptSubscription();
   // Mint the correlation id at the ingress edge — before any return point — so
   // every audit entry, log line, and (on accept) the queued run share one id.
   // Set on the response header for ALL outcomes, accepted or rejected, so a
   // rejected webhook is still traceable from its caller's side.
   const correlationId = newCorrelationId();
-  let res: Response;
+  const receivedAt = Date.now();
+  const { triggerId } = await ctx.params;
+  // Retain at most one allowed body, stopping the stream on overflow. This
+  // also captures deliveries that routing returns early (unknown, disabled,
+  // or mismatched triggers).
+  const captured = await captureBody(req);
+  let trigger: WebhookTrigger | undefined;
+  let source = 'Unknown';
   try {
-    res = await handleWebhook(req, ctx, correlationId);
+    trigger = (await triggerIndex.lookup(triggerId))?.trigger;
+    if (trigger) source = (await pluginIndex.lookup(trigger.pluginId))?.displayName ?? trigger.pluginId;
+  } catch (err) {
+    log.warn('could not resolve receipt source', { correlationId, err });
+  }
+  const receipt: WebhookReceipt = {
+    id: correlationId, receivedAt, updatedAt: receivedAt, serverPid: process.pid, triggerId,
+    triggerName: trigger?.name, workflowId: trigger?.workflowId,
+    source, sender: senderFromBody(trigger?.pluginId, captured.text),
+    state: 'received', body: captured.text,
+    bodyTruncated: captured.truncated || undefined,
+    bodyUnavailable: captured.unavailable || undefined,
+    contentType: req.headers.get('content-type') ?? undefined,
+  };
+  try {
+    createWebhookReceipt(receipt);
+  } catch (err) {
+    log.error('could not persist webhook receipt', { correlationId, err });
+    metrics.recordWebhookRequest('error');
+    const failed = NextResponse.json({ error: 'receipt-unavailable' }, { status: 503 });
+    failed.headers.set(CORRELATION_HEADER, correlationId);
+    return failed;
+  }
+  let res: Response;
+  const decision: { reason?: string } = {};
+  try {
+    res = await handleWebhook(req, ctx, correlationId, captured, decision);
   } catch (err) {
     metrics.recordWebhookRequest('error');
+    try {
+      updateWebhookReceipt(correlationId, { state: 'rejected', httpStatus: 500, reason: 'internal-error' });
+    } catch (persistErr) {
+      log.error('could not settle failed webhook receipt', { correlationId, err: persistErr });
+    }
     throw err;
   }
   metrics.recordWebhookRequest(outcomeFromStatus(res.status));
+  try {
+    updateWebhookReceipt(correlationId, {
+      httpStatus: res.status,
+      ...(res.status === 204 ? { state: 'ignored' as const, reason: decision.reason ?? 'no-match' } : {}),
+      ...(res.status >= 400 ? { state: 'rejected' as const, reason: decision.reason ?? 'request-rejected' } : {}),
+    });
+  } catch (err) {
+    log.error('could not settle webhook receipt', { correlationId, err });
+  }
   res.headers.set(CORRELATION_HEADER, correlationId);
   return res;
+}
+
+interface CapturedBody { text: string; truncated: boolean; unavailable: boolean }
+
+async function captureBody(req: Request): Promise<CapturedBody> {
+  if (!req.body) return { text: '', truncated: false, unavailable: false };
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    reader = req.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const take = Math.min(value.byteLength, MAX_BODY_BYTES - size);
+      if (take > 0) chunks.push(value.subarray(0, take));
+      size += take;
+      if (value.byteLength > take) {
+        await reader.cancel().catch(() => {});
+        return { text: Buffer.concat(chunks).toString('utf8'), truncated: true, unavailable: false };
+      }
+    }
+    return { text: Buffer.concat(chunks).toString('utf8'), truncated: false, unavailable: false };
+  } catch {
+    return { text: Buffer.concat(chunks).toString('utf8'), truncated: false, unavailable: true };
+  } finally {
+    reader?.releaseLock();
+  }
+}
+
+function senderFromBody(pluginId: string | undefined, text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const at = (...keys: string[]): unknown => keys.reduce<unknown>((value, key) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)[key] : undefined, parsed);
+    const paths = pluginId === 'github'
+      ? [['sender', 'login'], ['pusher', 'name']]
+      : pluginId === 'frogo'
+        ? [['payload', 'comment', 'author'], ['payload', 'task', 'createdBy']]
+        : [['sender', 'login'], ['sender', 'name'], ['sender'], ['from'], ['user', 'login']];
+    for (const path of paths) {
+      const value = at(...path);
+      if (typeof value === 'string' && value.trim()) return value.trim().slice(0, 200);
+    }
+  } catch { /* body is not JSON */ }
+  return undefined;
 }
 
 async function handleWebhook(
   req: Request,
   { params }: RouteParams,
   correlationId: string,
+  captured: CapturedBody,
+  decision: { reason?: string },
 ): Promise<Response> {
   const { triggerId } = await params;
+  const withReason = (reason: string, response: Response): Response => {
+    decision.reason = reason;
+    return response;
+  };
   // Bind the correlation id onto every log line from this request.
   const clog = log.child({ correlationId });
   // Set when a trigger with `verifyOptional` accepts an unsigned request —
   // recorded on the eventual `webhook/accepted` audit entry.
   let acceptedUnsigned = false;
 
-  // Body-size guard via content-length, BEFORE consuming body.
+  // The wrapper already captured a bounded body. Also honor a declared length
+  // above the limit, even when the stream provided fewer bytes.
   const lenHeader = req.headers.get('content-length');
   if (lenHeader) {
     const len = Number.parseInt(lenHeader, 10);
     if (Number.isFinite(len) && len > MAX_BODY_BYTES) {
-      return NextResponse.json({ error: 'payload-too-large' }, { status: 413 });
+      return withReason('payload-too-large', NextResponse.json({ error: 'payload-too-large' }, { status: 413 }));
     }
+  }
+  // A chunked request can exceed the cap without a Content-Length header.
+  // The ingress reader has already stopped at the cap, so reject it before
+  // looking up a trigger or treating it as a predicate miss.
+  if (captured.truncated) {
+    return withReason('payload-too-large', NextResponse.json({ error: 'payload-too-large' }, { status: 413 }));
   }
 
   const hit = await triggerIndex.lookup(triggerId);
-  if (!hit) return notFound();
-  if (!hit.trigger.enabled) return notFound();
+  if (!hit) return withReason('not-found', notFound());
+  if (!hit.trigger.enabled) return withReason('not-found', notFound());
 
   // Rate-limit per trigger. Checked here — once the trigger is known to exist
-  // and be enabled, before any plugin lookup or body read — so the bucket map
-  // stays bounded by the real trigger count and a flood is rejected cheaply.
+  // and be enabled, before plugin lookup or workflow resolution — so the
+  // bucket map stays bounded by the real trigger count.
   const rl = webhookRateLimiter.check(hit.trigger.id);
   if (!rl.ok) {
     clog.warn('rate limit exceeded', { triggerId: hit.trigger.id });
@@ -117,29 +230,25 @@ async function handleWebhook(
       correlationId,
       detail: { reason: 'rate-limited', retryAfterSeconds: rl.retryAfterSeconds },
     });
-    return NextResponse.json(
+    return withReason('rate-limited', NextResponse.json(
       { error: 'rate-limited' },
       { status: 429, headers: { 'Retry-After': String(rl.retryAfterSeconds) } },
-    );
+    ));
   }
 
   const plugin = await pluginIndex.lookup(hit.trigger.pluginId);
-  if (!plugin) return notFound();
+  if (!plugin) return withReason('not-found', notFound());
   if (plugin.eventHeader) {
     const header = req.headers.get(plugin.eventHeader);
     if (!header || header !== hit.trigger.eventType) {
-      return new Response(null, { status: 204 });
+      return withReason('event-header-mismatch', new Response(null, { status: 204 }));
     }
   }
 
-  let bodyText: string;
-  try {
-    bodyText = await req.text();
-  } catch {
-    return NextResponse.json({ error: 'bad-body' }, { status: 400 });
-  }
+  if (captured.unavailable) return withReason('bad-body', NextResponse.json({ error: 'bad-body' }, { status: 400 }));
+  const bodyText = captured.text;
   if (bodyText.length > MAX_BODY_BYTES) {
-    return NextResponse.json({ error: 'payload-too-large' }, { status: 413 });
+    return withReason('payload-too-large', NextResponse.json({ error: 'payload-too-large' }, { status: 413 }));
   }
 
   if (plugin.signature) {
@@ -164,7 +273,7 @@ async function handleWebhook(
           target: hit.trigger.id,
           detail: { reason: 'bad-signature', verifyReason: verdict.reason },
         });
-        return NextResponse.json({ error: 'bad-signature' }, { status: 401 });
+        return withReason('bad-signature', NextResponse.json({ error: 'bad-signature' }, { status: 401 }));
       }
     } else if (hit.trigger.verifyOptional === true) {
       clog.warn('verifyOptional=true — accepting unsigned request', {
@@ -185,7 +294,7 @@ async function handleWebhook(
         correlationId,
         detail: { reason: 'misconfigured' },
       });
-      return NextResponse.json({ error: 'trigger-misconfigured' }, { status: 500 });
+      return withReason('trigger-misconfigured', NextResponse.json({ error: 'trigger-misconfigured' }, { status: 500 }));
     }
   }
 
@@ -193,7 +302,14 @@ async function handleWebhook(
   try {
     workflow = await getWorkflow(hit.workflowId);
   } catch {
-    return notFound();
+    return withReason('not-found', notFound());
+  }
+  // Keep the workflow's name at receipt time, even if it is renamed later.
+  try {
+    updateWebhookReceipt(correlationId, { workflowName: workflow.name });
+  } catch (err) {
+    clog.error('could not persist webhook workflow identity', { err });
+    return withReason('receipt-unavailable', NextResponse.json({ error: 'receipt-unavailable' }, { status: 503 }));
   }
 
   const scope = buildWebhookScope({
@@ -203,7 +319,7 @@ async function handleWebhook(
   });
 
   if (!matchesAllPredicates(hit.trigger.match, scope)) {
-    return new Response(null, { status: 204 });
+    return withReason('predicate-no-match', new Response(null, { status: 204 }));
   }
 
   let suppliedInputs: Record<string, string>;
@@ -220,7 +336,7 @@ async function handleWebhook(
       correlationId,
       detail: { reason: 'inputs-template-failed' },
     });
-    return NextResponse.json({ error: 'inputs-template-failed' }, { status: 500 });
+    return withReason('inputs-template-failed', NextResponse.json({ error: 'inputs-template-failed' }, { status: 500 }));
   }
 
   let resolvedInputs;
@@ -237,7 +353,7 @@ async function handleWebhook(
         correlationId,
         detail: { reason: 'invalid-inputs', field: err.field },
       });
-      return NextResponse.json(
+      return withReason('invalid-inputs', NextResponse.json(
         {
           error: 'invalid-inputs',
           field: err.field,
@@ -246,7 +362,7 @@ async function handleWebhook(
           ...(err.got ? { got: err.got } : {}),
         },
         { status: 422 },
-      );
+      ));
     }
     throw err;
   }
@@ -288,10 +404,10 @@ async function handleWebhook(
         correlationId,
         detail: { reason: 'queue-full' },
       });
-      return NextResponse.json(
+      return withReason('queue-full', NextResponse.json(
         { error: 'queue-full' },
         { status: 503, headers: { 'Retry-After': '30' } },
-      );
+      ));
     }
     throw err;
   }

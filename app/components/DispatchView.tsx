@@ -5,6 +5,8 @@ import type { WebhookPlugin, WebhookTrigger } from '@/lib/shared/trigger';
 import { TriggerForm } from './TriggerForm';
 import { TestFireModal } from './TestFireModal';
 import { useWorkflowStore } from '@/lib/client/workflow-store-client';
+import { WebhookReceipts } from './WebhookReceipts';
+import receiptStyles from './WebhookReceipts.module.css';
 
 export interface DispatchViewProps {
   origin: string;
@@ -26,6 +28,8 @@ export function DispatchView({ origin }: DispatchViewProps) {
   const [testingTrigger, setTestingTrigger] = useState<WebhookTrigger | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [workflowFilter, setWorkflowFilter] = useState<string | null>(null);
+  const [section, setSection] = useState<'triggers' | 'messages'>('triggers');
+  const [messageTriggerFilter, setMessageTriggerFilter] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -112,25 +116,28 @@ export function DispatchView({ origin }: DispatchViewProps) {
     await refresh();
   }
 
-  if (triggers === null) {
-    return <div className="dsp-loading">Loading…</div>;
-  }
-
-  const selected = triggers.find((t) => t.id === selectedId) ?? null;
+  const selected = triggers?.find((t) => t.id === selectedId) ?? null;
   const visibleTriggers = workflowFilter
-    ? triggers.filter((t) => t.workflowId === workflowFilter)
-    : triggers;
+    ? (triggers ?? []).filter((t) => t.workflowId === workflowFilter)
+    : (triggers ?? []);
 
   return (
     <div className="dsp-root">
       <header className="dsp-head">
-        <h2 className="dsp-title">Triggers</h2>
-        <button type="button" className="btn" onClick={() => { setCreating(true); setSelectedId(null); setEditing(false); }}>
-          + New trigger
-        </button>
+        <h2 className="dsp-title">Dispatch</h2>
+        {section === 'triggers' && (
+          <button type="button" className="btn" onClick={() => { setCreating(true); setSelectedId(null); setEditing(false); }}>
+            + New trigger
+          </button>
+        )}
       </header>
 
-      {error && <div className="dsp-error">{error}</div>}
+      <div className={receiptStyles.tabs} role="tablist" aria-label="Dispatch sections">
+        <button type="button" role="tab" aria-selected={section === 'triggers'} className={`${receiptStyles.tab} ${section === 'triggers' ? receiptStyles.activeTab : ''}`} onClick={() => setSection('triggers')}>Triggers</button>
+        <button type="button" role="tab" aria-selected={section === 'messages'} className={`${receiptStyles.tab} ${section === 'messages' ? receiptStyles.activeTab : ''}`} onClick={() => setSection('messages')}>Messages</button>
+      </div>
+
+      {section === 'triggers' && error && <div className="dsp-error">{error}</div>}
 
       {workflowFilter && (
         <div className="dsp-filter-chip">
@@ -145,7 +152,16 @@ export function DispatchView({ origin }: DispatchViewProps) {
         </div>
       )}
 
-      <div className="dsp-split">
+      {section === 'messages' ? (
+        <WebhookReceipts
+          workflowFilter={workflowFilter}
+          triggerFilter={messageTriggerFilter}
+          onTriggerFilterChange={setMessageTriggerFilter}
+          triggers={triggers ?? []}
+        />
+      ) : triggers === null ? (
+        <div className="dsp-loading">Loading…</div>
+      ) : <div className="dsp-split">
         <aside className="dsp-list">
           {visibleTriggers.length === 0 ? (
             <p className="dsp-empty">
@@ -195,6 +211,7 @@ export function DispatchView({ origin }: DispatchViewProps) {
                 <div className="dsp-read-actions">
                   <button type="button" className="btn" onClick={() => setEditing(true)}>Edit</button>
                   <button type="button" className="btn" onClick={() => setTestingTrigger(selected)}>Test</button>
+                  <button type="button" className="btn" onClick={() => { setMessageTriggerFilter(selected.id); setSection('messages'); }}>View messages</button>
                   <button type="button" className="btn" onClick={() => handleDelete(selected.id)}>Delete</button>
                 </div>
               </header>
@@ -209,7 +226,7 @@ export function DispatchView({ origin }: DispatchViewProps) {
             <div className="dsp-empty">Select a trigger or click "New trigger".</div>
           )}
         </section>
-      </div>
+      </div>}
 
       {testingTrigger && (
         <TestFireModal

@@ -30,4 +30,12 @@ describe('TriggersPanel (summary card)', () => {
       expect(screen.getByText(/1 trigger routes here/i)).toBeTruthy();
     });
   });
+
+  test('links to home Dispatch for modified clicks and keeps the workflow filter', async () => {
+    // @ts-expect-error
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ triggers: [] }) });
+    render(<TriggersPanel workflow={wf} origin="http://localhost:3000" />);
+    const link = screen.getByRole('link', { name: 'Manage in Dispatch →' });
+    expect(link).toHaveAttribute('href', '/#dispatch?workflow=wf-a');
+  });
 });

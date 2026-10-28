@@ -6,7 +6,7 @@
  * the seeded `start → agent → end` graph.
  */
 import { expect, test } from '@playwright/test';
-import { API_TOKEN } from './lib/env';
+import { API_TOKEN, DEFAULT_WORKFLOW_ID } from './lib/env';
 
 test.beforeEach(async ({ page }) => {
   // Authenticate via the API; `page.request` shares the browser context's
@@ -17,11 +17,11 @@ test.beforeEach(async ({ page }) => {
 test('the console shell loads and renders the seeded workflow', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto(`/${DEFAULT_WORKFLOW_ID}`);
   await expect(page.locator('.top-bar')).toBeVisible();
 
-  // Workspace.tsx auto-fetches the default workflow and hands it to the canvas;
-  // each node renders as an xyflow node carrying its workflow node id.
+  // The flow URL selects the seeded workflow. Each rendered canvas node
+  // carries its workflow node id.
   await expect(page.locator('[data-id="start-1"]')).toBeVisible({
     timeout: 20_000,
   });

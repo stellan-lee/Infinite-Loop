@@ -33,7 +33,7 @@ export default function NotFound() {
         href="/"
         style={{ color: 'var(--accent-info)', textDecoration: 'none' }}
       >
-        Back to console
+        All flows
       </Link>
     </main>
   );

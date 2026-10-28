@@ -135,6 +135,9 @@ function pushPast(
  * store so it isn't subscribed-to by React; it's purely a coalescing marker.
  */
 let lastHistoryPushAt = 0;
+// Serialize persistence so an older autosave cannot arrive after a navigation
+// flush and overwrite the newer document on disk.
+let pendingSave: Promise<void> | null = null;
 
 export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
   currentWorkflow: null,
@@ -361,15 +364,29 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
     }),
 
   saveCurrentWorkflow: async () => {
+    let joinedSave = false;
+    while (pendingSave) {
+      joinedSave = true;
+      await pendingSave;
+    }
+    if (joinedSave && !get().isDirty) return;
     const wf = get().currentWorkflow;
     if (!wf) return;
-    const res = await fetch(`/api/workflows/${encodeURIComponent(wf.id)}`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(wf),
-    });
-    if (!res.ok) throw new Error(`save failed: ${res.status}`);
-    set({ isDirty: false });
+    const saving = (async () => {
+      const res = await fetch(`/api/workflows/${encodeURIComponent(wf.id)}`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(wf),
+      });
+      if (!res.ok) throw new Error(`save failed: ${res.status}`);
+      if (get().currentWorkflow === wf) set({ isDirty: false });
+    })();
+    pendingSave = saving;
+    try {
+      await saving;
+    } finally {
+      if (pendingSave === saving) pendingSave = null;
+    }
   },
 
   renameCurrentWorkflow: async (name) => {
@@ -385,13 +402,7 @@ export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
       isDirty: true,
       ...pushPast(s, wf),
     }));
-    const res = await fetch(`/api/workflows/${encodeURIComponent(next.id)}`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(next),
-    });
-    if (!res.ok) throw new Error(`rename failed: ${res.status}`);
-    set({ isDirty: false });
+    await get().saveCurrentWorkflow();
   },
 
   appendRunEvent: (ev) =>

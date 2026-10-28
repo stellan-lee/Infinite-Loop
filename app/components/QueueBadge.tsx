@@ -6,9 +6,10 @@ import Link from 'next/link';
 export interface QueueBadgeProps {
   /** Poll interval; default 3000 ms. */
   pollMs?: number;
+  onNavigate?: (href: string) => Promise<void>;
 }
 
-export function QueueBadge({ pollMs = 3000 }: QueueBadgeProps) {
+export function QueueBadge({ pollMs = 3000, onNavigate }: QueueBadgeProps) {
   const [size, setSize] = useState(0);
 
   useEffect(() => {
@@ -36,7 +37,11 @@ export function QueueBadge({ pollMs = 3000 }: QueueBadgeProps) {
   if (size === 0) return null;
 
   return (
-    <Link href="/queue" className="queue-badge">
+    <Link href="/queue" className="queue-badge" onClick={(event) => {
+      if (!onNavigate || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      void onNavigate('/queue').catch(() => {});
+    }}>
       {size} queued
     </Link>
   );

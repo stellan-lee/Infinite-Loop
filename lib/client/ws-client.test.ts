@@ -172,3 +172,55 @@ describe('GitHub CI snapshot hydration', () => {
     }
   });
 });
+
+describe('workflow-scoped stream', () => {
+  const original = globalThis.EventSource;
+  beforeEach(() => {
+    FakeEventSource.instances = [];
+    globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
+  });
+  afterEach(() => { globalThis.EventSource = original; });
+
+  it('hydrates the addressed flow and ignores another flow’s live events', async () => {
+    const { useWorkflowStore } = await import('./workflow-store-client');
+    const { useEngineWebSocket } = await import('./ws-client');
+    useWorkflowStore.getState().resetRun();
+    const { result } = renderHook(() => useEngineWebSocket('flow-a'));
+    const es = FakeEventSource.instances[0];
+    act(() => es.triggerMessage(JSON.stringify({
+      type: 'state_snapshot',
+      state: { workflowId: 'flow-b', runId: 'run-b', status: 'running', events: [] },
+      runs: [
+        { workflowId: 'flow-a', runId: 'run-a', status: 'running', events: [{ type: 'run_started', workflowId: 'flow-a', runId: 'run-a' }] },
+        { workflowId: 'flow-b', runId: 'run-b', status: 'running', events: [] },
+      ],
+    })));
+    expect(result.current).toBe('run-a');
+    act(() => es.triggerMessage(JSON.stringify({ type: 'run_started', workflowId: 'flow-b', runId: 'run-b' })));
+    act(() => es.triggerMessage(JSON.stringify({ type: 'run_finished', status: 'failed', runId: 'run-b' })));
+    expect(useWorkflowStore.getState().runStatus).toBe('running');
+    expect(useWorkflowStore.getState().runEvents).toHaveLength(1);
+    act(() => es.triggerMessage(JSON.stringify({ type: 'run_finished', status: 'succeeded', runId: 'run-a' })));
+    expect(useWorkflowStore.getState().runStatus).toBe('succeeded');
+  });
+
+  it('waits for a loaded flow and rejects late frames from its previous stream', async () => {
+    const { useWorkflowStore } = await import('./workflow-store-client');
+    const { useEngineWebSocket } = await import('./ws-client');
+    useWorkflowStore.getState().resetRun();
+    const { rerender } = renderHook(({ id }: { id: string | null }) => useEngineWebSocket(id), { initialProps: { id: null as string | null } });
+    expect(FakeEventSource.instances).toHaveLength(0);
+    rerender({ id: 'flow-a' });
+    const previous = FakeEventSource.instances[0];
+    rerender({ id: 'flow-b' });
+    expect(previous.closed).toBe(true);
+    act(() => previous.triggerMessage(JSON.stringify({ type: 'run_started', workflowId: 'flow-a', runId: 'run-a' })));
+    act(() => FakeEventSource.instances[1].triggerMessage(JSON.stringify({
+      type: 'state_snapshot',
+      state: { workflowId: 'flow-a', runId: 'run-a', status: 'running', events: [] },
+      runs: [],
+    })));
+    expect(useWorkflowStore.getState().runStatus).toBe('idle');
+    expect(useWorkflowStore.getState().runEvents).toEqual([]);
+  });
+});

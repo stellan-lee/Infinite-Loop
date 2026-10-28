@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { PluginField } from '@/lib/shared/trigger';
+import { useViewportPopover } from './useViewportPopover';
 
 export interface FieldPickerProps {
   fields: PluginField[];
@@ -20,11 +21,12 @@ export function FieldPicker({
 }: FieldPickerProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLUListElement>(open && fields.length > 0, containerRef, { maxHeight: 220 });
 
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node) && !panelRef.current?.contains(e.target as Node)) {
         setOpen(false);
       }
     };
@@ -63,8 +65,8 @@ export function FieldPicker({
           </span>
         )}
       </div>
-      {open && fields.length > 0 && (
-        <ul className="fp-menu" role="listbox">
+      {open && fields.length > 0 && portal(
+        <ul ref={panelRef} style={panelStyle} className="fp-menu" role="listbox">
           {visible.map((f) => (
             <li
               key={f.path}

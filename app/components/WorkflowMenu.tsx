@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { LuCheck, LuPencil, LuTrash2 } from 'react-icons/lu';
 import type { Workflow, WorkflowSummary } from '../../lib/shared/workflow';
 import { useWorkflowStore } from '../../lib/client/workflow-store-client';
+import { useViewportPopover } from './useViewportPopover';
 
 const NEW_WORKFLOW_DEFAULTS = () => {
   const now = Date.now();
@@ -42,6 +43,7 @@ export default function WorkflowMenu() {
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLDivElement>(open, rootRef, { minWidth: 280, maxHeight: 400 });
   // When Escape cancels an edit, the input unmounts in the same tick. Some
   // browsers fire blur on removed-from-DOM focused elements with the
   // pre-cancel onBlur closure (where `editing` was still true), which would
@@ -85,7 +87,7 @@ export default function WorkflowMenu() {
     if (!open) return;
     const handler = (e: MouseEvent) => {
       const root = rootRef.current;
-      if (root && !root.contains(e.target as Node)) {
+      if (root && !root.contains(e.target as Node) && !panelRef.current?.contains(e.target as Node)) {
         setOpen(false);
       }
     };
@@ -228,8 +230,8 @@ export default function WorkflowMenu() {
         </span>
       </button>
 
-      {open && (
-        <div aria-label="workflow list" className="wf-menu-panel">
+      {open && portal(
+        <div ref={panelRef} style={panelStyle} aria-label="workflow list" className="wf-menu-panel">
           <div className="wf-menu-list">
             {loading && (
               <div className="wf-menu-empty serif-italic">loading…</div>

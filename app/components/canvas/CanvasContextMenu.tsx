@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { NodeType } from '@/lib/shared/workflow';
 import type { ProviderInfo } from '@/lib/server/providers/types';
 
@@ -119,15 +120,8 @@ export default function CanvasContextMenu({ open, onClose, onPick }: Props) {
     };
   }, [open, onClose]);
 
-  // After mount/open, measure the menu and clamp top/left so it never
-  // extends past the right or bottom viewport edge. We can't clamp from the
-  // event coordinates alone — the menu height depends on how many providers
-  // loaded. useLayoutEffect runs synchronously before paint so the user
-  // never sees a flicker where items are off-screen first.
-  //
-  // NOTE: do NOT include `clamped` in the deps array. The effect both reads
-  // and writes it, so depending on it would re-fire the effect on every
-  // setClamped and loop until the React commit watchdog trips.
+  // Re-clamp after provider loading and viewport changes; the menu itself
+  // scrolls if the viewport is shorter than its full contents.
   useLayoutEffect(() => {
     if (!open) {
       setClamped(null);
@@ -135,21 +129,29 @@ export default function CanvasContextMenu({ open, onClose, onPick }: Props) {
     }
     const root = rootRef.current;
     if (!root) return;
-    const rect = root.getBoundingClientRect();
-    const margin = 8;
-    let top = open.clientY;
-    let left = open.clientX;
-    if (left + rect.width + margin > window.innerWidth) {
-      left = Math.max(margin, window.innerWidth - rect.width - margin);
-    }
-    if (top + rect.height + margin > window.innerHeight) {
-      top = Math.max(margin, window.innerHeight - rect.height - margin);
-    }
-    if (top !== open.clientY || left !== open.clientX) {
-      setClamped({ top, left });
-    } else {
-      setClamped(null);
-    }
+    const update = () => {
+      const viewport = window.visualViewport;
+      const x = viewport?.offsetLeft ?? 0;
+      const y = viewport?.offsetTop ?? 0;
+      const width = viewport?.width ?? window.innerWidth;
+      const height = viewport?.height ?? window.innerHeight;
+      root.style.maxWidth = `${Math.max(0, width - 16)}px`;
+      root.style.minWidth = `${Math.min(200, Math.max(0, width - 16))}px`;
+      root.style.maxHeight = `${Math.max(0, height - 16)}px`;
+      const rect = root.getBoundingClientRect();
+      const top = Math.max(y + 8, Math.min(open.clientY, y + height - rect.height - 8));
+      const left = Math.max(x + 8, Math.min(open.clientX, x + width - rect.width - 8));
+      setClamped((previous) => previous?.top === top && previous.left === left ? previous : { top, left });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.visualViewport?.addEventListener('resize', update);
+    window.visualViewport?.addEventListener('scroll', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.visualViewport?.removeEventListener('resize', update);
+      window.visualViewport?.removeEventListener('scroll', update);
+    };
   }, [open, providers.length]);
 
   if (!open) return null;
@@ -170,10 +172,10 @@ export default function CanvasContextMenu({ open, onClose, onPick }: Props) {
     position: 'fixed',
     top: clamped?.top ?? open.clientY,
     left: clamped?.left ?? open.clientX,
-    zIndex: 50,
+    zIndex: 1100,
   };
 
-  return (
+  return createPortal(
     <div
       ref={rootRef}
       role="menu"
@@ -230,6 +232,7 @@ export default function CanvasContextMenu({ open, onClose, onPick }: Props) {
           </section>
         );
       })}
-    </div>
+    </div>,
+    document.body,
   );
 }

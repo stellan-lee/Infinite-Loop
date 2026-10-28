@@ -252,13 +252,15 @@ describe('ConfigPanel', () => {
     const trigger = screen.getByRole('button', {
       name: 'More information about Display name',
     });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    act(() => trigger.focus());
     const tooltip = screen.getByRole('tooltip', {
       name: /shown on the canvas card/i,
     });
     expect(trigger).toHaveAttribute('aria-describedby', tooltip.id);
-    trigger.focus();
     fireEvent.keyDown(trigger, { key: 'Escape' });
     expect(trigger).not.toHaveFocus();
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('renders the CLI profile field only when the provider manifest supports it', async () => {

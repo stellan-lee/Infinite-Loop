@@ -16,6 +16,7 @@ import { findWorkflowNode } from '../lib/shared/workflow-graph';
 import RunView from './components/RunView';
 import RunHistory from './components/RunHistory';
 import WorkflowMenu from './components/WorkflowMenu';
+import { useViewportPopover } from './components/useViewportPopover';
 import ThemeToggle from './components/ThemeToggle';
 import { QueueBadge } from './components/QueueBadge';
 import { ActiveRunsBadge } from './components/ActiveRunsBadge';
@@ -86,6 +87,30 @@ export default function Workspace() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [runModalOpen, setRunModalOpen] = useState(false);
   const [runChevronOpen, setRunChevronOpen] = useState(false);
+  const runGroupRef = useRef<HTMLDivElement | null>(null);
+  const runPopover = useViewportPopover<HTMLDivElement>(runChevronOpen, runGroupRef, {
+    minWidth: 180,
+    maxHeight: 240,
+    align: 'end',
+  });
+  useEffect(() => {
+    if (!runChevronOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (!runGroupRef.current?.contains(event.target as Node) &&
+          !runPopover.panelRef.current?.contains(event.target as Node)) {
+        setRunChevronOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRunChevronOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [runChevronOpen, runPopover.panelRef]);
   const dragStateRef = useRef<{ active: boolean }>({ active: false });
   // Mirror of `rightWidth` for the resize handler to read on mouseup —
   // the React state setter is async and `getCurrentRightWidth()` used to
@@ -285,7 +310,7 @@ export default function Workspace() {
               Stop
             </button>
           ) : (
-            <div className="run-group">
+            <div ref={runGroupRef} className="run-group">
               <button
                 type="button"
                 onClick={handleRun}
@@ -312,8 +337,8 @@ export default function Workspace() {
                   >
                     ▾
                   </button>
-                  {runChevronOpen && (
-                    <div role="menu" className="run-menu">
+                  {runChevronOpen && runPopover.portal(
+                    <div ref={runPopover.panelRef} style={runPopover.panelStyle} role="menu" className="run-menu">
                       <button
                         type="button"
                         role="menuitem"

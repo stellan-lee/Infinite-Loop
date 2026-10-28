@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from 'react';
+import { useViewportPopover } from './useViewportPopover';
 
 const PATH_DEBOUNCE_MS = 280;
 
@@ -12,6 +13,7 @@ interface ListResponse {
 }
 
 interface Props {
+  anchorRef?: RefObject<HTMLElement | null>;
   /** Absolute path to start the picker at. Falls back to the server's home
    * directory if empty / not provided. */
   initialPath?: string;
@@ -31,6 +33,7 @@ interface Props {
  * close. Keyboard: Enter on a row navigates into it, Backspace navigates up.
  */
 export default function FolderPicker({
+  anchorRef,
   initialPath,
   onSelect,
   onClose,
@@ -39,7 +42,8 @@ export default function FolderPicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState(initialPath ?? '');
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const fallbackAnchorRef = useRef<HTMLSpanElement | null>(null);
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLDivElement>(true, anchorRef ?? fallbackAnchorRef, { minWidth: 280, maxHeight: 360 });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Latest in-flight request id — older responses are dropped so a slow
   // listing can't overwrite a fresher one when the user types fast.
@@ -106,8 +110,8 @@ export default function FolderPicker({
       if (e.key === 'Escape') onClose();
     };
     const onDocClick = (e: MouseEvent) => {
-      const node = containerRef.current;
-      if (node && !node.contains(e.target as Node)) onClose();
+      const node = panelRef.current;
+      if (node && !node.contains(e.target as Node) && !anchorRef?.current?.contains(e.target as Node)) onClose();
     };
     window.addEventListener('keydown', onKey);
     document.addEventListener('mousedown', onDocClick);
@@ -115,7 +119,7 @@ export default function FolderPicker({
       window.removeEventListener('keydown', onKey);
       document.removeEventListener('mousedown', onDocClick);
     };
-  }, [onClose]);
+  }, [onClose, anchorRef]);
 
   /** Cancel any pending debounced load — used when the tree handles a click
    * directly so a stale typed path can't fire after the navigation. */
@@ -144,8 +148,11 @@ export default function FolderPicker({
   };
 
   return (
-    <div
-      ref={containerRef}
+    <>
+      {!anchorRef && <span ref={fallbackAnchorRef} aria-hidden="true" />}
+      {portal(<div
+      ref={panelRef}
+      style={panelStyle}
       className="folder-picker"
       role="dialog"
       aria-label="folder picker"
@@ -217,6 +224,7 @@ export default function FolderPicker({
           Use this folder
         </button>
       </div>
-    </div>
+    </div>)}
+    </>
   );
 }

@@ -24,11 +24,13 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type KeyboardEvent,
+  type RefObject,
 } from 'react';
 import { Input as HeroInput, TextArea as HeroTextArea } from '@heroui/react';
 import type { TemplateLintWarning, TemplateRef } from '@/lib/shared/template-refs';
 import { lintField } from '@/lib/shared/template-refs';
 import { useWorkflowStore } from '@/lib/client/workflow-store-client';
+import { useViewportPopover } from './useViewportPopover';
 
 interface BaseProps {
   value: string;
@@ -232,8 +234,10 @@ export default function TemplateField(props: Props) {
     spellCheck: false as const,
   };
 
+  const pickerAnchorRef = useRef<HTMLDivElement | null>(null);
+
   return (
-    <div className="template-field" style={{ position: 'relative' }}>
+    <div ref={pickerAnchorRef} className="template-field" style={{ position: 'relative' }}>
       {props.multiline ? (
         <HeroTextArea {...inputCommon} rows={props.rows ?? 4} variant="secondary" />
       ) : (
@@ -241,6 +245,7 @@ export default function TemplateField(props: Props) {
       )}
       {slot && filtered.length > 0 && (
         <TemplatePickerPanel
+          anchorRef={pickerAnchorRef}
           refs={filtered}
           activeIdx={activeIdx}
           onPick={insertRef}
@@ -255,20 +260,22 @@ export default function TemplateField(props: Props) {
 }
 
 function TemplatePickerPanel({
+  anchorRef,
   refs,
   activeIdx,
   onPick,
   onHoverIdx,
 }: {
+  anchorRef: RefObject<HTMLElement | null>;
   refs: readonly TemplateRef[];
   activeIdx: number;
   onPick: (r: TemplateRef) => void;
   onHoverIdx: (i: number) => void;
 }) {
   // Scroll the active row into view when the user arrows through.
-  const listRef = useRef<HTMLUListElement | null>(null);
+  const { panelRef, panelStyle, portal } = useViewportPopover<HTMLUListElement>(true, anchorRef, { maxHeight: 220 });
   useLayoutEffect(() => {
-    const list = listRef.current;
+    const list = panelRef.current;
     if (!list) return;
     const row = list.children[activeIdx] as HTMLElement | undefined;
     if (row && typeof row.scrollIntoView === 'function') {
@@ -279,8 +286,9 @@ function TemplatePickerPanel({
   return (
     <>
       <style>{pickerCss}</style>
-      <ul
-        ref={listRef}
+      {portal(<ul
+        ref={panelRef}
+        style={panelStyle}
         role="listbox"
         aria-label="Available template variables"
         className="template-picker-panel"
@@ -330,7 +338,7 @@ function TemplatePickerPanel({
             {refs.length} matches — keep typing to narrow
           </li>
         )}
-      </ul>
+      </ul>)}
     </>
   );
 }
@@ -400,7 +408,7 @@ const pickerCss = `
 }
 .template-picker-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) 2fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 12px;
   width: 100%;
   background: transparent;
@@ -432,16 +440,12 @@ const pickerCss = `
   outline-offset: -2px;
 }
 .template-picker-ref {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .template-picker-desc {
   color: var(--fg-dim);
   font-size: 11.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .template-picker-overflow {
   padding: 4px 10px 6px;

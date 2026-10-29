@@ -71,6 +71,26 @@ afterEach(async () => {
 });
 
 describe('workflow-store', () => {
+  it('accepts named End bindings with dotted scope paths', async () => {
+    const wf = makeWorkflow();
+    wf.nodes[1].config = { outcome: 'failed', outputs: { answer: 'source-1.result.answer' } };
+    expect((await saveWorkflow(wf)).nodes[1].config).toEqual(wf.nodes[1].config);
+  });
+
+  const invalidEndConfigs: Array<{ outputs: unknown }> = [
+    { outputs: [] },
+    { outputs: { answer: '{{source.result}}' } },
+    { outputs: { answer: 'source' } },
+    { outputs: { answer: 'source.__proto__.secret' } },
+    { outputs: { constructor: 'source.result' } },
+    { outputs: { 'bad name': 'source.result' } },
+  ];
+  it.each(invalidEndConfigs)('rejects invalid End bindings: %j', async (config) => {
+    const wf = makeWorkflow();
+    wf.nodes[1].config = config as never;
+    await expect(saveWorkflow(wf)).rejects.toThrow(/end node "end-1"/);
+  });
+
   it('rejects a structured-output node whose schema is not an object', async () => {
     const wf = makeWorkflow({
       nodes: [

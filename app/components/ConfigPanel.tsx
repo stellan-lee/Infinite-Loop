@@ -416,24 +416,119 @@ function DefaultEditor({
   }
 }
 
+function isEndOutputRef(ref: string): boolean {
+  return /^[\w-]+(?:\.[\w-]+)+$/.test(ref) &&
+    !ref.split('.').some((segment) => ['__proto__', 'prototype', 'constructor'].includes(segment));
+}
+
 function EndForm({
   config,
+  templateRefs,
   onPatch,
 }: {
   config: EndConfig;
+  templateRefs: readonly TemplateRef[];
   onPatch: (next: EndConfig) => void;
 }) {
   const outcome: NonNullable<EndConfig['outcome']> = config.outcome ?? 'succeeded';
+  const [rows, setRows] = useState<KvRowData[]>(() => recordToRows(config.outputs));
+  const lastOutputs = useRef(config.outputs);
+
+  useEffect(() => {
+    if (config.outputs !== lastOutputs.current) {
+      lastOutputs.current = config.outputs;
+      setRows(recordToRows(config.outputs));
+    }
+  }, [config.outputs]);
+
+  const commitRows = (next: KvRowData[]) => {
+    setRows(next);
+    // Keep an incomplete row editable locally; a workflow can only save a
+    // binding once both its name and source have been chosen.
+    const outputs: Record<string, string> = {};
+    for (const row of next) {
+      const name = row.name.trim();
+      if (/^[A-Za-z_][\w-]*$/.test(name) && !['__proto__', 'prototype', 'constructor'].includes(name) && isEndOutputRef(row.value)) outputs[name] = row.value;
+    }
+    lastOutputs.current = outputs;
+    onPatch({ ...config, outputs });
+  };
+
+  const selectableRefs = templateRefs.filter(({ ref }) => isEndOutputRef(ref));
+
+  const sourceOptions = [
+    { value: '', label: 'Choose variable' },
+    ...selectableRefs.map((ref) => ({
+      value: ref.ref,
+      label: `${ref.ref}${ref.inScope ? '' : ' · out of scope'}`,
+    })),
+  ];
+
   return (
-    <Segmented<NonNullable<EndConfig['outcome']>>
-      label="Outcome"
-      value={outcome}
-      options={[
-        { value: 'succeeded', label: 'Succeeded' },
-        { value: 'failed', label: 'Failed' },
-      ]}
-      onChange={(next) => onPatch({ ...config, outcome: next })}
-    />
+    <>
+      <Segmented<NonNullable<EndConfig['outcome']>>
+        label="Outcome"
+        value={outcome}
+        options={[
+          { value: 'succeeded', label: 'Succeeded' },
+          { value: 'failed', label: 'Failed' },
+        ]}
+        onChange={(next) => onPatch({ ...config, outcome: next })}
+      />
+      <div className="field">
+        <FieldLabel help="Choose variables to show as the run's final output when this End node is reached. Missing values appear as null.">
+          Final output
+        </FieldLabel>
+        <div className="kv-rows">
+          {rows.map((row, index) => {
+            const source = selectableRefs.find((ref) => ref.ref === row.value);
+            const options = row.value && !source
+              ? [...sourceOptions, { value: row.value, label: `${row.value} · unavailable` }]
+              : sourceOptions;
+            return (
+              <div className="kv-row" key={row.rowId}>
+                <div className="kv-row-value">
+                  <HeroInput
+                    variant="secondary"
+                    aria-label={`output name ${index}`}
+                    type="text"
+                    value={row.name}
+                    onChange={(event) => commitRows(rows.map((r) => r.rowId === row.rowId ? { ...r, name: event.target.value } : r))}
+                    placeholder="name"
+                  />
+                  {row.name.trim() && (!/^[A-Za-z_][\w-]*$/.test(row.name.trim()) || ['__proto__', 'prototype', 'constructor'].includes(row.name.trim())) ? (
+                    <span className="field-hint field-hint--error">Use a safe name starting with a letter or underscore, followed by letters, numbers, underscores, or hyphens.</span>
+                  ) : null}
+                </div>
+                <div className="kv-row-value">
+                  <SelectMenu
+                    value={row.value}
+                    options={options}
+                    ariaLabel={`output variable ${index}`}
+                    onChange={(value) => commitRows(rows.map((r) => r.rowId === row.rowId ? { ...r, value } : r))}
+                  />
+                  {source && !source.inScope ? (
+                    <span className="field-hint field-hint--error">This variable is outside this End node's path and may resolve to null.</span>
+                  ) : null}
+                  {row.value && !source ? (
+                    <span className="field-hint field-hint--error">This saved variable is unavailable. Choose a valid variable.</span>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  aria-label={`remove output ${index}`}
+                  onClick={() => commitRows(rows.filter((r) => r.rowId !== row.rowId))}
+                >✕</button>
+              </div>
+            );
+          })}
+          <button type="button" className="btn btn-ghost kv-add" onClick={() => setRows([...rows, { rowId: nextRowId(), name: '', value: '' }])}>
+            + add output
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -3261,7 +3356,9 @@ export default function ConfigPanel() {
         {node.type === 'start' && <StartForm workflow={currentWorkflow} />}
         {node.type === 'end' && (
           <EndForm
+            key={`end-form:${currentWorkflow?.id}:${node.id}`}
             config={node.config as EndConfig}
+            templateRefs={templateRefs}
             onPatch={patchConfig}
           />
         )}

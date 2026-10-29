@@ -826,6 +826,14 @@ body {
   font-family: var(--mono);
 }
 
+/* Recorded details share the fixed-height run rail. Scroll the whole record
+ * so a large final output cannot push the event log below the viewport. */
+.run-history-detail-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
 /* Control-flow rows (run_started / condition_checked / etc.) — terminal-
  * style two-column readout. Type is a left-aligned uppercase label, payload
  * is the value. */

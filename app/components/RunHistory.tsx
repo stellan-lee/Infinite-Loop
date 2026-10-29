@@ -180,7 +180,7 @@ export default function RunHistory({ workflowId }: Props) {
         )}
 
         {record && !recordLoading && !recordError && record.workflowId === workflowId && record.runId === selectedRunId && (
-          <>
+          <div className="run-history-detail-content" aria-label="run history content">
             <RerunWorkflowButton key={`${workflowId}/${selectedRunId}`} record={record} />
             <RunRecordDetails
               record={record}
@@ -190,7 +190,7 @@ export default function RunHistory({ workflowId }: Props) {
                 requestPanToNode(nodeId);
               }}
             />
-          </>
+          </div>
         )}
       </aside>
     );

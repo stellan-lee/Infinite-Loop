@@ -1,0 +1,3 @@
+.rerun { min-width: 0; overflow-wrap: anywhere; font: 12px/1.5 var(--mono); }
+.rerun p { margin: 6px 0 0; color: var(--fg-dim); }
+.rerun [role='alert'] { color: var(--accent-err); }

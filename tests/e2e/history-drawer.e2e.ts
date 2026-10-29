@@ -81,6 +81,109 @@ test('finished job opens the exact run and workflow history on home without chan
   await page.screenshot({ path: testInfo.outputPath('history-drawer-desktop.png'), fullPage: false });
 });
 
+test('reruns the selected failed history entry once with its recorded inputs', async ({ page }) => {
+  const selected = recordFor(olderTarget);
+  selected.scope = {
+    inputs: { selectedRun: 'stale fallback' },
+    __inputs: { selectedRun: olderTarget.runId, approved: true },
+  };
+  await page.route('**/api/runs/*/*', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ run: selected }),
+  }));
+
+  const submissions: unknown[] = [];
+  let markSubmitted!: () => void;
+  let releaseSubmission!: () => void;
+  const submitted = new Promise<void>((resolve) => { markSubmitted = resolve; });
+  const released = new Promise<void>((resolve) => { releaseSubmission = resolve; });
+  await page.route('**/api/run', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    submissions.push(route.request().postDataJSON());
+    markSubmitted();
+    await released;
+    return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ runId: 'fresh-rerun' }) });
+  });
+
+  await page.goto('/');
+  await page.getByTestId('job-row-older-target').getByRole('button', { name: 'View run older-target' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Run history detail' });
+  await expect(drawer).toContainText('selected older run failure');
+  const rerun = drawer.getByRole('button', { name: 'Rerun workflow' });
+  await expect(rerun).toBeEnabled();
+  await rerun.click();
+  await submitted;
+  await expect(rerun).toBeDisabled();
+  await rerun.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+  expect(submissions).toEqual([{ workflowId: DEFAULT_WORKFLOW_ID, inputs: { selectedRun: olderTarget.runId, approved: true } }]);
+  releaseSubmission();
+  await expect(drawer).toContainText('fresh-rerun');
+  await expect(page).toHaveURL('/');
+  await expect(page.getByTestId('flow-list')).toBeVisible();
+});
+
+test('offers rerun for a successful entry and reports rejected inputs in the drawer', async ({ page }) => {
+  const success = { ...olderTarget, status: 'succeeded' as const, errorMessage: undefined };
+  const record: RunRecord = { ...recordFor(olderTarget), status: 'succeeded', errorMessage: undefined };
+  await page.route('**/api/runs', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [success] }),
+  }));
+  await page.route('**/api/runs/*/*', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ run: record }),
+  }));
+  const submissions: unknown[] = [];
+  await page.route('**/api/run', (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    submissions.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 400, contentType: 'application/json',
+      body: JSON.stringify({ error: 'invalid-inputs', field: 'newRequiredInput', reason: 'required' }),
+    });
+  });
+
+  await page.goto('/');
+  const target = page.getByTestId('job-row-older-target');
+  await expect(target).toHaveAttribute('data-status', 'succeeded');
+  await target.getByRole('button', { name: 'View run older-target' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Run history detail' });
+  await expect(drawer.getByLabel('recorded run status')).toContainText('succeeded');
+  await drawer.getByRole('button', { name: 'Rerun workflow' }).click();
+  await expect(drawer.getByRole('alert')).toContainText('newRequiredInput');
+  await expect(drawer.getByRole('alert')).toContainText(/required/i);
+  expect(submissions).toEqual([{ workflowId: DEFAULT_WORKFLOW_ID, inputs: { selectedRun: olderTarget.runId } }]);
+  await expect(drawer).toBeVisible();
+  await expect(page).toHaveURL('/');
+});
+
+test('reruns a canvas history entry when its failed record has no saved inputs', async ({ page }) => {
+  const record = { ...recordFor(olderTarget), scope: {} };
+  await page.route((url) => url.pathname === '/api/runs' && url.searchParams.has('workflowId'), (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ runs: [olderTarget] }),
+  }));
+  await page.route('**/api/runs/*/*', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ run: record }),
+  }));
+  const submissions: Record<string, unknown>[] = [];
+  await page.route('**/api/run', (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    submissions.push(route.request().postDataJSON() as Record<string, unknown>);
+    return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({ runId: 'canvas-rerun' }) });
+  });
+
+  await page.goto('/');
+  await page.getByTestId(`flow-row-${DEFAULT_WORKFLOW_ID}`).click();
+  await page.getByRole('button', { name: 'toggle run history' }).click();
+  const history = page.getByLabel('run history');
+  await history.getByRole('button', { name: 'run older-target' }).click();
+  const detail = page.getByLabel('run history detail');
+  await expect(detail.getByLabel('recorded run status')).toContainText('failed');
+  await detail.getByRole('button', { name: 'Rerun workflow' }).click();
+  await expect(detail).toContainText('canvas-rerun');
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0].workflowId).toBe(DEFAULT_WORKFLOW_ID);
+  expect(submissions[0].inputs ?? {}).toEqual({});
+  await expect(page).toHaveURL(new RegExp(`/${DEFAULT_WORKFLOW_ID}$`));
+});
+
 test('closing a pending detail and opening another run ignores the late response', async ({ page }) => {
   let markFirstStarted!: () => void;
   let releaseFirst!: () => void;
@@ -163,6 +266,14 @@ test('detail load can be retried and the mobile drawer can scroll to the end', a
     expect(box!.y + box!.height).toBeLessThanOrEqual(80);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  const rerun = drawer.getByRole('button', { name: 'Rerun workflow' });
+  await rerun.scrollIntoViewIfNeeded();
+  const rerunBounds = await rerun.boundingBox();
+  expect(rerunBounds).not.toBeNull();
+  expect(rerunBounds!.x).toBeGreaterThanOrEqual(bounds!.x - 1);
+  expect(rerunBounds!.x + rerunBounds!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width + 1);
+  expect(rerunBounds!.y).toBeGreaterThanOrEqual(bounds!.y - 1);
+  expect(rerunBounds!.y + rerunBounds!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height + 1);
   await page.screenshot({ path: testInfo.outputPath('history-drawer-mobile.png'), fullPage: false });
 
   const lastLine = drawer.getByText('detail line 79');

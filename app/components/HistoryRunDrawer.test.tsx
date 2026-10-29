@@ -36,6 +36,19 @@ it('fetches the exact encoded identity and shares recorded details without chang
   expect(after.panRequest).toBe(before.panRequest);
 });
 
+it.each(['succeeded', 'failed'] as const)('reruns a %s history record from the Jobs drawer', async (status) => {
+  const requests: { url: string; body?: unknown }[] = [];
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (String(url) === '/api/run') return new Response(JSON.stringify({ runId: 'fresh-run' }), { status: 202 });
+    return json({ ...record, status });
+  }) as typeof fetch;
+  render(<HistoryRunDrawer workflowId={record.workflowId} runId={record.runId} onClose={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rerun workflow' }));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('fresh-run'));
+  expect(requests.at(-1)).toEqual({ url: '/api/run', body: { workflowId: record.workflowId, inputs: { topic: 'exact run input' } } });
+});
+
 it('clears old status while switching and ignores late responses, including the same run ID in another flow', async () => {
   const pending: { resolve: (response: Response) => void; signal: AbortSignal }[] = [];
   globalThis.fetch = ((_url: RequestInfo | URL, options?: RequestInit) => new Promise<Response>((resolve) => pending.push({ resolve, signal: options!.signal! }))) as typeof fetch;

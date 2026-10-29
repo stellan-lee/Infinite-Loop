@@ -130,6 +130,24 @@ describe('RunHistory', () => {
     expect(useWorkflowStore.getState().inspectedRunEvents).toEqual(RECORD_A.events);
   });
 
+  it('keeps final output and the event log inside the scrollable record area', async () => {
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      const path = String(url);
+      if (path.startsWith('/api/runs?')) return jsonResponse({ runs: [SUMMARY_A] });
+      if (path.startsWith('/api/runs/')) return jsonResponse({ run: {
+        ...RECORD_A,
+        finalOutputs: { large: Array.from({ length: 200 }, (_, i) => i) },
+      } });
+      throw new Error(`unexpected fetch ${path}`);
+    }) as unknown as typeof fetch;
+    render(<RunHistory workflowId="wf-1" />);
+    fireEvent.click(await screen.findByLabelText('run r-a'));
+    const content = await screen.findByLabelText('run history content');
+    expect(content).toContainElement(screen.getByLabelText('Final output'));
+    expect(content).toContainElement(screen.getByLabelText('event log'));
+    expect(content).toContainElement(screen.getByRole('button', { name: 'Rerun workflow' }));
+  });
+
   it.each(['succeeded', 'failed'] as const)('offers rerun for a %s history record', async (status) => {
     const requests: { url: string; body?: unknown }[] = [];
     globalThis.fetch = mock(async (url: RequestInfo | URL, init?: RequestInit) => {

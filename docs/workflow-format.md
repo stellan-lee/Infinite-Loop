@@ -47,7 +47,7 @@ uses `/tmp`.
 | Node | What it does | Outputs in scope | Branches |
 |---|---|---|---|
 | **Start** | Entry point. Holds the workflow's input declarations. | — | `next` |
-| **End** | Settles the run as `succeeded` or `failed`. | — | (terminal) |
+| **End** | Settles the run as `succeeded` or `failed` and copies selected final outputs. | declared output names | (terminal) |
 | **Agent** | Runs an agent through any provider — Claude, Codex, Hermes, your own. | `stdout`, `stderr`, `exitCode`, `durationMs`, `timedOut` | `next` (exit 0) / `error` |
 | **OpenAI** | Makes one OpenAI-compatible HTTP completion with a strict imported JSON Schema. | `result` | `next` / `error` |
 | **Script** | Inline TypeScript (Bun) or Python (`python3`). Reads typed named inputs; the function's return value is stored as `result`. | `result`, `stdout`, `stderr`, `durationMs` | `next` / `error` |
@@ -74,6 +74,15 @@ Reserved scopes:
 
 - `{{__inputs.NAME}}` — workflow inputs supplied by the caller (UI modal, MCP call, or webhook).
 - `{{globals.NAME}}` — workflow-level constants declared on the workflow root.
+
+An End node may declare `outputs` as a map of output names to single dotted
+scope paths, for example `"outputs": { "answer": "agent-1.stdout", "ok":
+"branch-1.result" }`. Choose variables in the End node's configuration.
+Bindings copy the original JSON value, including booleans and objects;
+unavailable or nullish paths become `null`. They are recorded as End node
+outputs and as the run's `finalOutputs`, shown in the run detail. This works
+for both succeeded and failed End outcomes. A run that fails before reaching
+an End has no selected final outputs.
 
 ## Workflow library
 

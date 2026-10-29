@@ -78,6 +78,36 @@ export interface StartConfig {}
 
 export interface EndConfig {
   outcome?: 'succeeded' | 'failed';
+  /** Named final outputs copied from a single dotted path in the run scope. */
+  outputs?: Record<string, string>;
+}
+
+/** End bindings are scope paths, not text templates. Keep them safe to use as
+ * JSON object keys and to traverse without following prototype properties. */
+export function validateEndConfig(config: unknown, nodeId: string): asserts config is EndConfig {
+  const error = (detail: string) => new Error(`invalid workflow: end node "${nodeId}" ${detail}`);
+  if (!config || typeof config !== 'object' || Array.isArray(config)) throw error('config must be an object');
+  const cfg = config as Record<string, unknown>;
+  if (cfg.outcome !== undefined && cfg.outcome !== 'succeeded' && cfg.outcome !== 'failed') {
+    throw error('outcome must be succeeded or failed');
+  }
+  if (cfg.outputs === undefined) return;
+  if (!cfg.outputs || typeof cfg.outputs !== 'object' || Array.isArray(cfg.outputs)) {
+    throw error('outputs must be an object');
+  }
+  for (const [name, ref] of Object.entries(cfg.outputs)) {
+    if (!/^[A-Za-z_][\w-]*$/.test(name) || isUnsafeEndPathSegment(name)) {
+      throw error(`output name "${name}" is invalid`);
+    }
+    if (typeof ref !== 'string' || !/^[\w-]+(?:\.[\w-]+)+$/.test(ref) ||
+        ref.split('.').some(isUnsafeEndPathSegment)) {
+      throw error(`output "${name}" must reference one dotted variable path`);
+    }
+  }
+}
+
+function isUnsafeEndPathSegment(segment: string): boolean {
+  return segment === '__proto__' || segment === 'prototype' || segment === 'constructor';
 }
 
 /** Roles accepted by the OpenAI Responses API for a conversational input. */
@@ -523,6 +553,8 @@ export interface RunSnapshot {
   startedAt?: number;
   finishedAt?: number;
   errorMessage?: string;
+  /** Selected outputs from the top-level End reached by this run. */
+  finalOutputs?: Record<string, unknown>;
   /**
    * Recent events emitted during the current/last run, capped to a sliding
    * window. Returned by getState() so a refreshing client can rehydrate the
@@ -659,6 +691,7 @@ export interface RunFinishedEvent {
   status: Exclude<RunStatus, 'idle' | 'running'>;
   scope: Scope;
   errorMessage?: string;
+  finalOutputs?: Record<string, unknown>;
 }
 
 // Stage 4 (DirLockManager wiring) emits these. Defined now so the type lands
@@ -824,6 +857,8 @@ export interface RunRecord {
   durationMs: number;
   scope: Scope;
   errorMessage?: string;
+  /** Selected outputs from the top-level End reached by this run. */
+  finalOutputs?: Record<string, unknown>;
   events: WorkflowEvent[];
   /** True when the event log was truncated mid-run because it exceeded the
    * persistence cap (e.g. an infinite loop with chatty stdout). The events

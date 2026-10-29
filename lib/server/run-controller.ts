@@ -13,6 +13,7 @@ import { isGitHubCITerminal, type GitHubCIConfig } from '../shared/github-ci';
 import { CheckpointError, childrenOf, saveDurableRun, removeDurableRun, type DurableRun, type WalkFrame, type BranchResult } from './durable-run';
 import type {
   EdgeHandle,
+  EndConfig,
   HumanDecisionRecord,
   LoopConfig,
   ManualConfig,
@@ -304,6 +305,24 @@ export class RunController {
   private terminalCheckpoint?: DurableRun['terminal'];
   private cancellation?: DurableRun['cancellation'];
   private checkpointFailed = false;
+
+  /** A final output belongs only to the top-level End that actually settled
+   * this run. The frame survives durable restarts and bounded event logs. */
+  private selectedFinalOutputs(workflow: Workflow): Record<string, unknown> | undefined {
+    const frame = this.rootFrame;
+    if (frame?.phase !== 'done' || !frame.currentNodeId) return undefined;
+    const end = workflow.nodes.find((node) => node.id === frame.currentNodeId && node.type === 'end');
+    if (!end) return undefined;
+    const config = end.config as EndConfig;
+    if (frame.branch !== 'next' || frame.status !== (config.outcome ?? 'succeeded')) return undefined;
+    const names = Object.keys(config.outputs ?? {});
+    if (names.length === 0) return undefined;
+    const source = this.snapshot.scope[end.id];
+    if (!source) return undefined;
+    const outputs: Record<string, unknown> = {};
+    for (const name of names) outputs[name] = Object.hasOwn(source, name) ? source[name] : null;
+    return outputs;
+  }
 
   private frame(node: WorkflowNode, exec: ExecutionScope, scope: Scope, workflow: Workflow): WalkFrame {
     let scopeId = Object.keys(this.scopes).find(key => this.scopes[key] === scope);
@@ -737,11 +756,13 @@ export class RunController {
       this.slotPool?.releaseRun(this.runId);
 
       finishedAt = Date.now();
+      const finalOutputs = this.selectedFinalOutputs(workflow);
       this.snapshot = {
         ...this.snapshot,
         status: finalStatus,
         finishedAt,
         errorMessage,
+        ...(finalOutputs ? { finalOutputs } : {}),
         waitingFor: undefined,
       };
       this.emit({
@@ -749,6 +770,7 @@ export class RunController {
         status: finalStatus,
         scope: this.snapshot.scope,
         errorMessage,
+        ...(finalOutputs ? { finalOutputs } : {}),
       });
     } finally {
       captureUnsub();
@@ -795,6 +817,7 @@ export class RunController {
       events: eventsForPersist,
       truncated: truncatedForPersist,
       scope: scopeForPersist,
+      ...(this.snapshot.finalOutputs ? { finalOutputs: this.snapshot.finalOutputs } : {}),
       costUsd: costUsdForPersist,
       nodeCount: nodeCountForPersist,
     });
@@ -811,6 +834,7 @@ export class RunController {
     events: WorkflowEvent[];
     truncated: boolean;
     scope: Scope;
+    finalOutputs?: Record<string, unknown>;
     costUsd: number;
     nodeCount: number;
   }): Promise<void> {
@@ -848,6 +872,7 @@ export class RunController {
         durationMs: args.finishedAt - args.startedAt,
         scope: args.scope,
         errorMessage: args.errorMessage,
+        ...(args.finalOutputs ? { finalOutputs: args.finalOutputs } : {}),
         events: args.events,
         truncated: args.truncated || undefined,
         nodeCount: args.nodeCount,
@@ -1315,7 +1340,10 @@ export class RunController {
       frame.branch = branch;
       frame.phase = 'result';
       this.checkpoint();
-      if (current.type === 'end') return finish((current.config as { outcome?: 'succeeded' | 'failed' }).outcome ?? 'succeeded');
+      if (current.type === 'end') {
+        if (branch !== 'next') return finish('failed');
+        return finish((current.config as { outcome?: 'succeeded' | 'failed' }).outcome ?? 'succeeded');
+      }
       if (exec.parentNode?.type === 'loop' && current.type !== 'loop' && current.type !== 'parallel' && current.type !== 'subworkflow') {
         if (branch === 'met' || branch === 'break') return finish('succeeded', 'break');
         if (branch === 'not_met' || branch === 'continue') return finish('succeeded', 'continue');

@@ -179,6 +179,72 @@ describe('ConfigPanel', () => {
     expect(screen.getByText(/agent-1 · agent/)).toBeInTheDocument();
   });
 
+  it('lets End select named final outputs for either outcome and remove them', () => {
+    const end: WorkflowNode = { id: 'end-1', type: 'end', position: { x: 0, y: 0 }, config: {} };
+    const wf = {
+      ...makeWorkflow([startNode, agentNode, end]),
+      globals: { 'bad key': 'not a valid dotted path', constructor: 'reserved path' },
+      inputs: [{ name: 'topic', type: 'string' as const }],
+      edges: [
+        { id: 'e1', source: 'start-1', sourceHandle: 'next' as const, target: 'agent-1' },
+        { id: 'e2', source: 'agent-1', sourceHandle: 'next' as const, target: 'end-1' },
+      ],
+    };
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(wf);
+      useWorkflowStore.getState().selectNode('end-1');
+    });
+    render(<ConfigPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: /add output/i }));
+    fireEvent.change(screen.getByLabelText('output name 0'), { target: { value: 'answer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'output variable 0' }));
+    expect(screen.getByRole('option', { name: 'inputs.topic' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'globals.bad key' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'globals.constructor' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'agent-1.stdout' }));
+    expect((findWorkflowNode(useWorkflowStore.getState().currentWorkflow!.nodes, 'end-1')!.config as { outputs?: Record<string, string> }).outputs).toEqual({ answer: 'agent-1.stdout' });
+
+    fireEvent.click(screen.getByRole('group', { name: 'Outcome' }).querySelector('button[data-active="false"]')!);
+    expect((findWorkflowNode(useWorkflowStore.getState().currentWorkflow!.nodes, 'end-1')!.config as { outcome?: string; outputs?: Record<string, string> })).toMatchObject({ outcome: 'failed', outputs: { answer: 'agent-1.stdout' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'remove output 0' }));
+    expect((findWorkflowNode(useWorkflowStore.getState().currentWorkflow!.nodes, 'end-1')!.config as { outputs?: Record<string, string> }).outputs).toEqual({});
+  });
+
+  it('keeps incomplete End rows local and does not carry them to another End node', () => {
+    const ends: WorkflowNode[] = [
+      { id: 'end-1', type: 'end', position: { x: 0, y: 0 }, config: {} },
+      { id: 'end-2', type: 'end', position: { x: 0, y: 0 }, config: {} },
+    ];
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(makeWorkflow([startNode, ...ends]));
+      useWorkflowStore.getState().selectNode('end-1');
+    });
+    render(<ConfigPanel />);
+    fireEvent.click(screen.getByRole('button', { name: /add output/i }));
+    fireEvent.change(screen.getByLabelText('output name 0'), { target: { value: 'draft' } });
+    expect((findWorkflowNode(useWorkflowStore.getState().currentWorkflow!.nodes, 'end-1')!.config as { outputs?: Record<string, string> }).outputs).toEqual({});
+    act(() => useWorkflowStore.getState().selectNode('end-2'));
+    expect(screen.queryByLabelText('output name 0')).toBeNull();
+  });
+
+  it('shows a saved End binding whose source can no longer be selected', () => {
+    const end: WorkflowNode = {
+      id: 'end-1', type: 'end', position: { x: 0, y: 0 },
+      config: { outputs: { answer: 'globals.bad key' } },
+    };
+    act(() => {
+      useWorkflowStore.getState().loadWorkflow(makeWorkflow([startNode, end]));
+      useWorkflowStore.getState().selectNode('end-1');
+    });
+    render(<ConfigPanel />);
+    expect(screen.getByLabelText('output name 0')).toHaveValue('answer');
+    expect(screen.getByText('This saved variable is unavailable. Choose a valid variable.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'output variable 0' }));
+    expect(screen.getByRole('option', { name: 'globals.bad key · unavailable' })).toBeInTheDocument();
+  });
+
   it('renders the OpenAI form with HTTP provider, model, prompt, and schema import controls', async () => {
     mockProvidersFetch([
       { id: 'cli-provider', label: 'CLI provider', transport: 'cli' },

@@ -9,6 +9,7 @@
  */
 
 import type {
+  AgentConfig,
   ScriptConfig,
   SubworkflowConfig,
   Workflow,
@@ -113,9 +114,15 @@ function staticOutputs(type: WorkflowNode['type']): Array<{ field: string; descr
   }
 }
 
-/** Dynamic outputs that depend on per-node config — script declares its
- * own output names, subworkflow declares parent-name outputs. */
+/** Dynamic outputs that depend on per-node config. */
 function dynamicOutputs(node: WorkflowNode): Array<{ field: string; description: string }> {
+  if (node.type === 'agent') {
+    const cfg = node.config as AgentConfig | undefined;
+    const declared = Array.isArray(cfg?.outputs) ? cfg.outputs : [];
+    return declared
+      .filter((output) => output && typeof output.name === 'string' && output.name.length > 0)
+      .map((output) => ({ field: output.name, description: output.description ?? 'declared agent output' }));
+  }
   if (node.type === 'script') {
     const cfg = node.config as ScriptConfig | undefined;
     const names = Array.isArray(cfg?.outputs) ? cfg!.outputs : [];

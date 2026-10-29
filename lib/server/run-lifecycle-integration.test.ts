@@ -27,7 +27,7 @@ import { saveWorkflow } from './workflow-store';
 import { workflowEngine } from './workflow-engine';
 import { eventBus } from './event-bus';
 import { flushAudit, listAuditEntries } from './audit-log';
-import type { Workflow, WorkflowEvent } from '../shared/workflow';
+import type { RunRecord, Workflow, WorkflowEvent } from '../shared/workflow';
 
 const tmpWfDir = path.join(os.tmpdir(), `infinite-loop-run-lifecycle-wf-${process.pid}`);
 const tmpRunsDir = path.join(os.tmpdir(), `infinite-loop-run-lifecycle-runs-${process.pid}`);
@@ -120,7 +120,108 @@ function buildWorkflow(id: string): Workflow {
   };
 }
 
+async function runAndRead(workflow: Workflow, raw = false): Promise<{ record: RunRecord; finished: WorkflowEvent }> {
+  if (raw) {
+    // Hand-written workflow files are migrated on load but do not pass the
+    // save-time validator; exercise the executor and End settle guard.
+    await fs.writeFile(path.join(tmpWfDir, `${workflow.id}.json`), JSON.stringify(workflow));
+  } else {
+    await saveWorkflow(workflow);
+  }
+  const streamed: WorkflowEvent[] = [];
+  const off = eventBus.subscribe((event) => streamed.push(event));
+  try {
+    const response = await runPOST(new Request('http://localhost/api/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ workflowId: workflow.id }),
+    }));
+    expect(response.status).toBe(202);
+    const { runId } = await response.json() as { runId: string };
+    const record = await waitFor(async () => {
+      const response = await runGET(new Request(`http://localhost/api/runs/${workflow.id}/${runId}`), {
+        params: Promise.resolve({ workflowId: workflow.id, runId }),
+      });
+      if (!response.ok) return undefined;
+      const { run } = await response.json() as { run?: RunRecord };
+      return Array.isArray(run?.events) ? run : undefined;
+    });
+    const finished = streamed.find((event) => event.type === 'run_finished' && event.runId === runId);
+    expect(finished).toBeDefined();
+    return { record, finished: finished! };
+  } finally {
+    off();
+  }
+}
+
 describe('run lifecycle — compose -> run -> stream -> persist -> replay', () => {
+  test.each(['succeeded', 'failed'] as const)('fails a malformed hand-written %s End without final outputs', async (outcome) => {
+    const wf = buildWorkflow(`invalid-end-${outcome}`);
+    if (outcome === 'failed') wf.nodes[1].config = { lhs: 'hello', op: 'contains', rhs: 'world' };
+    const end = wf.nodes.find((node) => node.id === (outcome === 'succeeded' ? 'end-ok' : 'end-no'))!;
+    end.config = { outcome, outputs: { answer: '{{branch-1.result}}' } };
+    const { record, finished } = await runAndRead(wf, true);
+    expect(record.status).toBe('failed');
+    expect(record.finalOutputs).toBeUndefined();
+    expect(finished).toMatchObject({ status: 'failed' });
+    expect((finished as { finalOutputs?: unknown }).finalOutputs).toBeUndefined();
+    expect(record.events).toContainEqual(expect.objectContaining({
+      type: 'node_finished', nodeId: end.id, branch: 'error',
+      outputs: expect.objectContaining({ errorMessage: expect.stringContaining('dotted variable path') }),
+    }));
+    expect(record.events).toContainEqual(expect.objectContaining({
+      type: 'error', nodeId: end.id, message: expect.stringContaining('dotted variable path'),
+    }));
+  });
+
+  test.each(['succeeded', 'failed'] as const)('records selected outputs from a %s End', async (outcome) => {
+    const wf = buildWorkflow(`end-outputs-${outcome}`);
+    if (outcome === 'failed') {
+      wf.nodes[1].config = { lhs: 'hello', op: 'contains', rhs: 'world' };
+    }
+    const end = wf.nodes.find((node) => node.id === (outcome === 'succeeded' ? 'end-ok' : 'end-no'))!;
+    end.config = { outcome, outputs: { matched: 'branch-1.result', missing: 'branch-1.nope' } };
+    const { record, finished } = await runAndRead(wf);
+    expect(record.status).toBe(outcome);
+    const selected = { matched: outcome === 'succeeded', missing: null };
+    expect(record.finalOutputs).toEqual(selected);
+    expect(record.scope[end.id]).toEqual(selected);
+    expect(finished).toMatchObject({ finalOutputs: record.finalOutputs });
+  });
+
+  test('omits final outputs when a failure settles before End', async () => {
+    const wf = buildWorkflow('end-not-reached');
+    wf.nodes[1].config = { lhs: 'hello', op: 'matches', rhs: '(' };
+    wf.nodes[3].config = { outcome: 'failed', outputs: { matched: 'branch-1.result' } };
+    const { record, finished } = await runAndRead(wf);
+    expect(record.status).toBe('failed');
+    expect(record.finalOutputs).toBeUndefined();
+    expect((finished as { finalOutputs?: unknown }).finalOutputs).toBeUndefined();
+  });
+
+  test('does not promote a child End output to a parent that never reaches its End', async () => {
+    const child = buildWorkflow('selected-child');
+    child.nodes[2].config = { outcome: 'succeeded', outputs: { matched: 'branch-1.result' } };
+    await saveWorkflow(child);
+
+    const parent = buildWorkflow('parent-with-child');
+    parent.nodes = [
+      parent.nodes[0],
+      { id: 'sub-1', type: 'subworkflow', position: { x: 200, y: 0 },
+        config: { workflowId: child.id, inputs: {}, outputs: {} } },
+      { id: 'parent-end', type: 'end', position: { x: 400, y: 0 },
+        config: { outputs: { child: 'sub-1.status' } } },
+    ];
+    parent.edges = [{ id: 'to-sub', source: 'start-1', sourceHandle: 'next', target: 'sub-1' }];
+    const { record, finished } = await runAndRead(parent);
+    expect(record.status).toBe('succeeded');
+    expect(record.events).toContainEqual(expect.objectContaining({
+      type: 'node_finished', nodeId: 'sub-1/end-ok', outputs: { matched: true },
+    }));
+    expect(record.finalOutputs).toBeUndefined();
+    expect((finished as { finalOutputs?: unknown }).finalOutputs).toBeUndefined();
+  });
+
   test('a workflow started via /api/run streams events and lands in history', async () => {
     const workflowId = 'smoke-e2e';
 
@@ -153,12 +254,13 @@ describe('run lifecycle — compose -> run -> stream -> persist -> replay', () =
       );
       if (res.status !== 200) return undefined;
       const body = (await res.json()) as {
-        run?: { status?: string; events?: unknown; scope?: Record<string, unknown> };
+        run?: { status?: string; events?: unknown; scope?: Record<string, unknown>; finalOutputs?: Record<string, unknown> };
       };
       return Array.isArray(body.run?.events) ? body.run : undefined;
     });
 
     expect(record.status).toBe('succeeded');
+    expect(record.finalOutputs).toBeUndefined();
     expect((record.events as WorkflowEvent[]).length).toBeGreaterThan(0);
     // The branch routed down its `true` edge, so its outputs are in scope.
     expect(record.scope).toBeDefined();

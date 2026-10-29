@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { RunRecord } from '../../lib/shared/workflow';
 import { GroupedEventLog, JsonView } from './RunLog';
+import FinalOutput from './FinalOutput';
 
 function fmtTime(ms: number): string {
   return new Date(ms).toLocaleString();
@@ -54,6 +55,7 @@ export default function RunRecordDetails({ record, filterNodeId, onCardActivate 
         </div>
       ) : null}
 
+      <FinalOutput outputs={record.finalOutputs} />
       <ScopeBlock scope={record.scope} />
 
       <RecordedEventLog

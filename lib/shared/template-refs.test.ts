@@ -68,6 +68,18 @@ describe('availableVariables', () => {
     expect(fields).toEqual(expect.arrayContaining(['greeting', 'count', 'stdout', 'language']));
   });
 
+  it('includes declared Agent outputs for downstream selection', () => {
+    const wf: Workflow = {
+      ...baseWorkflow,
+      nodes: baseWorkflow.nodes.map((node) => node.type === 'agent'
+        ? { ...node, config: { ...node.config, outputs: [{ name: 'answer', description: 'final answer' }] } }
+        : node),
+    };
+    expect(availableVariables(wf, 'script-1')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ref: 'claude-1.answer', description: 'final answer', inScope: true }),
+    ]));
+  });
+
   it('exposes structured-output result as a template reference', () => {
     const wf: Workflow = {
       ...baseWorkflow,

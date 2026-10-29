@@ -42,6 +42,28 @@ it('fetches the exact encoded identity and shares recorded details without chang
   expect(after.panRequest).toBe(before.panRequest);
 });
 
+it.each(['succeeded', 'failed'] as const)('shows the persisted final output for a %s run', async (status) => {
+  globalThis.fetch = (async () => json({
+    ...record,
+    status,
+    finalOutputs: { answer: { count: 3, accepted: true }, missing: null },
+  })) as unknown as typeof fetch;
+  render(<HistoryRunDrawer workflowId={record.workflowId} runId={record.runId} onClose={() => {}} />);
+  const output = await screen.findByLabelText('Final output');
+  expect(output).toHaveTextContent('answer');
+  expect(output).toHaveTextContent('count');
+  expect(output).toHaveTextContent('3');
+  expect(output).toHaveTextContent('true');
+  expect(output).toHaveTextContent('null');
+});
+
+it('omits final output for a legacy or early-failed run', async () => {
+  globalThis.fetch = (async () => json({ ...record, status: 'failed', scope: {} })) as unknown as typeof fetch;
+  render(<HistoryRunDrawer workflowId={record.workflowId} runId={record.runId} onClose={() => {}} />);
+  await screen.findByLabelText('recorded run status');
+  expect(screen.queryByLabelText('Final output')).toBeNull();
+});
+
 it.each(['succeeded', 'failed'] as const)('reruns a %s history record from the Jobs drawer', async (status) => {
   const requests: { url: string; body?: unknown }[] = [];
   globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {

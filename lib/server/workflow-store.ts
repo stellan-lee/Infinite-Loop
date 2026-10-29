@@ -1,6 +1,6 @@
 import { validateGitHubCIConfig } from '../shared/github-ci';
 import { promises as fs } from 'node:fs';
-import { normalizeAgentHome } from '../shared/workflow';
+import { normalizeAgentHome, validateEndConfig } from '../shared/workflow';
 import path from 'node:path';
 import { dataDir, triggersDir } from './paths';
 import type {
@@ -114,6 +114,7 @@ function validateNodeConfig(n: WorkflowNode): void {
       `invalid workflow: judge node "${n.id}" has been removed; delete it and reconnect its edges`,
     );
   }
+  if (n.type === 'end') validateEndConfig(n.config, n.id);
   if (n.type === 'parallel') {
     const cfg = n.config as ParallelConfig;
     if (cfg.mode === 'quorum') {

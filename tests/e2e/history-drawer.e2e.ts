@@ -205,6 +205,32 @@ test('reruns a canvas history entry when its failed record has no saved inputs',
   await expect(page).toHaveURL(new RegExp(`/${DEFAULT_WORKFLOW_ID}$`));
 });
 
+test('browser Forward closes a home Jobs detail before restoring the editor', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route('**/api/runs/*/*', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ run: recordFor(olderTarget) }),
+  }));
+  await page.goto('/');
+  await page.getByTestId(`flow-row-${DEFAULT_WORKFLOW_ID}`).click();
+  await expect(page.locator('[data-id="agent-1"]')).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL('/');
+  const target = page.getByRole('region', { name: 'Jobs' })
+    .getByTestId('job-row-older-target').getByRole('button', { name: 'View run older-target' });
+  await target.click();
+  const drawer = page.getByRole('dialog', { name: 'Run history detail' });
+  await expect(drawer).toContainText('selected older run failure');
+
+  await page.goForward();
+  await expect(page).toHaveURL(new RegExp(`/${DEFAULT_WORKFLOW_ID}$`));
+  await expect(drawer).toHaveCount(0);
+  const node = page.locator('[data-id="agent-1"]');
+  await expect(node).toBeVisible();
+  await node.click();
+  await expect(page.getByRole('textbox', { name: 'Display name' })).toBeVisible();
+});
+
 test('closing a pending detail and opening another run ignores the late response', async ({ page }) => {
   let markFirstStarted!: () => void;
   let releaseFirst!: () => void;

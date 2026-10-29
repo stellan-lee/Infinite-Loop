@@ -5314,3 +5314,98 @@ input[type='number'].no-spin {
     grid-template-areas: "canvas panel";
   }
 }
+
+/* One persistent index yields space to the editor. Its contents resize with it. */
+.console-shell {
+  --console-duration: 560ms;
+  --console-easing: cubic-bezier(0.33, 0, 0.2, 1);
+  height: 100dvh;
+  padding-top: var(--top-bar-h);
+  overflow: hidden;
+}
+.console-body {
+  display: grid;
+  grid-template-columns: 100% minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  transition: grid-template-columns var(--console-duration) var(--console-easing);
+}
+.console-shell[data-view='workspace'] .console-body { grid-template-columns: 190px minmax(0, 1fr); }
+.console-home-pane, .console-editor-pane { min-width: 0; min-height: 0; }
+.console-home-pane { overflow: auto; background: var(--panel); }
+.console-shell .top-bar { position: fixed; inset: 0 0 auto; width: 100%; }
+.console-shell .flow-home-bar { z-index: 40; transition: opacity var(--console-duration) var(--console-easing), visibility 0s; }
+.console-shell .workflow-editor > .top-bar { z-index: 39; opacity: 0; visibility: hidden; transition: opacity var(--console-duration) var(--console-easing), visibility 0s var(--console-duration); }
+.console-shell[data-view='workspace'] .flow-home-bar { opacity: 0; visibility: hidden; transition-delay: 0s, var(--console-duration); }
+.console-shell[data-view='workspace'] .workflow-editor > .top-bar { opacity: 1; visibility: visible; transition-delay: 0s; }
+.console-opening { position: fixed; z-index: 41; top: calc(var(--top-bar-h) + 12px); right: 20px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+.console-home-pane .flow-home {
+  transition: padding var(--console-duration) var(--console-easing), gap var(--console-duration) var(--console-easing), grid-template-columns var(--console-duration) var(--console-easing);
+}
+.console-home-pane .flow-home[hidden] { display: none; }
+.console-home-pane .flow-home-flows { padding: 0; transition: padding var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-home-heading { transition: gap var(--console-duration) var(--console-easing), margin var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-home-heading > div:first-child { min-width: 0; }
+.console-home-pane h1 { transition: font-size var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-home-description { max-height: 48px; overflow: hidden; transition: max-height var(--console-duration) var(--console-easing), margin var(--console-duration) var(--console-easing), opacity var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-home-create { max-width: 110px; flex-shrink: 0; overflow: hidden; transition: max-width var(--console-duration) var(--console-easing), opacity var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-home-create .btn { white-space: nowrap; }
+.console-jobs { min-width: 0; overflow: hidden; transition: opacity var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-list-item { grid-template-columns: minmax(0, 1fr) 80px; transition: grid-template-columns var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-row { overflow: hidden; transition: padding var(--console-duration) var(--console-easing), gap var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-row-name { transition: font-size var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-row-id { transition: font-size var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-row-meta { gap: 8px 12px; transition: gap var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-row-updated, .console-home-pane .flow-source { max-width: 180px; max-height: 30px; overflow: hidden; transition: max-width var(--console-duration) var(--console-easing), max-height var(--console-duration) var(--console-easing), padding var(--console-duration) var(--console-easing), opacity var(--console-duration) var(--console-easing); }
+.console-home-pane .flow-row-actions { overflow: hidden; transition: opacity var(--console-duration) var(--console-easing); }
+.console-shell[data-view='workspace'] .console-home-pane { box-shadow: inset -1px 0 var(--border); }
+.console-shell[data-view='workspace'] .flow-home-grid { padding: 0; gap: 0; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0fr); }
+.console-shell[data-view='workspace'] .flow-home-flows { padding: 8px; }
+.console-shell[data-view='workspace'] .flow-home-heading { gap: 0; margin-bottom: 8px; min-height: 40px; }
+.console-shell[data-view='workspace'] .flow-home h1 { font-size: 15px; }
+.console-shell[data-view='workspace'] .flow-home-description { max-height: 0; margin-top: 0; opacity: 0; }
+.console-shell[data-view='workspace'] .flow-home-create { max-width: 0; opacity: 0; }
+.console-shell[data-view='workspace'] .console-jobs { opacity: 0; }
+.console-shell[data-view='workspace'] .flow-list-item { grid-template-columns: minmax(0, 1fr) 0px; }
+.console-shell[data-view='workspace'] .flow-row { padding: 10px 9px; gap: 3px; border-radius: 6px; }
+.console-shell[data-view='workspace'] .flow-row[aria-current='page'] { color: var(--accent-live); background: var(--accent-soft); }
+.console-shell[data-view='workspace'] .flow-row-name { font-size: 14px; }
+.console-shell[data-view='workspace'] .flow-row-id { font-size: 10px; }
+.console-shell[data-view='workspace'] .flow-row-meta { gap: 0; }
+.console-shell[data-view='workspace'] .flow-row-updated, .console-shell[data-view='workspace'] .flow-source { max-width: 0; max-height: 0; padding: 0; opacity: 0; border: 0; }
+.console-shell[data-view='workspace'] .flow-row-actions { opacity: 0; }
+.console-editor-pane { grid-column: 2; grid-row: 1; overflow: clip; }
+.console-shell .workflow-editor,
+.console-shell .workflow-editor-content,
+.console-shell .workflow-editor-main { width: 100%; height: 100%; min-width: 0; min-height: 0; }
+.console-shell .workflow-editor-content { display: block; overflow: hidden; }
+.console-shell .workflow-editor-main { position: relative; overflow: hidden; }
+.console-shell .workspace { width: 100%; height: 100%; min-width: 0; }
+.console-shell .workspace-palette, .console-shell .canvas-shell, .console-shell .palette { min-width: 0; }
+.console-shell .workspace-palette { overflow: hidden; }
+@media (min-width: 921px) {
+  .console-shell .workspace-bi { grid-template-columns: minmax(0, min(var(--palette-w), 26%)) minmax(0, 1fr); }
+  .console-shell .workspace-tri { grid-template-columns: minmax(0, min(var(--palette-w), 26%)) minmax(0, 1fr) 5px minmax(0, min(var(--right-w), 42%)); }
+}
+.workflow-switcher-close, .mobile-flows-toggle { display: none; }
+@media (max-width: 1279px) {
+  .console-shell[data-view='workspace'] .console-body { grid-template-columns: 0px minmax(0, 1fr); }
+  .workflow-editor .actions .mobile-flows-toggle { display: inline-flex; align-items: center; }
+  .console-shell[data-view='workspace'] .console-home-pane {
+    position: fixed; z-index: 81; inset: 0 auto 0 0; height: 100dvh;
+    width: min(320px, calc(100vw - 48px));
+    box-shadow: 8px 0 28px rgba(24, 34, 53, 0.18);
+    visibility: hidden; pointer-events: none; transform: translateX(-100%);
+  }
+  .console-shell[data-view='workspace'] .console-home-pane[data-open='true'] { visibility: visible; pointer-events: auto; transform: translateX(0); }
+  .console-shell[data-view='workspace'] .workflow-switcher-close { display: grid; place-items: center; margin-left: auto; width: 44px; height: 44px; border: 0; background: transparent; color: var(--fg-soft); font-size: 24px; cursor: pointer; }
+  .workflow-switcher-close:focus-visible { outline: 2px solid var(--accent-live); }
+  .workflow-switcher-backdrop { position: fixed; z-index: 80; inset: 0; border: 0; background: rgba(20, 26, 38, 0.35); cursor: default; }
+}
+@media (max-width: 920px) {
+  .console-shell[data-view='workspace'] { --top-bar-h: 116px; }
+  .workflow-editor .actions .mobile-flows-toggle { order: -3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .console-shell { --console-duration: 0ms; }
+}

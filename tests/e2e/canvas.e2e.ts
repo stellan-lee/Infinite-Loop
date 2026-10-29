@@ -18,7 +18,7 @@ test('the console shell loads and renders the seeded workflow', async ({
   page,
 }) => {
   await page.goto(`/${DEFAULT_WORKFLOW_ID}`);
-  await expect(page.locator('.top-bar')).toBeVisible();
+  await expect(page.locator('.workflow-editor > header.top-bar')).toBeVisible();
 
   // The flow URL selects the seeded workflow. Each rendered canvas node
   // carries its workflow node id.

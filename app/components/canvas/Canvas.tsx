@@ -8,6 +8,7 @@ import {
   ReactFlowProvider,
   useNodesInitialized,
   useReactFlow,
+  useStore,
   type ColorMode,
   type Connection,
   type Edge as XyEdge,
@@ -17,6 +18,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useConsoleLayout } from '../ConsoleLayoutContext';
 import { useWorkflowStore } from '../../../lib/client/workflow-store-client';
 import type {
   AgentConfig,
@@ -353,7 +355,18 @@ function CanvasInner() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   const { screenToFlowPosition, fitView, getNode } = useReactFlow();
-  const nodesInitialized = useNodesInitialized();
+  const initialized = useNodesInitialized();
+  const consoleLayout = useConsoleLayout();
+  // Workflow nodes deliberately omit transient measured dimensions. React
+  // Flow's aggregate flag can therefore reset when controlled nodes update,
+  // even though its internal nodes are measured and ready for a viewport fit.
+  const measuredNodes = useStore((state) => state.nodeLookup.size > 0 &&
+    [...state.nodeLookup.values()].every((node) => node.hidden || (
+      node.internals.handleBounds !== undefined &&
+      (node.measured.width ?? 0) > 0 && (node.measured.height ?? 0) > 0
+    )));
+  const nodesInitialized = consoleLayout ? measuredNodes : initialized;
+  const layoutTransitioning = consoleLayout?.transitioning ?? false;
   const [mobileViewport, setMobileViewport] = useState<string | null>(null);
   useEffect(() => {
     const updateViewport = () => setMobileViewport(
@@ -365,7 +378,7 @@ function CanvasInner() {
     window.addEventListener('resize', updateViewport);
     return () => window.removeEventListener('resize', updateViewport);
   }, []);
-  const fitMinZoom = mobileViewport ? 0.1 : 0.6;
+  const fitMinZoom = mobileViewport || consoleLayout ? 0.1 : 0.6;
 
   // Sync xyflow's color mode with the app theme (set on
   // `document.documentElement.dataset.theme` by the pre-paint script in
@@ -392,16 +405,30 @@ function CanvasInner() {
   // A desktop minimum zoom clips longer workflows on a narrow phone canvas.
   const fittedFor = useRef<string | null>(null);
   useEffect(() => {
+    if (!layoutTransitioning || !nodesInitialized) return;
+    fittedFor.current = null;
+    // The canvas receives real intermediate widths as the shared panes resize.
+    // Keep the graph fitted only during that opening transition; normal desktop
+    // resizing and editing continue to preserve the user's camera.
+    let frame = 0;
+    const fit = () => {
+      void fitView({ padding: 0.14, maxZoom: 1.05, minZoom: 0.1, duration: 0 });
+      frame = requestAnimationFrame(fit);
+    };
+    frame = requestAnimationFrame(fit);
+    return () => cancelAnimationFrame(frame);
+  }, [layoutTransitioning, nodesInitialized, fitView]);
+  useEffect(() => {
     const id = currentWorkflow?.id ?? null;
     const hasNodes = (currentWorkflow?.nodes?.length ?? 0) > 0;
     const fitKey = `${id}:${mobileViewport ?? 'desktop'}`;
-    if (!id || !hasNodes || !nodesInitialized || fittedFor.current === fitKey) return;
+    if (layoutTransitioning || !id || !hasNodes || !nodesInitialized || fittedFor.current === fitKey) return;
     const raf = requestAnimationFrame(() => {
       fittedFor.current = fitKey;
-      void fitView({ padding: 0.14, maxZoom: 1.05, minZoom: fitMinZoom, duration: 200 });
+      void fitView({ padding: 0.14, maxZoom: 1.05, minZoom: fitMinZoom, duration: 0 });
     });
     return () => cancelAnimationFrame(raf);
-  }, [currentWorkflow?.id, currentWorkflow?.nodes?.length, fitView, nodesInitialized, mobileViewport, fitMinZoom]);
+  }, [currentWorkflow?.id, currentWorkflow?.nodes?.length, fitView, nodesInitialized, mobileViewport, fitMinZoom, layoutTransitioning]);
 
   // Pan-to-node requests from outside the canvas (e.g. clicking a node card
   // in the recorded run history). The `seq` field on `panRequest` advances on
@@ -733,7 +760,7 @@ function CanvasInner() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         colorMode={colorMode}
-        minZoom={mobileViewport ? 0.1 : 0.5}
+        minZoom={mobileViewport || consoleLayout ? 0.1 : 0.5}
         fitView
         fitViewOptions={{ padding: 0.14, maxZoom: 1.05, minZoom: fitMinZoom }}
         connectionLineType={ConnectionLineType.Bezier}

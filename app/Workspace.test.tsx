@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import Workspace from './Workspace';
+import FlowList from './FlowList';
 import type { ReactNode } from 'react';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import type { GitHubCIOutput } from '../lib/shared/github-ci';
@@ -62,6 +63,7 @@ beforeEach(() => {
   routerPush.mockClear();
   router.replace.mockClear();
   window.localStorage.clear();
+  window.sessionStorage.clear();
   window.location.hash = '';
   if (typeof globalThis.ResizeObserver === 'undefined') {
     (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -91,7 +93,7 @@ describe('Workspace initial workflow loading', () => {
     renderWorkspace(<Workspace flowId="wf-a" />);
     await waitFor(() => expect(useWorkflowStore.getState().currentWorkflow?.id).toBe('wf-a'));
     expect(fetchMock).toHaveBeenCalledWith('/api/workflows/wf-a');
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/workflows')).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/workflows');
   });
 
   it('does not fall back to another workflow for an unknown ID', async () => {
@@ -153,6 +155,76 @@ describe('Workspace run persistence', () => {
 });
 
 describe('Workspace navigation lifecycle', () => {
+  it('treats the narrow flow drawer as a modal and restores access after closing or resizing', async () => {
+    let narrow = true;
+    const listeners = new Set<() => void>();
+    window.matchMedia = ((query: string) => ({
+      get matches() { return query === '(max-width: 1279px)' ? narrow : false; },
+      media: query,
+      addEventListener: (_event: string, listener: () => void) => { listeners.add(listener); },
+      removeEventListener: (_event: string, listener: () => void) => { listeners.delete(listener); },
+    })) as unknown as typeof window.matchMedia;
+    useWorkflowStore.setState({ currentWorkflow: FULL_A });
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => String(url) === '/api/workflows'
+      ? jsonResponse({ workflows: [{ id: 'wf-a', name: 'Alpha', updatedAt: 100, version: 1 }] })
+      : jsonResponse({ providers: [] })) as unknown as typeof fetch;
+    renderWorkspace(<FlowList flowId="wf-a"><Workspace flowId="wf-a" /></FlowList>);
+    const toggle = screen.getByRole('button', { name: 'Flows' });
+    fireEvent.click(toggle);
+    expect(document.querySelector('[role="dialog"]')).toHaveAttribute('aria-modal', 'true');
+    expect(document.querySelector('nav[aria-label="Workflows"]')).toBeInTheDocument();
+    expect(document.querySelector('.workflow-editor > header')).toHaveAttribute('inert');
+    expect(document.querySelector('.workflow-editor-main')).toHaveAttribute('inert');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+    expect(toggle).toHaveFocus();
+    expect(document.querySelector('.workflow-editor > header')).not.toHaveAttribute('inert');
+    fireEvent.click(toggle);
+    narrow = false;
+    act(() => { for (const listener of [...listeners]) listener(); });
+    await waitFor(() => expect(document.querySelector('[role="dialog"]') === null).toBe(true));
+    expect(document.querySelector('.workflow-editor > header')).not.toHaveAttribute('inert');
+  });
+
+  it('saves pending changes before switching from the workflow rail', async () => {
+    useWorkflowStore.setState({ currentWorkflow: FULL_A, isDirty: true });
+    let finishSave!: (response: Response) => void;
+    globalThis.fetch = mock(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === '/api/workflows') return jsonResponse({ workflows: [
+        { id: 'wf-a', name: 'Alpha', updatedAt: 100, version: 1 },
+        { id: 'wf-b', name: 'Beta', updatedAt: 90, version: 1 },
+      ] });
+      if (init?.method === 'PUT') return new Promise<Response>((resolve) => { finishSave = resolve; });
+      return jsonResponse({ providers: [] });
+    }) as unknown as typeof fetch;
+    renderWorkspace(<FlowList flowId="wf-a"><Workspace flowId="wf-a" /></FlowList>);
+    const link = await screen.findByTestId('flow-row-wf-b');
+    expect(screen.getByTestId('flow-row-wf-a')).toHaveAttribute('aria-current', 'page');
+    fireEvent.click(link);
+    await waitFor(() => expect(finishSave).toBeDefined());
+    expect(routerPush).not.toHaveBeenCalled();
+    await act(async () => finishSave(jsonResponse({ workflow: FULL_A })));
+    expect(routerPush).toHaveBeenCalledWith('/wf-b');
+  });
+
+  it('keeps the current flow when saving before a switch fails', async () => {
+    useWorkflowStore.setState({ currentWorkflow: FULL_A, isDirty: true });
+    globalThis.fetch = mock(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === '/api/workflows') return jsonResponse({ workflows: [
+        { id: 'wf-a', name: 'Alpha', updatedAt: 100, version: 1 },
+        { id: 'wf-b', name: 'Beta', updatedAt: 90, version: 1 },
+      ] });
+      if (init?.method === 'PUT') return jsonResponse({ error: 'save failed' }, { status: 503 });
+      return jsonResponse({ providers: [] });
+    }) as unknown as typeof fetch;
+    renderWorkspace(<FlowList flowId="wf-a"><Workspace flowId="wf-a" /></FlowList>);
+    fireEvent.click(await screen.findByTestId('flow-row-wf-b'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Could not save changes'));
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(screen.getByTestId('flow-row-wf-a')).toHaveAttribute('aria-current', 'page');
+    expect(useWorkflowStore.getState().isDirty).toBe(true);
+  });
+
   it('moves an old editor Dispatch URL home after saving pending changes', async () => {
     useWorkflowStore.setState({ currentWorkflow: FULL_A, isDirty: true });
     let finishSave!: (response: Response) => void;

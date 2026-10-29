@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -23,6 +24,7 @@ import { useEngineWebSocket } from '../lib/client/ws-client';
 import { useWorkflowStore } from '../lib/client/workflow-store-client';
 import { flushPendingWorkflow } from '../lib/client/workflow-navigation';
 import type { Workflow } from '../lib/shared/workflow';
+import { useConsoleLayout } from './components/ConsoleLayoutContext';
 
 const RIGHT_WIDTH_STORAGE_KEY = 'infinite_loop:right-width';
 const RIGHT_WIDTH_DEFAULT = 440;
@@ -31,6 +33,7 @@ const CANVAS_MIN_WIDTH = 360;
 
 export default function Workspace({ flowId }: { flowId: string }) {
   const router = useRouter();
+  const consoleLayout = useConsoleLayout();
   const currentWorkflow = useWorkflowStore((s) => s.currentWorkflow);
   const isDirty = useWorkflowStore((s) => s.isDirty);
   const activeRunId = useEngineWebSocket(currentWorkflow?.id === flowId ? flowId : null);
@@ -48,12 +51,22 @@ export default function Workspace({ flowId }: { flowId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [navigationError, setNavigationError] = useState<string | null>(null);
-  const [navigating, setNavigating] = useState(false);
+  const [localNavigationError, setNavigationError] = useState<string | null>(null);
+  const [localNavigating, setNavigating] = useState(false);
+  const navigationError = consoleLayout?.navigationError ?? localNavigationError;
+  const navigating = consoleLayout?.navigating ?? localNavigating;
+  const modalFlowsOpen = consoleLayout?.drawerOpen ?? false;
+  const flowsToggleRef = consoleLayout?.drawerToggleRef;
   const mounted = useRef(true);
   const navigationVersion = useRef(0);
   const navigationBlocked = useRef(false);
+  navigationBlocked.current = navigating || modalFlowsOpen || !!consoleLayout?.transitioning;
   const ready = currentWorkflow?.id === flowId && !loadError;
+  const reportWorkspace = consoleLayout?.reportWorkspace;
+
+  useLayoutEffect(() => {
+    reportWorkspace?.(flowId, loadError ? 'error' : ready ? 'ready' : 'loading');
+  }, [flowId, ready, loadError, reportWorkspace]);
 
   const setNavigationBusy = useCallback((value: boolean) => {
     navigationBlocked.current = value;
@@ -75,6 +88,7 @@ export default function Workspace({ flowId }: { flowId: string }) {
   }, [flowId, setNavigationBusy]);
 
   async function navigate(href: string, replace = false) {
+    if (consoleLayout) return consoleLayout.navigate(href, replace);
     if (!mounted.current) return;
     const version = ++navigationVersion.current;
     setNavigationError(null);
@@ -208,14 +222,10 @@ export default function Workspace({ flowId }: { flowId: string }) {
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(RIGHT_WIDTH_STORAGE_KEY);
-      if (saved) {
-        const n = Number(saved);
-        if (Number.isFinite(n)) {
-          const clamped = clampRightWidth(n);
-          setRightWidth(clamped);
-          rightWidthRef.current = clamped;
-        }
-      }
+      const n = saved === null ? RIGHT_WIDTH_DEFAULT : Number(saved);
+      const clamped = clampRightWidth(Number.isFinite(n) ? n : RIGHT_WIDTH_DEFAULT);
+      setRightWidth(clamped);
+      rightWidthRef.current = clamped;
     } catch {
       // localStorage may be unavailable; fall back to default
     }
@@ -247,7 +257,9 @@ export default function Workspace({ flowId }: { flowId: string }) {
           loadWorkflow(data.workflow);
         }
       } catch (err) {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load this flow.');
+        if (!cancelled) {
+          setLoadError(err instanceof Error ? err.message : 'Could not load this flow.');
+        }
       }
     })();
     return () => {
@@ -331,24 +343,34 @@ export default function Workspace({ flowId }: { flowId: string }) {
 
   if (!ready) {
     return (
-      <main className="flow-load-state">
-        <Link href="/" className="btn btn-ghost" onClick={(event) => onNavigateLink(event, '/')}>All flows</Link>
-        {navigationError && <p role="alert" className="flow-error">{navigationError}</p>}
-        {loadError ? (
-          <div data-testid="flow-load-error" role="alert">
-            <h1>{missing ? 'Flow not found' : 'Could not open flow'}</h1>
-            <p>{loadError}</p>
-            {!missing && <button type="button" className="btn" onClick={() => setLoadAttempt((value) => value + 1)}>Retry</button>}
+      <div className="workflow-editor workflow-editor-loading" data-flow-loading={!loadError ? 'true' : undefined}>
+        <header className="top-bar" inert={navigating || modalFlowsOpen}>
+          <Link href="/" className="brand" aria-label="Inf·Loop home" onClick={(event) => onNavigateLink(event, '/')}>Inf·Loop</Link>
+          <div className="crumbs">
+            <Link href="/" className="btn btn-ghost" onClick={(event) => onNavigateLink(event, '/')}>All flows</Link>
           </div>
-        ) : <p role="status">Loading flow…</p>}
-      </main>
+          <div className="actions"><button ref={flowsToggleRef} type="button" className="btn btn-toggle mobile-flows-toggle" aria-expanded={modalFlowsOpen} aria-controls="workflow-switcher" onClick={() => consoleLayout?.openDrawer()}>Flows</button></div>
+        </header>
+        <div className="workflow-editor-content" inert={navigating}>
+          <main className="flow-load-state workflow-editor-main" inert={modalFlowsOpen}>
+            {navigationError && <p role="alert" className="flow-error">{navigationError}</p>}
+            {loadError ? (
+              <div data-testid="flow-load-error" role="alert">
+                <h1>{missing ? 'Flow not found' : 'Could not open flow'}</h1>
+                <p>{loadError}</p>
+                {!missing && <button type="button" className="btn" onClick={() => setLoadAttempt((value) => value + 1)}>Retry</button>}
+              </div>
+            ) : <p role="status">Loading flow…</p>}
+          </main>
+        </div>
+      </div>
     );
   }
 
   return (
     <div className="workflow-editor">
       {navigationError && <div role="alert" className="workflow-save-error">Could not save changes. {navigationError}</div>}
-      <header className="top-bar" inert={navigating}>
+      <header className="top-bar" inert={navigating || modalFlowsOpen}>
         <Link href="/" className="brand" aria-label="Inf·Loop home" onClick={(event) => onNavigateLink(event, '/')}>
           <span
             className="brand-mark"
@@ -372,6 +394,14 @@ export default function Workspace({ flowId }: { flowId: string }) {
         </div>
 
         <div className="actions">
+          <button
+            ref={flowsToggleRef}
+            type="button"
+            className="btn btn-toggle mobile-flows-toggle"
+            aria-expanded={modalFlowsOpen}
+            aria-controls="workflow-switcher"
+            onClick={() => consoleLayout?.openDrawer()}
+          >Flows</button>
           <button
             ref={paletteToggleRef}
             type="button"
@@ -454,6 +484,7 @@ export default function Workspace({ flowId }: { flowId: string }) {
       </header>
 
       <div className="workflow-editor-content" inert={navigating}>
+        <div className="workflow-editor-main" inert={modalFlowsOpen}>
         <div
           className={`workspace ${showGlobalPanel ? 'workspace-tri' : 'workspace-bi'}`}
           style={{ '--right-w': `${rightWidth}px` } as CSSProperties}
@@ -507,6 +538,7 @@ export default function Workspace({ flowId }: { flowId: string }) {
             </>
           )}
         </div>
+        </div>
       </div>
       {runModalOpen && currentWorkflow && (
         <RunInputsModal
@@ -523,11 +555,12 @@ export default function Workspace({ flowId }: { flowId: string }) {
 }
 
 function clampRightWidth(n: number): number {
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1600;
+  const switcherWidth = viewportWidth >= 1280 ? 190 : 0;
+  const paletteWidth = viewportWidth > 920 && viewportWidth <= 1100 ? 260 : 282;
   const max = Math.max(
     RIGHT_WIDTH_MIN,
-    (typeof window !== 'undefined' ? window.innerWidth : 1600) -
-      CANVAS_MIN_WIDTH -
-      240, // palette width
+    viewportWidth - switcherWidth - paletteWidth - CANVAS_MIN_WIDTH - 5,
   );
   return Math.min(max, Math.max(RIGHT_WIDTH_MIN, Math.floor(n)));
 }

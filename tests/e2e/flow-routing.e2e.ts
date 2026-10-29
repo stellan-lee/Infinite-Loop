@@ -216,7 +216,7 @@ test('Dispatch opens on home, preserves workflow filters from legacy editor link
   await expect(page.getByRole('button', { name: 'Dispatch' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('heading', { name: 'Dispatch' })).toBeVisible();
   await expect(page.locator('.dsp-filter-chip')).toContainText(DEFAULT_WORKFLOW_ID);
-  await expect(page.getByTestId('flow-list')).toHaveCount(0);
+  await expect(page.getByTestId('flow-list')).toBeHidden();
 
   await page.getByRole('link', { name: 'Inf·Loop home' }).click();
   await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/?$/);
@@ -268,7 +268,9 @@ test('global Dispatch, Queue, and theme controls live on home and fit narrow wid
     await openSeededFlow(page);
     await expect(page.getByRole('button', { name: 'Dispatch' })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Queue', exact: true })).toHaveCount(0);
-    await expect(page.locator('header.top-bar .theme-toggle')).toHaveCount(0);
+    await expect(page.locator('header.flow-home-bar')).toBeHidden();
+    await expect(page.locator('header.flow-home-bar')).toHaveAttribute('inert', '');
+    await expect(page.locator('.workflow-editor > header.top-bar')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Inf·Loop home' })).toBeVisible();
   }
 });
@@ -332,7 +334,7 @@ test('immediate flow switch saves the old Display name without copying it to sam
   }
 });
 
-test('browser Back preserves pending edits before opening the list', async ({ page }) => {
+test('browser Back eventually persists pending edits after returning to the list', async ({ page }) => {
   const original = (await (await page.request.get(`/api/workflows/${DEFAULT_WORKFLOW_ID}`)).json()).workflow;
   const editedMessage = 'Browser Back navigation edit';
   try {
@@ -344,8 +346,14 @@ test('browser Back preserves pending edits before opening the list', async ({ pa
     await expect(page.getByTestId('workflow-title')).toContainText('•');
     await page.goBack();
     await expect(page.getByTestId('flow-list')).toBeVisible();
-    const saved = (await (await page.request.get(`/api/workflows/${DEFAULT_WORKFLOW_ID}`)).json()).workflow;
-    expect(saved.nodes.find((node: { id: string }) => node.id === 'agent-1').config.messages[0].content).toBe(editedMessage);
+    // Browser history can show the retained home list before the pending PUT
+    // completes. Keep asserting the exact stored value once that save lands.
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/workflows/${DEFAULT_WORKFLOW_ID}`);
+      if (!response.ok()) return null;
+      const { workflow } = await response.json();
+      return workflow.nodes.find((node: { id: string }) => node.id === 'agent-1')?.config.messages?.[0]?.content ?? null;
+    }).toBe(editedMessage);
   } finally {
     await page.request.put(`/api/workflows/${DEFAULT_WORKFLOW_ID}`, { data: original });
   }

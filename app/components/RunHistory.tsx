@@ -5,6 +5,7 @@ import type { RunRecord, RunSummary } from '../../lib/shared/workflow';
 import { useWorkflowStore } from '../../lib/client/workflow-store-client';
 import { eventNodeId } from '../../lib/client/group-events';
 import RunRecordDetails from './RunRecordDetails';
+import RerunWorkflowButton from './RerunWorkflowButton';
 
 interface Props {
   workflowId: string | undefined;
@@ -178,15 +179,18 @@ export default function RunHistory({ workflowId }: Props) {
           </div>
         )}
 
-        {record && !recordLoading && (
-          <RunRecordDetails
-            record={record}
-            filterNodeId={filterActive ? selectedNodeId ?? undefined : undefined}
-            onCardActivate={(nodeId) => {
-              selectNode(nodeId);
-              requestPanToNode(nodeId);
-            }}
-          />
+        {record && !recordLoading && !recordError && record.workflowId === workflowId && record.runId === selectedRunId && (
+          <>
+            <RerunWorkflowButton key={`${workflowId}/${selectedRunId}`} record={record} />
+            <RunRecordDetails
+              record={record}
+              filterNodeId={filterActive ? selectedNodeId ?? undefined : undefined}
+              onCardActivate={(nodeId) => {
+                selectNode(nodeId);
+                requestPanToNode(nodeId);
+              }}
+            />
+          </>
         )}
       </aside>
     );

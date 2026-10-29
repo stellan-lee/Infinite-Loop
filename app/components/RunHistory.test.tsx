@@ -130,6 +130,23 @@ describe('RunHistory', () => {
     expect(useWorkflowStore.getState().inspectedRunEvents).toEqual(RECORD_A.events);
   });
 
+  it.each(['succeeded', 'failed'] as const)('offers rerun for a %s history record', async (status) => {
+    const requests: { url: string; body?: unknown }[] = [];
+    globalThis.fetch = mock(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(url);
+      requests.push({ url: path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (path.startsWith('/api/runs?')) return jsonResponse({ runs: [{ ...SUMMARY_A, status }] });
+      if (path.startsWith('/api/runs/')) return jsonResponse({ run: { ...RECORD_A, status } });
+      if (path === '/api/run') return new Response(JSON.stringify({ runId: 'new-run' }), { status: 202 });
+      throw new Error(`unexpected fetch ${path}`);
+    }) as unknown as typeof fetch;
+    render(<RunHistory workflowId="wf-1" />);
+    fireEvent.click(await screen.findByLabelText('run r-a'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Rerun workflow' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('new-run'));
+    expect(requests.at(-1)).toEqual({ url: '/api/run', body: { workflowId: 'wf-1', inputs: { topic: 'demo' } } });
+  });
+
   it('back button returns to the list view', async () => {
     render(<RunHistory workflowId="wf-1" />);
     fireEvent.click(await screen.findByLabelText('run r-a'));

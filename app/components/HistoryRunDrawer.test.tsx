@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'bun:test';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { RunRecord } from '../../lib/shared/workflow';
 import { useWorkflowStore } from '../../lib/client/workflow-store-client';
 import HistoryRunDrawer from './HistoryRunDrawer';
@@ -27,13 +27,32 @@ it('fetches the exact encoded identity and shares recorded details without chang
   expect(screen.getByLabelText('Workflow ID')).toHaveTextContent(record.workflowId);
   expect(screen.getByLabelText('Run ID')).toHaveTextContent(record.runId);
   expect(screen.getByText('1.5s')).toBeInTheDocument();
+  const inputs = screen.getByRole('region', { name: 'recorded inputs' });
+  expect(inputs).toHaveTextContent('exact run input');
+  const header = screen.getByRole('dialog', { name: 'Run history detail' }).querySelector('header')!;
+  expect(within(header).getByRole('button', { name: 'Rerun workflow' })).toBeInTheDocument();
+  expect(within(header).getByRole('button', { name: 'Close run history' })).toBeInTheDocument();
+  expect(header.compareDocumentPosition(inputs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'expand scope' }));
-  expect(screen.getByText(/exact run input/)).toBeInTheDocument();
+  expect(within(screen.getByLabelText('run scope')).getByText(/exact run input/)).toBeInTheDocument();
   expect(screen.getByLabelText('event log')).toHaveTextContent('task');
   const after = useWorkflowStore.getState();
   expect(after.inspectedRunEvents).toBe(before.inspectedRunEvents);
   expect(after.selectedNodeId).toBe(before.selectedNodeId);
   expect(after.panRequest).toBe(before.panRequest);
+});
+
+it.each(['succeeded', 'failed'] as const)('reruns a %s history record from the Jobs drawer', async (status) => {
+  const requests: { url: string; body?: unknown }[] = [];
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    if (String(url) === '/api/run') return new Response(JSON.stringify({ runId: 'fresh-run' }), { status: 202 });
+    return json({ ...record, status });
+  }) as typeof fetch;
+  render(<HistoryRunDrawer workflowId={record.workflowId} runId={record.runId} onClose={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rerun workflow' }));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('fresh-run'));
+  expect(requests.at(-1)).toEqual({ url: '/api/run', body: { workflowId: record.workflowId, inputs: { topic: 'exact run input' } } });
 });
 
 it('clears old status while switching and ignores late responses, including the same run ID in another flow', async () => {

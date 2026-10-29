@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RunRecord } from '../../lib/shared/workflow';
 import RunRecordDetails from './RunRecordDetails';
+import RerunWorkflowButton, { RecordedRunInputs } from './RerunWorkflowButton';
 import styles from './HistoryRunDrawer.module.css';
 
 interface Props {
@@ -80,7 +81,10 @@ export default function HistoryRunDrawer({ workflowId, runId, onClose }: Props) 
       <div className={styles.drawer}>
         <header className={styles.header}>
           <h2>Run history detail</h2>
-          <button ref={closeRef} type="button" className="btn btn-ghost" aria-label="Close run history" onClick={onClose}>Close</button>
+          <div className={styles.headerActions}>
+            {record && <RerunWorkflowButton key={`rerun:${workflowId}/${runId}`} record={record} compact />}
+            <button ref={closeRef} type="button" className="btn btn-ghost" aria-label="Close run history" onClick={onClose}>Close</button>
+          </div>
         </header>
         <div className={styles.content}>
           <dl className={styles.identity}>
@@ -90,6 +94,7 @@ export default function HistoryRunDrawer({ workflowId, runId, onClose }: Props) 
           {record && <span className="pill" aria-label="recorded run status" data-status={record.status}><span className="dot" /> {record.status}</span>}
           {(!selected || selected.status === 'loading') && <p role="status">Loading run details…</p>}
           {selected?.status === 'error' && <div role="alert"><p>{selected.message}</p><button type="button" className="btn" onClick={() => setAttempt((value) => value + 1)}>Retry</button></div>}
+          {record && <RecordedRunInputs scope={record.scope} />}
           {record && <RunRecordDetails key={`${workflowId}/${runId}`} record={record} />}
         </div>
       </div>

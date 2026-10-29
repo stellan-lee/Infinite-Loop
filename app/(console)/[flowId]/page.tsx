@@ -1,5 +1,5 @@
 import { guardPage } from '@/lib/server/page-guard';
-import Workspace from '../Workspace';
+import Workspace from '../../Workspace';
 
 export default async function FlowPage({ params }: { params: Promise<{ flowId: string }> }) {
   await guardPage();

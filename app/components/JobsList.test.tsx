@@ -184,3 +184,30 @@ it('recovers a missed completion after reconnect persistence lag with bounded hi
     clock.uninstall();
   }
 });
+
+
+it('closes the native run drawer when home becomes inactive without remounting jobs', async () => {
+  history = [finished];
+  const defaultFetch = globalThis.fetch;
+  globalThis.fetch = (async (url, options) => url === '/api/runs/flow/done'
+    ? json({ run: { ...finished, scope: {}, events: [] } })
+    : defaultFetch(url, options)) as typeof fetch;
+  const { rerender } = render(<JobsList flows={[]} active />);
+  const row = await screen.findByTestId('job-row-done');
+  fireEvent.click(within(row).getByRole('button', { name: 'View run done' }));
+  expect(screen.getByRole('dialog', { name: 'Run history detail' })).toHaveAttribute('open');
+  expect(document.body.style.overflow).toBe('hidden');
+
+  rerender(<JobsList flows={[]} active={false} />);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.body.style.overflow).not.toBe('hidden');
+  expect(screen.getByTestId('job-row-done') === row).toBe(true);
+  expect(FakeEventSource.instances).toHaveLength(1);
+  expect(FakeEventSource.instances[0].closed).toBe(false);
+
+  rerender(<JobsList flows={[]} active />);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByTestId('job-row-done') === row).toBe(true);
+  fireEvent.click(within(row).getByRole('button', { name: 'View run done' }));
+  expect(screen.getByRole('dialog', { name: 'Run history detail' })).toHaveAttribute('open');
+});

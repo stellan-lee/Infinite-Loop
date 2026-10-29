@@ -36,7 +36,7 @@ async function expectWithinViewport(page: Page, target: Locator): Promise<void> 
 }
 
 async function expectEditorFits(page: Page): Promise<void> {
-  const header = page.locator('header.top-bar');
+  const header = page.locator('.workflow-editor > header.top-bar');
   const canvas = page.locator('.canvas-shell');
   await expectWithinViewport(page, header);
   await expectWithinViewport(page, canvas);

@@ -22,12 +22,17 @@ function stageLabel(stage: JobStage, labels?: NodeLabels): string {
   return waiting ? `${waiting} · ${name}` : name;
 }
 
-export default function JobsList({ flows }: { flows: WorkflowSummary[] }) {
+export default function JobsList({ flows, active = true }: { flows: WorkflowSummary[]; active?: boolean }) {
   const { jobs, loading, errors, connection, retry } = useHomeJobs();
   const [now, setNow] = useState(() => Date.now());
   const [nodeLabels, setNodeLabels] = useState<Record<string, NodeLabels>>({});
   const [selectedRun, setSelectedRun] = useState<{ workflowId: string; runId: string } | null>(null);
   const closeHistory = useCallback(() => setSelectedRun(null), []);
+  useEffect(() => {
+    // The shared console keeps Jobs mounted while its pane closes. A native
+    // modal must leave the top layer when this view becomes inactive.
+    if (!active) setSelectedRun(null);
+  }, [active]);
   const running = jobs.filter((job): job is HomeRun & { kind: 'run' } => job.kind === 'run' && job.status === 'running');
   const activeFlowIds = [...new Set(running.map((job) => job.workflowId))].sort().join('\n');
 
@@ -109,7 +114,7 @@ export default function JobsList({ flows }: { flows: WorkflowSummary[] }) {
           );
         })}
       </ul>
-      {selectedRun && <HistoryRunDrawer workflowId={selectedRun.workflowId} runId={selectedRun.runId} onClose={closeHistory} />}
+      {active && selectedRun && <HistoryRunDrawer workflowId={selectedRun.workflowId} runId={selectedRun.runId} onClose={closeHistory} />}
     </section>
   );
 }

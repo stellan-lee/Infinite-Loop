@@ -76,6 +76,17 @@ it('shows recorded primitive inputs above rerun without expanding the full scope
   expect(inputs.compareDocumentPosition(screen.getByRole('button', { name: 'Rerun workflow' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
+it('keeps the compact header action usable while reporting a start error', async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'cost budget exhausted' }), { status: 503 })) as unknown as typeof fetch;
+  render(<RerunWorkflowButton record={record} compact />);
+  expect(screen.queryByRole('region', { name: 'recorded inputs' })).toBeNull();
+  expect(screen.queryByText(/Starts the latest saved workflow/)).toBeNull();
+  const button = screen.getByRole('button', { name: 'Rerun workflow' });
+  fireEvent.click(button);
+  expect(await screen.findByRole('alert')).toHaveTextContent('cost budget exhausted');
+  expect(button).not.toBeDisabled();
+});
+
 it('shows validation, missing-workflow, cost, network, and malformed-response errors', async () => {
   const responses = [
     new Response(JSON.stringify({ error: 'invalid-inputs', field: 'topic', reason: 'required' }), { status: 400 }),

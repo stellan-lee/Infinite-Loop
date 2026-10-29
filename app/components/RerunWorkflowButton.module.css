@@ -1,6 +1,9 @@
 .rerun { min-width: 0; overflow-wrap: anywhere; font: 12px/1.5 var(--mono); }
 .rerun p { margin: 6px 0 0; color: var(--fg-dim); }
 .rerun [role='alert'] { color: var(--accent-err); }
+.compact { max-width: 220px; }
+.compact button { white-space: nowrap; }
+.compact p { font-size: 11px; line-height: 1.35; }
 .inputs { min-width: 0; margin-bottom: 12px; }
 .inputs h3 { margin: 0 0 6px; font: 600 12px/1.5 var(--mono); }
 .inputs dl { display: grid; gap: 6px; margin: 0; }

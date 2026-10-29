@@ -17,6 +17,24 @@ function savedInputs(scope: RunRecord['scope']): Record<string, unknown> {
   return {};
 }
 
+export function RecordedRunInputs({ scope }: { scope: RunRecord['scope'] }) {
+  const inputs = savedInputs(scope);
+  if (Object.keys(inputs).length === 0) return null;
+  return (
+    <section className={styles.inputs} aria-label="recorded inputs">
+      <h3>Inputs</h3>
+      <dl>
+        {Object.entries(inputs).map(([name, value]) => (
+          <div key={name}>
+            <dt>{name}</dt>
+            <dd>{typeof value === 'string' ? value || '""' : typeof value === 'number' || typeof value === 'boolean' ? String(value) : JSON.stringify(value) ?? String(value)}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
 async function errorMessage(response: Response): Promise<string> {
   const body = await response.json().catch(() => null) as { error?: unknown; field?: unknown; reason?: unknown } | null;
   if (body?.error === 'invalid-inputs' && typeof body.field === 'string' && typeof body.reason === 'string') {
@@ -26,8 +44,7 @@ async function errorMessage(response: Response): Promise<string> {
   return `Cannot rerun workflow (${response.status}).`;
 }
 
-export default function RerunWorkflowButton({ record }: { record: RunRecord }) {
-  const inputs = savedInputs(record.scope);
+export default function RerunWorkflowButton({ record, compact = false }: { record: RunRecord; compact?: boolean }) {
   const [result, setResult] = useState<Result>({ status: 'idle' });
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -46,7 +63,7 @@ export default function RerunWorkflowButton({ record }: { record: RunRecord }) {
       const response = await fetch('/api/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ workflowId: record.workflowId, inputs }),
+        body: JSON.stringify({ workflowId: record.workflowId, inputs: savedInputs(record.scope) }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const body = await response.json().catch(() => null) as { runId?: unknown } | null;
@@ -62,22 +79,10 @@ export default function RerunWorkflowButton({ record }: { record: RunRecord }) {
   };
 
   return (
-    <div className={styles.rerun}>
-      {Object.keys(inputs).length > 0 && (
-        <section className={styles.inputs} aria-label="recorded inputs">
-          <h3>Inputs</h3>
-          <dl>
-            {Object.entries(inputs).map(([name, value]) => (
-              <div key={name}>
-                <dt>{name}</dt>
-                <dd>{typeof value === 'string' ? value || '""' : typeof value === 'number' || typeof value === 'boolean' ? String(value) : JSON.stringify(value) ?? String(value)}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      )}
-      <button type="button" className="btn" onClick={() => void rerun()} disabled={result.status === 'pending'}>Rerun workflow</button>
-      <p>Starts the latest saved workflow with available inputs from this run.</p>
+    <div className={`${styles.rerun} ${compact ? styles.compact : ''}`}>
+      {!compact && <RecordedRunInputs scope={record.scope} />}
+      <button type="button" className="btn" title={compact ? 'Starts the latest saved workflow with available inputs from this run.' : undefined} onClick={() => void rerun()} disabled={result.status === 'pending'}>Rerun workflow</button>
+      {!compact && <p>Starts the latest saved workflow with available inputs from this run.</p>}
       {result.status === 'pending' && <p role="status">Starting new run…</p>}
       {result.status === 'error' && <p role="alert">{result.message}</p>}
       {result.status === 'started' && <p role="status">Started new run {result.runId}.</p>}

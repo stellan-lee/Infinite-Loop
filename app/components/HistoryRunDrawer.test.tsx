@@ -29,6 +29,10 @@ it('fetches the exact encoded identity and shares recorded details without chang
   expect(screen.getByText('1.5s')).toBeInTheDocument();
   const inputs = screen.getByRole('region', { name: 'recorded inputs' });
   expect(inputs).toHaveTextContent('exact run input');
+  const header = screen.getByRole('dialog', { name: 'Run history detail' }).querySelector('header')!;
+  expect(within(header).getByRole('button', { name: 'Rerun workflow' })).toBeInTheDocument();
+  expect(within(header).getByRole('button', { name: 'Close run history' })).toBeInTheDocument();
+  expect(header.compareDocumentPosition(inputs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'expand scope' }));
   expect(within(screen.getByLabelText('run scope')).getByText(/exact run input/)).toBeInTheDocument();
   expect(screen.getByLabelText('event log')).toHaveTextContent('task');

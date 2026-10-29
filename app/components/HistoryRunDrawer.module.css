@@ -1,8 +1,9 @@
 .backdrop { position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; max-height: none; margin: 0; padding: 0; border: 0; background: transparent; color: var(--fg); }
 .backdrop::backdrop { background: rgb(0 0 0 / 40%); }
 .drawer { display: flex; flex-direction: column; width: min(720px, 100%); height: 100%; margin-left: auto; background: var(--bg); border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgb(0 0 0 / 15%); }
-.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0; padding: 20px; border-bottom: 1px solid var(--border); }
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0; padding: 20px; border-bottom: 1px solid var(--border); }
 .header h2 { margin: 0; font: 500 26px/1.2 var(--serif); }
+.headerActions { display: flex; align-items: flex-start; gap: 8px; margin-left: auto; }
 .content { display: flex; flex-direction: column; align-items: stretch; gap: 16px; min-height: 0; overflow: auto; padding: 20px; font: 12px/1.6 var(--mono); }
 .content > * { flex-shrink: 0; }
 .content :global(.pill) { align-self: flex-start; }

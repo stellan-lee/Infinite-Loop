@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, mock } from 'bun:test';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime';
 import FlowList from './FlowList';
+import { useLayoutEffect } from 'react';
+import { useConsoleLayout } from './components/ConsoleLayoutContext';
 import { useWorkflowStore } from '../lib/client/workflow-store-client';
 
 const originalFetch = globalThis.fetch;
@@ -31,6 +33,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 beforeEach(() => {
   push.mockClear();
   window.location.hash = '';
+  window.sessionStorage.clear();
   globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
   useWorkflowStore.setState({ currentWorkflow: null, isDirty: false });
 });
@@ -58,7 +61,7 @@ it('shows Dispatch at the home hash and returns to flows from the brand', async 
   renderList();
   expect(await screen.findByRole('heading', { name: 'Dispatch' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Dispatch' })).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.queryByTestId('flow-empty')).toBeNull();
+  expect(document.querySelector('.flow-home-grid')).toHaveAttribute('hidden');
   fireEvent.click(screen.getByRole('link', { name: 'Inf·Loop home' }));
   expect(await screen.findByTestId('flow-empty')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Dispatch' })).toHaveAttribute('aria-pressed', 'false');
@@ -261,4 +264,55 @@ it('keeps the flow and displays a row error after a failed delete', async () => 
   expect(await screen.findByRole('alert')).toHaveTextContent('Could not delete this flow (503)');
   expect(screen.getByTestId('flow-row-flow-a')).toHaveTextContent('Alpha');
   expect(screen.getByRole('button', { name: 'delete workflow flow-a' })).toBeEnabled();
+});
+
+
+function ReadyEditor({ id, ready }: { id: string; ready: boolean }) {
+  const report = useConsoleLayout()?.reportWorkspace;
+  useLayoutEffect(() => { report?.(id, ready ? 'ready' : 'loading'); }, [id, ready, report]);
+  return <div>Editor</div>;
+}
+
+it('keeps the same list and rows while waiting for and opening a workspace', async () => {
+  const requests = installFetch(async () => json({ workflows: [fullFlow] }));
+  const view = (id: string | null, ready = false) => <AppRouterContext.Provider value={router}>
+    <FlowList flowId={id}>{id && <ReadyEditor id={id} ready={ready} />}</FlowList>
+  </AppRouterContext.Provider>;
+  const { rerender } = render(view(null));
+  const row = await screen.findByTestId('flow-row-flow-a');
+  const list = screen.getByTestId('flow-list');
+  rerender(view('flow-a'));
+  expect(document.querySelector('.console-shell')).toHaveAttribute('data-view', 'home');
+  expect(screen.getByTestId('flow-list') === list).toBe(true);
+  rerender(view('flow-a', true));
+  expect(document.querySelector('.console-shell')).toHaveAttribute('data-view', 'workspace');
+  expect(screen.getByTestId('flow-list') === list).toBe(true);
+  expect(screen.getByTestId('flow-row-flow-a') === row).toBe(true);
+  expect(row).toHaveAttribute('aria-current', 'page');
+  expect(requests).toHaveBeenCalledTimes(1);
+});
+
+it('does not let a delayed home refresh restore a flow deleted after returning home', async () => {
+  let listRequests = 0;
+  let finishHomeRefresh!: (response: Response) => void;
+  installFetch(async (url, init) => {
+    if (init?.method === 'DELETE') return new Response(null, { status: 204 });
+    if (String(url) === '/api/workflows') {
+      listRequests += 1;
+      if (listRequests === 2) return new Promise<Response>((resolve) => { finishHomeRefresh = resolve; });
+      return json({ workflows: listRequests > 2 ? [] : [fullFlow] });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+  const view = (id: string | null) => <AppRouterContext.Provider value={router}><FlowList flowId={id} /></AppRouterContext.Provider>;
+  const { rerender } = render(view('flow-a'));
+  await screen.findByTestId('flow-row-flow-a');
+  rerender(view(null));
+  await waitFor(() => expect(finishHomeRefresh).toBeDefined());
+  window.confirm = () => true;
+  fireEvent.click(screen.getByRole('button', { name: 'delete workflow flow-a' }));
+  await screen.findByTestId('flow-empty');
+  await act(async () => finishHomeRefresh(json({ workflows: [fullFlow] })));
+  expect(screen.queryByTestId('flow-row-flow-a')).toBeNull();
+  expect(screen.getByTestId('flow-empty')).toBeInTheDocument();
 });

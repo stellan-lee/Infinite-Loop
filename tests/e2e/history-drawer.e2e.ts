@@ -109,6 +109,22 @@ test('reruns the selected failed history entry once with its recorded inputs', a
   const drawer = page.getByRole('dialog', { name: 'Run history detail' });
   await expect(drawer).toContainText('selected older run failure');
   const rerun = drawer.getByRole('button', { name: 'Rerun workflow' });
+  const inputs = drawer.getByRole('region', { name: 'recorded inputs' });
+  await expect(inputs).toBeVisible();
+  await expect(inputs.getByRole('heading', { name: 'Inputs' })).toBeVisible();
+  await expect(inputs).toContainText(olderTarget.runId);
+  await expect(inputs).toContainText('approved');
+  await expect(inputs).toContainText('true');
+  await expect(inputs).not.toContainText('stale fallback');
+  await expect(drawer.getByRole('button', { name: 'expand scope' })).toHaveAttribute('aria-expanded', 'false');
+  const inputsBounds = await inputs.boundingBox();
+  const rerunBounds = await rerun.boundingBox();
+  const logBounds = await drawer.getByLabel('event log').boundingBox();
+  expect(inputsBounds).not.toBeNull();
+  expect(rerunBounds).not.toBeNull();
+  expect(logBounds).not.toBeNull();
+  expect(inputsBounds!.y + inputsBounds!.height).toBeLessThanOrEqual(rerunBounds!.y + 1);
+  expect(inputsBounds!.y + inputsBounds!.height).toBeLessThanOrEqual(logBounds!.y + 1);
   await expect(rerun).toBeEnabled();
   await rerun.click();
   await submitted;
@@ -146,6 +162,10 @@ test('offers rerun for a successful entry and reports rejected inputs in the dra
   await target.getByRole('button', { name: 'View run older-target' }).click();
   const drawer = page.getByRole('dialog', { name: 'Run history detail' });
   await expect(drawer.getByLabel('recorded run status')).toContainText('succeeded');
+  const inputs = drawer.getByRole('region', { name: 'recorded inputs' });
+  await expect(inputs).toBeVisible();
+  await expect(inputs).toContainText(olderTarget.runId);
+  await expect(drawer.getByRole('button', { name: 'expand scope' })).toHaveAttribute('aria-expanded', 'false');
   await drawer.getByRole('button', { name: 'Rerun workflow' }).click();
   await expect(drawer.getByRole('alert')).toContainText('newRequiredInput');
   await expect(drawer.getByRole('alert')).toContainText(/required/i);
@@ -176,6 +196,7 @@ test('reruns a canvas history entry when its failed record has no saved inputs',
   await history.getByRole('button', { name: 'run older-target' }).click();
   const detail = page.getByLabel('run history detail');
   await expect(detail.getByLabel('recorded run status')).toContainText('failed');
+  await expect(detail.getByRole('region', { name: 'recorded inputs' })).toHaveCount(0);
   await detail.getByRole('button', { name: 'Rerun workflow' }).click();
   await expect(detail).toContainText('canvas-rerun');
   expect(submissions).toHaveLength(1);
@@ -231,6 +252,10 @@ test('detail load can be retried and the mobile drawer can scroll to the end', a
       return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'temporarily unavailable' }) });
     }
     const record = recordFor(olderTarget);
+    record.scope.inputs = {
+      selectedRun: olderTarget.runId,
+      notes: `A long saved input ${'value'.repeat(30)}\nsecond line`,
+    };
     record.events = [
       record.events[0],
       ...Array.from({ length: 80 }, (_, index) => ({ type: 'error' as const, message: `detail line ${index}` })),
@@ -248,6 +273,10 @@ test('detail load can be retried and the mobile drawer can scroll to the end', a
   await drawer.getByRole('button', { name: /retry/i }).click();
   await expect(drawer).toContainText('selected older run failure');
   await expect(drawer).toContainText('detail line 79');
+  const inputs = drawer.getByRole('region', { name: 'recorded inputs' });
+  await expect(inputs).toBeVisible();
+  await expect(inputs).toContainText('second line');
+  await expect(drawer.getByRole('button', { name: 'expand scope' })).toHaveAttribute('aria-expanded', 'false');
   expect(attempts).toBe(2);
 
   const bounds = await drawer.boundingBox();

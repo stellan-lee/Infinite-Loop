@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'bun:test';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { RunRecord } from '../../lib/shared/workflow';
 import { useWorkflowStore } from '../../lib/client/workflow-store-client';
 import HistoryRunDrawer from './HistoryRunDrawer';
@@ -27,8 +27,10 @@ it('fetches the exact encoded identity and shares recorded details without chang
   expect(screen.getByLabelText('Workflow ID')).toHaveTextContent(record.workflowId);
   expect(screen.getByLabelText('Run ID')).toHaveTextContent(record.runId);
   expect(screen.getByText('1.5s')).toBeInTheDocument();
+  const inputs = screen.getByRole('region', { name: 'recorded inputs' });
+  expect(inputs).toHaveTextContent('exact run input');
   fireEvent.click(screen.getByRole('button', { name: 'expand scope' }));
-  expect(screen.getByText(/exact run input/)).toBeInTheDocument();
+  expect(within(screen.getByLabelText('run scope')).getByText(/exact run input/)).toBeInTheDocument();
   expect(screen.getByLabelText('event log')).toHaveTextContent('task');
   const after = useWorkflowStore.getState();
   expect(after.inspectedRunEvents).toBe(before.inspectedRunEvents);

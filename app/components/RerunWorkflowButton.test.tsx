@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'bun:test';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { RunRecord } from '../../lib/shared/workflow';
 import RerunWorkflowButton from './RerunWorkflowButton';
 
@@ -39,6 +39,7 @@ it('uses empty inputs when a failed record has no saved inputs', async () => {
     return new Response(JSON.stringify({ runId: 'new-run' }), { status: 202 });
   }) as unknown as typeof fetch;
   render(<RerunWorkflowButton record={{ ...record, status: 'failed', scope: {} }} />);
+  expect(screen.queryByRole('region', { name: 'recorded inputs' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Rerun workflow' }));
   await screen.findByRole('status');
   expect(body).toEqual({ workflowId: 'flow-1', inputs: {} });
@@ -51,9 +52,28 @@ it('falls back to the older input alias if the preferred alias is unusable', asy
     return new Response(JSON.stringify({ runId: 'new-run' }), { status: 202 });
   }) as unknown as typeof fetch;
   render(<RerunWorkflowButton record={{ ...record, scope: { __inputs: ['not an input map'], inputs: { topic: 'fallback' }, node: { output: 'omit' } } as unknown as RunRecord['scope'] }} />);
+  const inputs = screen.getByRole('region', { name: 'recorded inputs' });
+  expect(inputs).toHaveTextContent('fallback');
+  expect(inputs).not.toHaveTextContent('omit');
   fireEvent.click(screen.getByRole('button', { name: 'Rerun workflow' }));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('new-run'));
   expect(body).toEqual({ workflowId: 'flow-1', inputs: { topic: 'fallback' } });
+});
+
+it('shows recorded primitive inputs above rerun without expanding the full scope', () => {
+  render(<RerunWorkflowButton record={{ ...record, scope: {
+    __inputs: { enabled: false, attempts: 0, empty: '', note: 'first line\nsecond line' },
+    inputs: { stale: 'ignore' },
+    node: { output: 'do not show' },
+  } }} />);
+  const inputs = screen.getByRole('region', { name: 'recorded inputs' });
+  expect(within(inputs).getByText('enabled').nextElementSibling).toHaveTextContent('false');
+  expect(within(inputs).getByText('attempts').nextElementSibling).toHaveTextContent('0');
+  expect(within(inputs).getByText('empty').nextElementSibling).toHaveTextContent('""');
+  expect(within(inputs).getByText('note').nextElementSibling?.textContent).toBe('first line\nsecond line');
+  expect(inputs).not.toHaveTextContent('stale');
+  expect(inputs).not.toHaveTextContent('do not show');
+  expect(inputs.compareDocumentPosition(screen.getByRole('button', { name: 'Rerun workflow' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 it('shows validation, missing-workflow, cost, network, and malformed-response errors', async () => {

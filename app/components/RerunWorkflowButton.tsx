@@ -27,6 +27,7 @@ async function errorMessage(response: Response): Promise<string> {
 }
 
 export default function RerunWorkflowButton({ record }: { record: RunRecord }) {
+  const inputs = savedInputs(record.scope);
   const [result, setResult] = useState<Result>({ status: 'idle' });
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -45,7 +46,7 @@ export default function RerunWorkflowButton({ record }: { record: RunRecord }) {
       const response = await fetch('/api/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ workflowId: record.workflowId, inputs: savedInputs(record.scope) }),
+        body: JSON.stringify({ workflowId: record.workflowId, inputs }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const body = await response.json().catch(() => null) as { runId?: unknown } | null;
@@ -62,6 +63,19 @@ export default function RerunWorkflowButton({ record }: { record: RunRecord }) {
 
   return (
     <div className={styles.rerun}>
+      {Object.keys(inputs).length > 0 && (
+        <section className={styles.inputs} aria-label="recorded inputs">
+          <h3>Inputs</h3>
+          <dl>
+            {Object.entries(inputs).map(([name, value]) => (
+              <div key={name}>
+                <dt>{name}</dt>
+                <dd>{typeof value === 'string' ? value || '""' : typeof value === 'number' || typeof value === 'boolean' ? String(value) : JSON.stringify(value) ?? String(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
       <button type="button" className="btn" onClick={() => void rerun()} disabled={result.status === 'pending'}>Rerun workflow</button>
       <p>Starts the latest saved workflow with available inputs from this run.</p>
       {result.status === 'pending' && <p role="status">Starting new run…</p>}
